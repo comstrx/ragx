@@ -23,6 +23,10 @@ Every release of RagX, one section per tag, one block per part.
 - `app/support` → `app/utils`, `app/Mail` → `app/mails`; `APP_PREFIX` moves the version prefix into `bootstrap/app.py` routing.
 - Confirmation lap: `STORAGE_ROOT/PUBLIC/PRIVATE/LOGS` place the disks and the log folder anywhere (relative to the api root or absolute, `../storage` or `/var/www/storage` with nothing else to configure), `LOG_FILE` writes JSON lines there, uploads refuse `STORAGE_BLOCKED` extensions, every answer carries `X-Content-Type-Options: nosniff`, sockets accept text and binary frames, `Query` gains `first_or_create update_or_create increment decrement chunk`, and the core tests now pin the env layers, the config DSL, json and the exception handler; `python -m bootstrap runbook` prints the operational facts with secrets redacted.
 
+### web
+
+- Indexing is behavior, not a setting: `settings.seo` is gone; a screen is indexed when it renders on the server, is open to everyone and is not `index: false`, the spec is crawlable when such a screen exists and `contents.url` is set, and the validator refuses `index: true` on a client-rendered or gated screen, robots rules without an indexable screen, and an indexed screen without a site url. The compiled schema carries `indexed` (a count) and the build meta reports it.
+
 ### infra
 
 - `AUTH_SECRET` joins the app secret keys and the required release secrets; the image owns `/app/src/storage`.
