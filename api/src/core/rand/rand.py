@@ -1,0 +1,84 @@
+from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
+from uuid import UUID, uuid4, uuid7
+import secrets, string
+
+ALPHANUMERIC = string.ascii_letters + string.digits
+LOWER        = string.ascii_lowercase + string.digits
+SAFE         = "abcdefghjkmnpqrstuvwxyz23456789"
+DIGITS       = string.digits
+VERSIONS     = (4, 7)
+STRONGEST    = 7
+YEAR         = 365
+EMPTY        = "empty"
+
+class Rand:
+
+    def __init__ ( self ) -> None:
+
+        self._system = secrets.SystemRandom()
+
+    def uuid ( self, version: int = 7 ) -> UUID:
+
+        if version not in VERSIONS: raise ValueError(version)
+
+        return uuid7() if version == STRONGEST else uuid4()
+
+    def string ( self, size: int = 16, alphabet: str = ALPHANUMERIC ) -> str:
+        return "".join(secrets.choice(alphabet) for _ in range(max(size, 0)))
+
+    def slug ( self, size: int = 10 ) -> str:
+        return self.string(size, LOWER)
+
+    def code ( self, size: int = 8 ) -> str:
+        return self.string(size, SAFE)
+
+    def otp ( self, digits: int = 6 ) -> str:
+        return self.string(digits, DIGITS)
+
+    def token ( self, size: int = 32 ) -> str:
+        return secrets.token_urlsafe(size)
+
+    def hex ( self, size: int = 16 ) -> str:
+        return secrets.token_hex(size)
+
+    def bytes ( self, size: int = 32 ) -> bytes:
+        return secrets.token_bytes(size)
+
+    def number ( self, low: int, high: int ) -> int:
+
+        if high < low: raise ValueError((low, high))
+
+        return low + secrets.randbelow(high - low + 1)
+
+    def float ( self, low: float = 0.0, high: float = 1.0 ) -> float:
+        return self._system.uniform(low, high)
+
+    def bool ( self ) -> bool:
+        return secrets.randbelow(2) == 1
+
+    def choice[T] ( self, items: Sequence[T] ) -> T:
+
+        if not items: raise ValueError(EMPTY)
+
+        return secrets.choice(items)
+
+    def sample[T] ( self, items: Sequence[T], size: int ) -> list[T]:
+        return self._system.sample(list(items), min(size, len(items)))
+
+    def shuffle[T] ( self, items: Sequence[T] ) -> list[T]:
+
+        copy = list(items)
+
+        self._system.shuffle(copy)
+
+        return copy
+
+    def date ( self, start: datetime | None = None, end: datetime | None = None ) -> datetime:
+
+        last  = end or datetime.now(UTC)
+        first = start or last - timedelta(days=YEAR)
+
+        if first > last: raise ValueError((first, last))
+
+        return first + timedelta(seconds=self._system.uniform(0, (last - first).total_seconds()))

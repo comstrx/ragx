@@ -1,0 +1,25 @@
+from collections.abc import Mapping
+from typing import ClassVar
+
+from core.exceptions import Code, Fault, Handler
+
+type Mapped = Mapping[type[BaseException], Code]
+
+SERVER_ERROR = 500
+
+class ExceptionHandler(Handler):
+
+    maps : ClassVar[Mapped] = {
+        ValueError        : Code.BAD_REQUEST,
+        KeyError          : Code.NOT_FOUND,
+        PermissionError   : Code.FORBIDDEN,
+        TimeoutError      : Code.UNAVAILABLE,
+        NotImplementedError: Code.INTERNAL,
+    }
+    silent : ClassVar[tuple[type[BaseException], ...]] = ()
+
+    def report ( self, error: BaseException, fault: Fault, facts: Mapping[str, object] ) -> None:
+
+        if isinstance(error, Fault) and fault.status < SERVER_ERROR: return
+
+        super().report(error, fault, facts)
