@@ -7,6 +7,7 @@ exclude = [
     "**/.agents/**",
     "**/node_modules/**",
     "**/vendor/**",
+    "**/.venv/**",
     "**/target/**",
     "**/dist/**",
     "**/build/**",
@@ -29,12 +30,17 @@ exclude = [
     "**/.cache/**",
     "**/.vite/**",
     "**/.gradle/**",
+    "**/__pycache__/**",
+    "**/.pytest_cache/**",
+    "**/.mypy_cache/**",
+    "**/.ruff_cache/**",
+    "**/.hypothesis/**",
+    "**/.tox/**",
+    "**/.nox/**",
     "**/.infra/**",
     "**/.terraform/**",
     "**/fuzz/corpus/**",
     "**/fuzz/artifacts/**",
-    "**/Cargo.toml",
-    "**/supply-chain/**",
 ]
 
 [formatting]

@@ -28,11 +28,16 @@
 *.ps1                 text eol=lf
 *.rb                  text eol=lf
 *.py                  text eol=lf
+*.pyi                 text eol=lf
 *.go                  text eol=lf
 *.frag                text eol=lf
 *.vert                text eol=lf
 *.wgsl                text eol=lf
 *.lua                 text eol=lf
+*.tf                  text eol=lf
+*.tfvars              text eol=lf
+*.hcl                 text eol=lf
+*.tpl                 text eol=lf
 *.sql                 text eol=lf
 *.proto               text eol=lf
 *.graphql             text eol=lf
@@ -57,6 +62,8 @@
 Cargo.lock            text eol=lf
 package-lock.json     text eol=lf
 bun.lock              text eol=lf
+uv.lock               text eol=lf
+.python-version       text eol=lf
 yarn.lock             text eol=lf
 Dockerfile            text eol=lf
 Dockerfile.*          text eol=lf

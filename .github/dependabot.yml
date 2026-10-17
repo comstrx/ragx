@@ -15,7 +15,7 @@ updates:
     commit-message:
       prefix: 'global(deps)'
 
-  - package-ecosystem: cargo
+  - package-ecosystem: uv
     directory: /api
     schedule:
       interval: weekly
@@ -23,28 +23,56 @@ updates:
     cooldown:
       default-days: 7
     groups:
-      rust:
+      python:
         patterns: ['*']
     labels: [deps]
     commit-message:
       prefix: 'api(deps)'
 
-  - package-ecosystem: cargo
-    directory: /infra
+  - package-ecosystem: docker
+    directories: ['/infra/src/template/docker']
     schedule:
       interval: weekly
       day: monday
     cooldown:
       default-days: 7
     groups:
-      rust:
+      docker:
+        patterns: ['*']
+    labels: [deps]
+    commit-message:
+      prefix: 'infra(deps)'
+
+  - package-ecosystem: helm
+    directories: ['/infra/src/template/helm/*', '/infra/src/template/argocd/apps']
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    groups:
+      helm:
+        patterns: ['*']
+    labels: [deps]
+    commit-message:
+      prefix: 'infra(deps)'
+
+  - package-ecosystem: opentofu
+    directories: ['/infra/src/template/tofu/aws/stacks/*', '/infra/src/template/tofu/aws/modules/*']
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    groups:
+      opentofu:
         patterns: ['*']
     labels: [deps]
     commit-message:
       prefix: 'infra(deps)'
 
   - package-ecosystem: bun
-    directory: /panel
+    directory: /web
     schedule:
       interval: weekly
       day: monday
@@ -55,4 +83,4 @@ updates:
         patterns: ['*']
     labels: [deps]
     commit-message:
-      prefix: 'panel(deps)'
+      prefix: 'web(deps)'

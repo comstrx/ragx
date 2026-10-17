@@ -6,9 +6,9 @@ infra:
   - changed-files:
       - any-glob-to-any-file: ['infra/**']
 
-panel:
+web:
   - changed-files:
-      - any-glob-to-any-file: ['panel/**']
+      - any-glob-to-any-file: ['web/**']
 
 global:
   - changed-files:
@@ -25,11 +25,10 @@ deps:
           - '**/uv.lock'
           - '**/package.json'
           - '**/bun.lock'
-          - '**/composer.json'
-          - '**/composer.lock'
           - '**/Dockerfile*'
           - '**/Chart.yaml'
           - '**/Chart.lock'
+          - '**/.terraform.lock.hcl'
 
 docs:
   - changed-files:

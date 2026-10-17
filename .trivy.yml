@@ -1,4 +1,5 @@
 debug: false
+ignorefile: .trivyignore.yaml
 quiet: false
 insecure: false
 timeout: 10m0s
@@ -49,6 +50,7 @@ scan:
     - '**/.agents'
     - '**/node_modules'
     - '**/vendor'
+    - '**/.venv'
     - '**/target'
     - '**/dist'
     - '**/build'
@@ -71,6 +73,13 @@ scan:
     - '**/.cache'
     - '**/.vite'
     - '**/.gradle'
+    - '**/__pycache__'
+    - '**/.pytest_cache'
+    - '**/.mypy_cache'
+    - '**/.ruff_cache'
+    - '**/.hypothesis'
+    - '**/.tox'
+    - '**/.nox'
     - '**/.infra'
     - '**/.terraform'
     - '**/fuzz/corpus'
@@ -82,3 +91,8 @@ license:
     - MIT
     - Apache-2.0
     - OFL-1.1
+    - BSD-2-Clause
+    - BSD-3-Clause
+    - ISC
+    - PSF-2.0
+    - Python-2.0

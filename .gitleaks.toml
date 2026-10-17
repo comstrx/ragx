@@ -12,6 +12,7 @@ paths = [
     '''(^|/)\.agents/''',
     '''(^|/)node_modules/''',
     '''(^|/)vendor/''',
+    '''(^|/)\.venv/''',
     '''(^|/)target/''',
     '''(^|/)dist/''',
     '''(^|/)build/''',
@@ -31,6 +32,13 @@ paths = [
     '''(^|/)\.cache/''',
     '''(^|/)\.vite/''',
     '''(^|/)\.gradle/''',
+    '''(^|/)__pycache__/''',
+    '''(^|/)\.pytest_cache/''',
+    '''(^|/)\.mypy_cache/''',
+    '''(^|/)\.ruff_cache/''',
+    '''(^|/)\.hypothesis/''',
+    '''(^|/)\.tox/''',
+    '''(^|/)\.nox/''',
     '''(^|/)fuzz/corpus/''',
     '''(^|/)fuzz/artifacts/''',
     '''(?i)\.(?:zip|tar|tgz|gz|7z|rar|jar|war)$''',
@@ -50,5 +58,5 @@ regexes = [
 description = "The lab Reverb key: a public app key bound to a loopback socket"
 condition = "AND"
 regexTarget = "line"
-paths = ['''(?:^|/)specs/[^/]+/config/contracts\.ts$''']
+paths = ['''(?:^|/)specs/(?:\([^/]+\)/)*[^/]+/config/contracts\.ts$''']
 regexes = ['''realtime:\s*\{\s*url:\s*"ws://127\.0\.0\.1:\d+",\s*key:''']

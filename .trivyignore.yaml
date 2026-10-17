@@ -1,0 +1,82 @@
+misconfigurations:
+  - id: KSV-0011
+    paths:
+      - infra/src/template/helm/service/templates/deployment.yaml
+      - infra/src/template/helm/platform/templates/redis.yaml
+    statement: Long-running services set cpu requests and memory limits only; a cpu limit throttles the api and redis under burst, which costs more than it protects.
+
+  - id: KSV-0013
+    paths:
+      - infra/src/template/helm/service/templates/deployment.yaml
+      - infra/src/template/aws/ecr-refresher.yaml
+      - infra/src/template/k8s/load.yaml
+    statement: The image is a template value rendered at deploy time; the api image carries the release tag and the tool images are pinned in .env.example (amazon/aws-cli 2.36.16, grafana/k6 1.4.0).
+
+  - id: KSV-0020
+    paths:
+      - infra/src/template/helm/service/templates/deployment.yaml
+      - infra/src/template/helm/platform/templates/redis.yaml
+    statement: The api image runs as uid 33 (the files it owns are chowned to 33 at build) and the redis image as uid 999; both are non-root and fixed by the images, not by the cluster.
+
+  - id: KSV-0021
+    paths:
+      - infra/src/template/helm/service/templates/deployment.yaml
+      - infra/src/template/helm/platform/templates/redis.yaml
+    statement: Same reason as KSV-0020 for the group ids 33 and 999.
+
+  - id: KSV-0110
+    paths:
+      - infra/src/template/helm/service/templates/deployment.yaml
+      - infra/src/template/helm/platform/templates/redis.yaml
+    statement: Helm charts leave metadata.namespace to the release; the installer always passes --namespace, never default.
+
+  - id: KSV-0007
+    paths:
+      - infra/src/template/k8s/load.yaml
+    statement: The load job pins the target host to the edge ip on purpose, so the test hits the gateway and not a cached DNS answer.
+
+  - id: KSV-0113
+    paths:
+      - infra/src/template/aws/ecr-refresher.yaml
+    statement: Refreshing the ECR pull secret is the job's only purpose; the role is limited to get and patch on the single secret named pull-secret.
+
+  - id: AWS-0104
+    paths:
+      - infra/src/template/tofu/aws/modules/ec2/main.tf
+    statement: The single server pulls images, updates and reaches third-party apis; outbound to any address is required and ingress stays limited to ssh, the kubernetes api and http(s).
+
+  - id: AWS-0087
+    paths:
+      - infra/src/template/tofu/aws/modules/s3/main.tf
+    statement: The media bucket serves public objects by design when a stack asks for public = true; every other bucket keeps the public block.
+
+  - id: AWS-0093
+    paths:
+      - infra/src/template/tofu/aws/modules/s3/main.tf
+    statement: Same reason as AWS-0087.
+
+  - id: AWS-0132
+    paths:
+      - infra/src/template/tofu/aws/modules/s3/main.tf
+    statement: Public media cannot be read anonymously when encrypted with a customer managed key; SSE-S3 stays on the media bucket.
+
+  - id: AWS-0089
+    paths:
+      - infra/src/template/tofu/aws/modules/s3/main.tf
+    statement: Access logging needs a second bucket per bucket; the edge logs every request already and the buckets hold media and backups only.
+
+  - id: AWS-0017
+    paths:
+      - infra/src/template/tofu/aws/modules/cloudwatch/main.tf
+      - infra/src/template/tofu/aws/modules/network/main.tf
+    statement: Log groups hold application and flow logs without secrets; AWS-managed encryption at rest is kept until a customer managed key is required by a tenant contract.
+
+  - id: AWS-0078
+    paths:
+      - infra/src/template/tofu/aws/modules/rds/main.tf
+    statement: Performance Insights data is query metadata; AWS-managed encryption is kept until a customer managed key is required by a tenant contract.
+
+  - id: AWS-0123
+    paths:
+      - infra/src/template/tofu/aws/modules/keys/main.tf
+    statement: The app and backup users are machine identities that hold access keys only; no console login exists for MFA to protect, and the keys are rotated by the platform.

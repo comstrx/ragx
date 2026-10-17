@@ -150,9 +150,12 @@ LICENSE
 **/*.p8
 
 **/coverage/
+**/.coverage
+**/.coverage.*
 **/.nyc_output/
 **/lcov.info
 **/coverage.xml
+**/coverage.json
 **/htmlcov/
 **/test-results/
 **/playwright-report/
@@ -163,7 +166,15 @@ LICENSE
 
 **/__pycache__/
 **/*.py[codz]
+**/*$py.class
 **/.venv/
 **/.pytest_cache/
 **/.mypy_cache/
+**/.dmypy.json
 **/.ruff_cache/
+**/.hypothesis/
+**/.tox/
+**/.nox/
+**/*.egg-info/
+**/.eggs/
+**/wheels/

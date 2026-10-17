@@ -6,9 +6,9 @@
   color: '1D76DB'
   description: The infrastructure engine (infra)
 
-- name: panel
+- name: web
   color: '0075CA'
-  description: The admin panel engine (panel)
+  description: The web engine, SEO sites and panels (web)
 
 - name: global
   color: 'BFDADC'

@@ -6,8 +6,8 @@ Welcome to `ragx` 👋 We love high-quality contributions.
 
 ## Where to go
 
-| You want to...                    | Use...                                                                  |
-| --------------------------------- | ----------------------------------------------------------------------- |
+| You want to...                    | Use...                                                                 |
+| --------------------------------- | ---------------------------------------------------------------------- |
 | Ask a question / propose a design | 💬 [Discussions](https://github.com/comstrx/ragx/discussions)          |
 | Report a reproducible bug         | 🐞 [Issues](https://github.com/comstrx/ragx/issues)                    |
 | Report a security issue (private) | 🔒 [Security](https://github.com/comstrx/ragx/security/advisories/new) |
