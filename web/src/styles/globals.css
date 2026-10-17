@@ -1,0 +1,40 @@
+:root {
+    color-scheme: light dark;
+}
+*, *::before, *::after {
+    box-sizing: border-box;
+}
+html, body {
+    margin: 0;
+    min-height: var(--height-screen);
+    background: var(--body);
+    color: var(--ink);
+}
+body {
+    font-family: var(--font-sans, system-ui, sans-serif);
+    font-size: var(--type-md-size);
+    line-height: var(--type-md-line);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+button, input, select, textarea {
+    font: inherit;
+    color: inherit;
+}
+:focus-visible {
+    outline: var(--focus-width) solid var(--focus);
+    outline-offset: var(--focus-offset);
+}
+::selection {
+    background: color-mix(in srgb, var(--primary) var(--tint-strong), transparent);
+}
+[hidden] {
+    display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: var(--motion-instant);
+        animation-iteration-count: 1;
+        transition-duration: var(--motion-instant);
+    }
+}

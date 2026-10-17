@@ -1,0 +1,14 @@
+import type { SiteConfig } from "@/lib/spec/surface";
+
+export default {
+    urls: {
+        production: "http://127.0.0.1:8000",
+        local: "http://127.0.0.1:8000",
+        browser: "http://127.0.0.1:8000",
+    },
+    options: {
+        prefix: "v1",
+        tenant: null,
+        insecure: true,
+    },
+} satisfies SiteConfig["contracts"];
