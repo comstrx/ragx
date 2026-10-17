@@ -5,7 +5,7 @@ priorityClass: platform-data
 
 redis:
   enabled: true
-  image: redis:7-alpine
+  image: redis:8
   size: 5Gi
   maxmemory: 768mb
   resources:
