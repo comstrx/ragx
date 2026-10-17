@@ -72,6 +72,7 @@ Measured on 2026-10-17 on a development machine, in process, not a benchmark of 
 | `GET /v1/auth/me` (JWT verify + user + roles), concurrency 8      | 280 rps, p50 24 ms               |
 | JWT issue / verify, in process                                    | 19,000 / 13,000 per second       |
 | WebSocket fan-out, one publish to 2,000 subscribed sockets        | 670,000 frames per second        |
+| Queue push + run, event dispatch, in process                      | 52,000 / 67,000 per second       |
 | web first-load JavaScript of the admin export                     | 216 KB over the wire with brotli |
 
 ---

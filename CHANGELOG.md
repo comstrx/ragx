@@ -21,6 +21,7 @@ Every release of RagX, one section per tag, one block per part.
 - `core/socket` (WebSocket hub: per-connection bounded outboxes, pings, frame limits, presence, slow-consumer shedding) and `core/broadcast` (channel DSL with public/private/presence authorization, event relay, local driver) declared in `routes/channel` and mounted at `SOCKET_PATH`.
 - Docs are configuration: `config/docs.py` drives the Scalar page, the OpenAPI path, theme, tag order, hidden tags and the error envelope responses injected into every operation.
 - `app/support` → `app/utils`, `app/Mail` → `app/mails`; `APP_PREFIX` moves the version prefix into `bootstrap/app.py` routing.
+- Confirmation lap: `STORAGE_ROOT/PUBLIC/PRIVATE/LOGS` place the disks and the log folder anywhere (relative to the api root or absolute, `../storage` or `/var/www/storage` with nothing else to configure), `LOG_FILE` writes JSON lines there, uploads refuse `STORAGE_BLOCKED` extensions, every answer carries `X-Content-Type-Options: nosniff`, sockets accept text and binary frames, `Query` gains `first_or_create update_or_create increment decrement chunk`, and the core tests now pin the env layers, the config DSL, json and the exception handler; `python -m bootstrap runbook` prints the operational facts with secrets redacted.
 
 ### infra
 
