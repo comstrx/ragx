@@ -1,0 +1,22 @@
+{{- if .Values.tlsEnabled }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: api-tls
+  annotations:
+    argocd.argoproj.io/sync-options: SkipHealthCheck=true
+spec:
+  secretName: {{ .Values.tlsSecret }}
+  issuerRef:
+    kind: ClusterIssuer
+    name: letsencrypt
+  dnsNames:
+    {{- if .Values.dns01 }}
+    {{- toYaml (.Values.hostnames | default (list .Values.domain)) | nindent 4 }}
+    {{- else }}
+    - {{ .Values.domain }}
+    {{- range .Values.panels }}
+    - {{ . }}.{{ $.Values.domain }}
+    {{- end }}
+    {{- end }}
+{{- end }}

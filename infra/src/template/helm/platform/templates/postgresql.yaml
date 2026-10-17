@@ -1,0 +1,97 @@
+{{- if .Values.postgresql.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgresql-initdb
+  labels:
+    app.kubernetes.io/name: postgresql
+data:
+  extensions.sql: |
+    CREATE SCHEMA IF NOT EXISTS extensions;
+    CREATE EXTENSION IF NOT EXISTS btree_gist SCHEMA extensions;
+    CREATE EXTENSION IF NOT EXISTS btree_gin  SCHEMA extensions;
+    CREATE EXTENSION IF NOT EXISTS pg_trgm    SCHEMA extensions;
+    CREATE EXTENSION IF NOT EXISTS unaccent   SCHEMA extensions;
+    CREATE EXTENSION IF NOT EXISTS pgcrypto   SCHEMA extensions;
+    GRANT USAGE ON SCHEMA extensions TO PUBLIC;
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgresql
+  labels:
+    app.kubernetes.io/name: postgresql
+spec:
+  serviceName: postgresql
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgresql
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgresql
+    spec:
+      priorityClassName: {{ .Values.priorityClass }}
+      securityContext:
+        fsGroup: 999
+      containers:
+        - name: postgresql
+          image: {{ .Values.postgresql.image }}
+          env:
+            - name: POSTGRES_DB
+              value: {{ .Values.postgresql.database | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.postgresql.username | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretRef }}
+                  key: DB_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: POSTGRES_INITDB_ARGS
+              value: {{ .Values.postgresql.initdbArgs | quote }}
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: [pg_isready, -U, {{ .Values.postgresql.username }}]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.postgresql.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: initdb
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+      volumes:
+        - name: initdb
+          configMap:
+            name: postgresql-initdb
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: {{ .Values.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.postgresql.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql
+  labels:
+    app.kubernetes.io/name: postgresql
+spec:
+  selector:
+    app.kubernetes.io/name: postgresql
+  ports:
+    - name: postgresql
+      port: 5432
+      targetPort: 5432
+{{- end }}

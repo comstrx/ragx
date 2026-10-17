@@ -1,0 +1,42 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: {{ .Values.project }}
+  source:
+    repoURL: {{ .Values.infraRepo }}
+    targetRevision: {{ .Values.infraTag }}
+    path: {{ .Values.chartsPath }}/platform
+    helm:
+      valuesObject:
+        redis:
+          enabled: {{ .Values.platform.redis }}
+          image: {{ .Values.platform.redisImage }}
+          size: {{ .Values.platform.redisSize }}
+          maxmemory: {{ .Values.platform.redisMaxmemory }}
+          resources:
+            requests: { cpu: {{ .Values.platform.redisCpu }}, memory: {{ .Values.platform.redisMemory }} }
+            limits: { memory: {{ .Values.platform.redisMemoryLimit }} }
+        postgresql:
+          enabled: {{ .Values.platform.postgresql }}
+          image: {{ .Values.platform.pgImage }}
+          size: {{ .Values.platform.pgSize }}
+          resources:
+            requests: { cpu: {{ .Values.platform.pgCpu }}, memory: {{ .Values.platform.pgMemory }} }
+            limits: { memory: {{ .Values.platform.pgMemoryLimit }} }
+          database: {{ .Values.platform.database }}
+          username: {{ .Values.platform.username }}
+        storageClass: {{ .Values.platform.storageClass }}
+        priorityClass: {{ .Values.platform.priorityClass }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ .Values.namespace }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

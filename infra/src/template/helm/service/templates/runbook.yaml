@@ -1,0 +1,48 @@
+{{- if .Values.runbook.enabled }}
+{{- $name := include "service.name" . }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}-runbook
+  labels:
+    {{- include "service.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 900
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        {{- include "service.selector" (merge (dict "component" "runbook") .) | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      {{- include "service.pullSecrets" . | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 33
+        runAsGroup: 33
+      containers:
+        - name: runbook
+          image: {{ include "service.image" . }}
+          command: {{ toJson .Values.runbook.command }}
+          envFrom:
+            - configMapRef:
+                name: {{ $name }}-config
+            - secretRef:
+                name: {{ include "service.secretRef" . }}
+                optional: false
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 768Mi }
+{{- end }}

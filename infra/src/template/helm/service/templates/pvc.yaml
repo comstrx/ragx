@@ -1,0 +1,32 @@
+{{- if .Values.storage.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "service.name" . }}-storage
+  labels:
+    {{- include "service.labels" . | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: {{ .Values.storage.class }}
+  resources:
+    requests:
+      storage: {{ .Values.storage.size }}
+{{- end }}
+{{- if and .Values.backup.enabled .Values.backup.storage.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "service.name" . }}-backups
+  labels:
+    {{- include "service.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+    argocd.argoproj.io/sync-options: Prune=false,SkipHealthCheck=true
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: {{ .Values.backup.storage.class }}
+  resources:
+    requests:
+      storage: {{ .Values.backup.storage.size }}
+{{- end }}

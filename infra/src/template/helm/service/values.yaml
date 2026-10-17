@@ -1,0 +1,105 @@
+name: ""
+
+image:
+  repository: ""
+  tag: latest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+env: {}
+
+secretRef: ""
+ownerSecretRef: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+
+healthPath: /health
+drainSeconds: 10
+
+processes:
+  web:
+    enabled: true
+    command: []
+    port: 8000
+    replicas: 2
+    headless: false
+    resources:
+      requests: { cpu: 250m, memory: 512Mi }
+      limits: { memory: 1Gi }
+
+  worker:
+    enabled: false
+    command: [python, -m, bootstrap, work]
+    liveness: [sh, -c, "grep -q work /proc/1/cmdline"]
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { memory: 768Mi }
+
+  scheduler:
+    enabled: false
+    command: [python, -m, bootstrap, schedule]
+    liveness: [sh, -c, "grep -q schedule /proc/1/cmdline"]
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits: { memory: 512Mi }
+
+autoscaling:
+  enabled: false
+  min: 2
+  max: 5
+  cpu: 75
+
+route:
+  enabled: false
+  gateway: gateway
+  gatewayNamespace: gateway
+  hostnames: []
+  websocketPath: /ws
+  responseHeaders:
+    set:
+      Strict-Transport-Security: max-age=31536000; includeSubDomains
+      X-Content-Type-Options: nosniff
+      X-Frame-Options: DENY
+      Referrer-Policy: no-referrer
+    remove: [X-Powered-By]
+
+rollout:
+  surge: 1
+  unavailable: 0
+
+storage:
+  enabled: false
+  class: local-path
+  size: 10Gi
+  mount: /app/storage/app
+
+netpol:
+  enabled: false
+  proxyNamespace: envoy-gateway-system
+  metricsNamespace: ""
+
+migrate:
+  enabled: false
+  command: [python, -m, bootstrap, migrate]
+
+runbook:
+  enabled: false
+  command: [python, -m, bootstrap, runbook]
+
+backup:
+  enabled: false
+  target: s3
+  schedule: "0 3 * * *"
+  image: ""
+  bucket: ""
+  endpoint: ""
+  region: ""
+  keepDays: 30
+  mount: /backups
+  storage:
+    enabled: false
+    class: local-path
+    size: 20Gi
