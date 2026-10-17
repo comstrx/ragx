@@ -2,11 +2,14 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import asdict, is_dataclass
 from typing import Any, ClassVar, Protocol, Self
 
+from core.date import date
 from core.exceptions import Code, Fault
 from core.json import json
 from core.log import log
 from core.queue import Queued, queue
-import asyncio, inspect
+from core.rand import rand
+from .bus import Bus, Envelope, LocalBus
+import asyncio, contextlib, inspect
 
 type Handler = Callable[[Any], Awaitable[None] | None]
 type Target = Handler | type[Listener] | Listener
@@ -65,6 +68,15 @@ class Events:
         self._named: dict[str, Target] = {}
         self._any: list[Handler] = []
         self._waiting: dict[type[Event], list[asyncio.Future[Any]]] = {}
+        self._bus: Bus = LocalBus()
+        self._stopping = asyncio.Event()
+        self._consumer: asyncio.Task[None] | None = None
+
+    def setup ( self, bus: Bus ) -> None:
+        self._bus = bus
+
+    def bus ( self ) -> Bus:
+        return self._bus
 
     def listen ( self, kind: type[Event], *targets: Target ) -> Self:
 
@@ -102,11 +114,17 @@ class Events:
 
         return f"{kind.__module__}:{kind.__qualname__}"
 
+    def envelope ( self, event: Event ) -> Envelope:
+        return { "id": str(rand.uuid()), "kind": event.kind, "data": event.dump(), "at": date.iso(date.now()) }
+
     async def dispatch ( self, event: Event ) -> int:
 
         targets = self.listeners(type(event))
 
-        for target in targets: await self.deliver(target, event)
+        if self._bus.local:
+            for target in targets: await self.deliver(target, event)
+        else: await self._bus.publish(self.envelope(event))
+
         for handler in self._any: await self.call(handler, event)
 
         for future in self._waiting.pop(type(event), []):
@@ -130,6 +148,37 @@ class Events:
             return
 
         await self.call(instance, event)
+
+    async def receive ( self, envelope: Envelope ) -> None:
+
+        event = Event.of(str(envelope["kind"]), dict(envelope.get("data", {})))
+
+        for target in self.listeners(type(event)): await self.deliver(target, event)
+
+        log.debug("event.received", name=event.label(), id=str(envelope.get("id", "")))
+
+    def start ( self ) -> None:
+
+        if self._bus.local or self._consumer is not None: return
+
+        self._stopping.clear()
+        self._consumer = asyncio.create_task(self._bus.consume(self.receive, self._stopping), name="events")
+
+        log.info("events.listening", bus=self._bus.name)
+
+    async def stop ( self ) -> None:
+
+        self._stopping.set()
+
+        consumer, self._consumer = self._consumer, None
+
+        if consumer is not None:
+
+            consumer.cancel()
+
+            with contextlib.suppress(asyncio.CancelledError): await consumer
+
+        await self._bus.close()
 
     async def replay ( self, listener: str, event: str, data: dict[str, Any] ) -> None:
 

@@ -1,0 +1,262 @@
+name: ${COMPOSE_PROJECT}
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "${LOG_MAX_SIZE}"
+    max-file: "${LOG_MAX_FILES}"
+
+x-hardened: &hardened
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  logging: *logging
+
+x-api: &api
+  <<: *hardened
+  image: ${IMAGE_API}:${IMAGE_TAG}
+  env_file: api.env
+  read_only: true
+  tmpfs:
+    - /tmp:mode=1777,size=${API_TMP_SIZE}
+  volumes:
+    - storage:/app/src/storage
+  stop_grace_period: 30s
+  depends_on:
+    postgres:
+      condition: service_healthy
+    rabbitmq:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+x-web: &web
+  <<: *hardened
+  profiles: [web]
+  read_only: true
+  tmpfs:
+    - /tmp:mode=1777
+  networks: [edge]
+  healthcheck:
+    test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then((r) => process.exit(r.status < 500 ? 0 : 1)).catch(() => process.exit(1))"]
+    interval: 30s
+    timeout: 5s
+    retries: 3
+    start_period: 20s
+  deploy:
+    resources:
+      limits:
+        cpus: "${WEB_CPUS}"
+        memory: ${WEB_MEMORY}
+
+services:
+  nginx:
+    <<: *hardened
+    image: ${NGINX_IMAGE}
+    command: [nginx, -c, /etc/nginx/platform/nginx.conf, -g, "daemon off;"]
+    ports:
+      - "${HTTP_BIND}:8080"
+      - "${HTTPS_BIND}:8443"
+      - "${HTTPS_BIND}:8443/udp"
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,size=${EDGE_TMP_SIZE}
+    volumes:
+      - ./nginx:/etc/nginx/platform:ro
+      - certs:/etc/letsencrypt:ro
+      - acme:/var/www/acme:ro
+    networks: [edge]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/nginx-health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "${EDGE_CPUS}"
+          memory: ${EDGE_MEMORY}
+
+  api:
+    <<: *api
+    command: [serve]
+    networks: [edge, data]
+    deploy:
+      resources:
+        limits:
+          cpus: "${API_CPUS}"
+          memory: ${API_MEMORY}
+
+  worker:
+    <<: *api
+    command: [work]
+    profiles: [worker]
+    networks: [edge, data]
+    environment:
+      QUEUE_WORKERS: "${WORKER_CONCURRENCY}"
+    healthcheck:
+      test: ["CMD", "sh", "-c", "grep -q work /proc/1/cmdline"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      replicas: ${WORKER_REPLICAS}
+      resources:
+        limits:
+          cpus: "${WORKER_CPUS}"
+          memory: ${WORKER_MEMORY}
+
+  scheduler:
+    <<: *api
+    command: [schedule]
+    profiles: [scheduler]
+    networks: [edge, data]
+    healthcheck:
+      test: ["CMD", "sh", "-c", "grep -q schedule /proc/1/cmdline"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "${SCHEDULER_CPUS}"
+          memory: ${SCHEDULER_MEMORY}
+
+  web-super:
+    <<: *web
+    image: ${IMAGE_WEB}:super-${IMAGE_TAG}
+
+  web-admin:
+    <<: *web
+    image: ${IMAGE_WEB}:admin-${IMAGE_TAG}
+
+  web-client:
+    <<: *web
+    image: ${IMAGE_WEB}:client-${IMAGE_TAG}
+
+  postgres:
+    <<: *hardened
+    image: ${POSTGRES_IMAGE}
+    user: "999:999"
+    command: [postgres, -c, config_file=/etc/postgresql/postgresql.conf, -c, hba_file=/etc/postgresql/pg_hba.conf]
+    env_file: postgres.env
+    shm_size: ${PG_SHM_SIZE}
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+      - /run/postgresql:mode=1777
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./postgres/init.sh:/docker-entrypoint-initdb.d/10-platform.sh:ro
+    networks: [data]
+    stop_grace_period: 90s
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "${PG_CPUS}"
+          memory: ${PG_MEMORY_LIMIT}
+
+  rabbitmq:
+    <<: *hardened
+    image: ${RABBITMQ_IMAGE}
+    hostname: rabbitmq
+    user: "100:101"
+    env_file: rabbitmq.env
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+    volumes:
+      - rabbitmq:/var/lib/rabbitmq
+      - ./rabbitmq/platform.conf:/etc/rabbitmq/conf.d/20-platform.conf:ro
+    networks: [data]
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "${RABBITMQ_CPUS}"
+          memory: ${RABBITMQ_MEMORY}
+
+  redis:
+    <<: *hardened
+    image: ${REDIS_IMAGE}
+    user: "999:1000"
+    command: [redis-server, /etc/redis/redis.conf]
+    env_file: redis.env
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+    volumes:
+      - ./redis/redis.conf:/etc/redis/redis.conf:ro
+      - ./redis/users.acl:/etc/redis/users.acl:ro
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --user \"$$REDIS_USER\" --no-auth-warning ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    deploy:
+      resources:
+        limits:
+          cpus: "${REDIS_CPUS}"
+          memory: ${REDIS_MEMORY}
+
+  backup:
+    <<: *hardened
+    image: ${IMAGE_API}:backup-${IMAGE_TAG}
+    profiles: [ops]
+    restart: "no"
+    env_file: backup.env
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,size=${BACKUP_TMP_SIZE}
+    volumes:
+      - backups:/backups
+    networks: [data, edge]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  certbot:
+    image: ${CERTBOT_IMAGE}
+    profiles: [ops]
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *logging
+    entrypoint: [certbot]
+    volumes:
+      - certs:/etc/letsencrypt
+      - acme:/var/www/acme
+      - ./certbot:/run/certbot:ro
+    networks: [edge]
+
+networks:
+  edge: {}
+  data:
+    internal: true
+
+volumes:
+  pgdata: {}
+  rabbitmq: {}
+  storage: {}
+  backups: {}
+  certs: {}
+  acme: {}

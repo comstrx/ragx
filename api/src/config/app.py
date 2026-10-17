@@ -15,6 +15,7 @@ class AppConfig(Settings):
     port    : int  = Field(default=8000, ge=1, le=65535)
     workers : int  = Field(default=1, ge=1, le=64)
     prefix  : str  = "/v1"
+    url     : str  = ""
     release : str | None = None
     origins : list[str] = Field(default_factory=lambda: ["http://localhost:3000", "http://localhost:3001"])
 

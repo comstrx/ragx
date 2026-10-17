@@ -138,3 +138,9 @@ class Cache:
 
     async def clear ( self ) -> None:
         await self._store.clear()
+
+    async def close ( self ) -> None:
+
+        closer = getattr(self._store, "close", None)
+
+        if callable(closer): await closer()

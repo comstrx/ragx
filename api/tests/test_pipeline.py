@@ -1,11 +1,12 @@
 from dataclasses import dataclass
 
+from core.cache import Cache, RedisStore
 from core.date import UTC, DateTime
-from core.event import events
+from core.event import Event, Events, RabbitBus, events
 from core.exceptions import Fault
 from core.http import App
 from core.mail import MemoryTransport
-from core.queue import Job, MemoryDriver, Queue, Queued, SyncDriver, queue
+from core.queue import Job, MemoryDriver, Queue, Queued, RabbitDriver, SyncDriver, queue
 from core.rand import rand
 from core.schedule import Cron, Schedule
 from app.enums import TokenKind
@@ -15,16 +16,24 @@ from app.mails import WelcomeMail
 from app.repositories import tokens, users
 from app.utils.bases import BaseEvent, BaseJob, BaseListener
 from routes import schedule as timetable
-import pytest
+import asyncio, pytest
 
 voices: list[str] = []
 counted: list[tuple[int, int]] = []
 OLD = DateTime(2020, 1, 1, tzinfo=UTC)
 
+AMQP  = "amqp://guest:guest@127.0.0.1:5672/"
+REDIS = "redis://127.0.0.1:6379/15"
+
 @dataclass(frozen=True, slots=True)
 class Pinged(BaseEvent):
 
     tag : str
+
+@dataclass(frozen=True, slots=True)
+class Shipped(Event):
+
+    order : str
 
 class Loud(BaseListener, Queued):
 
@@ -159,6 +168,126 @@ class TestPipeline:
             events.forget(Pinged)
 
             await users.query().where("id", user.id).force_delete()
+
+@pytest.mark.anyio
+class TestBrokers:
+
+    async def test_rabbit_carries_jobs_with_receipts_delays_and_retries ( self ) -> None:
+
+        tag    = rand.hex(3)
+        own    = Queue()
+        calls: list[object] = []
+        driver = RabbitDriver(AMQP, exchange=f"jobs-{tag}", prefetch=4, quorum=False)
+
+        async def work ( value: int ) -> None:
+
+            calls.append(value)
+
+            if value == 13: raise RuntimeError("unlucky")
+
+        own.setup(driver, ("fast",), tries=2, backoff=0.0)
+
+        try:
+
+            assert await own.clear("fast") == 0 and not own.inline()
+
+            job = await own.push(work, 7, queue="fast")
+
+            for _ in range(20):
+
+                if await own.size("fast") == 1: break
+
+                await asyncio.sleep(0.05)
+
+            assert job.queue == "fast" and await own.size("fast") == 1
+
+            pulled = await driver.pull("fast", 1.0)
+
+            assert pulled is not None and pulled.id == job.id and pulled.args == (7,) and pulled.receipt is not None
+            assert await own.perform(pulled) and calls == [7] and await own.size("fast") == 0
+
+            await own.push(work, 13, queue="fast")
+
+            assert await own.drain("fast") == 2 and calls == [7, 13, 13] and own.stats()["failures"] == 2
+            assert await own.drain("fast") == 0 and await own.size("fast") == 0
+            assert await driver.pull("fast", 0.2) is None
+
+            late = await own.push(work, 21, queue="fast", delay=0.4)
+
+            assert late.available > job.available and await driver.pull("fast", 0.1) is None
+
+            await asyncio.sleep(0.6)
+
+            assert await own.drain("fast") == 1 and calls[-1] == 21
+
+        finally:
+
+            await own.clear("fast")
+            await own.close()
+
+    async def test_rabbit_bus_moves_events_between_processes ( self ) -> None:
+
+        tag      = rand.hex(3)
+        sender   = Events()
+        receiver = Events()
+        heard: list[str] = []
+        inbox    = f"test-{tag}.events"
+
+        pipe     = RabbitBus(AMQP, exchange=f"events-{tag}", queue=inbox, prefetch=4)
+
+        sender.setup(RabbitBus(AMQP, exchange=f"events-{tag}", queue=inbox, prefetch=4))
+        receiver.setup(pipe)
+        receiver.listen(Shipped, lambda event: heard.append(event.order))
+
+        try:
+
+            await pipe.inbox()
+
+            receiver.start()
+
+            assert not sender.bus().local and await sender.dispatch(Shipped(f"o-{tag}")) == 0
+
+            for _ in range(50):
+
+                if heard: break
+
+                await asyncio.sleep(0.1)
+
+            assert heard == [f"o-{tag}"]
+
+        finally:
+
+            await receiver.stop()
+            await sender.stop()
+
+    async def test_redis_store_backs_the_cache_and_the_throttle ( self ) -> None:
+
+        store = RedisStore(REDIS, prefix=f"unit-{rand.hex(3)}")
+        cache = Cache(store)
+
+        try:
+
+            assert await store.ping()
+
+            await cache.set("k", { "n": [1, 2] }, ttl=30)
+
+            assert await cache.get("k") == { "n": [1, 2] } and await cache.has("k")
+            assert 0 < (await store.ttl("k") or 0) <= 30 and await store.ttl("missing") is None
+            assert await cache.increment("n", 2, ttl=30) == 2 and await cache.increment("n") == 3
+
+            hits = [await cache.hit("bucket", 2, 30) for _ in range(3)]
+
+            assert [hit.allowed for hit in hits] == [True, True, False] and 0 < hits[2].reset <= 30
+            assert await cache.forget("k") and not await cache.forget("k")
+
+            await cache.clear()
+
+            assert await cache.get("n") is None
+
+        finally:
+
+            await cache.clear()
+            await store.close()
 
 class TestSchedule:
 

@@ -5,6 +5,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI
 from starlette.middleware.cors import CORSMiddleware
+from starlette.responses import Response as Served
 from starlette.staticfiles import StaticFiles
 from .docs import Documented, Docs
 from .facts import Facts, Known
@@ -18,6 +19,22 @@ type Lifespan = Callable[[App], AbstractAsyncContextManager[None]]
 type Schema = Callable[[], dict[str, Any]]
 
 throttle = Throttle()
+
+class Static(StaticFiles):
+
+    def __init__ ( self, folder: Path, cache: int ) -> None:
+
+        super().__init__(directory=str(folder), check_dir=False)
+
+        self._cache = cache
+
+    def file_response ( self, *args: Any, **kwargs: Any ) -> Served:
+
+        response = super().file_response(*args, **kwargs)
+
+        if self._cache: response.headers["Cache-Control"] = f"public, max-age={self._cache}, immutable"
+
+        return response
 
 class App(FastAPI):
 
@@ -60,10 +77,10 @@ class Http:
             max_age=600,
         )
 
-    def serve ( self, app: FastAPI, url: str, folder: Path, name: str = "static" ) -> None:
+    def serve ( self, app: FastAPI, url: str, folder: Path, name: str = "static", cache: int = 0 ) -> None:
 
         folder.mkdir(parents=True, exist_ok=True)
-        app.mount(url, StaticFiles(directory=str(folder)), name=name)
+        app.mount(url, Static(folder, cache), name=name)
 
     def mount ( self, app: FastAPI, group: Group ) -> None:
 

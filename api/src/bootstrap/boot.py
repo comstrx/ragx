@@ -1,7 +1,9 @@
 from collections.abc import AsyncGenerator, MutableMapping
 from contextlib import asynccontextmanager
 
+from core.cache import cache
 from core.database import Database, Migrator, Seeds, Status, adapters
+from core.event import events
 from core.queue import queue
 from core.schedule import schedule
 from core.socket import socket
@@ -44,6 +46,9 @@ class Boot:
         facts["pool"]   = self._database.describe()
         facts["queue"]  = self.work()
         facts["tasks"]  = self.clock()
+        facts["events"] = events.bus().name
+
+        if self._jobs.workers > 0: events.start()
 
     async def ready ( self ) -> None:
 
@@ -110,5 +115,7 @@ class Boot:
 
             await schedule.stop()
             await socket.close_all()
-            await queue.stop()
+            await events.stop()
+            await queue.close()
+            await cache.close()
             await self._database.close()

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from core.array import array
+from core.assets import Assets
 from core.cache import Cache
 from core.config import Config, Env, Settings
 from core.crypto import Crypto
@@ -380,11 +381,15 @@ class TestServices:
 
         assert not view.ready() and not view.exists("hi.html")
 
-        view.setup(tmp_path, { "app": "Unit" })
+        statics = Assets()
+
+        statics.setup(tmp_path, "/static")
+        view.setup(tmp_path, { "app": "Unit", "assets": statics.url })
 
         assert view.ready() and view.exists("hi.html") and not view.exists("nope.html") and view.folder() == tmp_path
         assert await view.render("hi.html", name="<b>A</b>", title="A B") == "Unit: &lt;b&gt;A&lt;/b&gt; / a-b / X Y"
         assert await view.text("{{ 2500|human }} {{ 1|percent(4) }}") == "2.5K 25.0"
+        assert (await view.text("{{ assets('hi.html') }}")).startswith("/static/hi.html?v=")
 
         with pytest.raises(Fault) as missing: await view.render("nope.html")
 
@@ -430,6 +435,43 @@ class TestServices:
         outbox.clear()
 
         assert outbox.last() is None
+
+    async def test_assets_resolve_version_and_confine_public_files ( self, tmp_path: Path ) -> None:
+
+        statics = Assets()
+
+        (tmp_path / "images").mkdir()
+        (tmp_path / "images" / "logo.svg").write_text("<svg/>")
+        (tmp_path / ".secret").write_text("hidden")
+
+        statics.setup(tmp_path, "/static", "https://api.test")
+
+        stamp = statics.stamp("images/logo.svg")
+
+        assert statics.ready() and statics.prefix() == "/static" and stamp is not None and len(stamp) == 10
+        assert statics.url("images/logo.svg") == f"https://api.test/static/images/logo.svg?v={stamp}"
+        assert statics.url("/images//logo.svg", absolute=False) == f"/static/images/logo.svg?v={stamp}"
+        assert statics.url("missing.css") == "https://api.test/static/missing.css" and not statics.exists("missing.css")
+        assert statics.mime("images/logo.svg") == "image/svg+xml" and await statics.text("images/logo.svg") == "<svg/>"
+        assert await statics.list() == ["images/logo.svg"]
+
+        (tmp_path / "images" / "logo.svg").write_text("<svg>2</svg>")
+
+        assert statics.stamp("images/logo.svg") == stamp
+
+        statics.forget()
+
+        assert statics.stamp("images/logo.svg") != stamp
+
+        for bad in ("../etc/passwd", ".secret", "images/../.secret", ""):
+
+            with pytest.raises(Fault) as refused: statics.url(bad)
+
+            assert refused.value.code == Code.BAD_REQUEST
+
+        with pytest.raises(Fault) as absent: await statics.read("missing.css")
+
+        assert absent.value.code == Code.NOT_FOUND
 
     async def test_fs_writes_atomically_and_net_builds_urls ( self, tmp_path: Path ) -> None:
 

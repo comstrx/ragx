@@ -1,5 +1,0 @@
-apiVersion: v2
-name: observability
-description: What this platform watches about itself
-type: application
-version: 1.0.0

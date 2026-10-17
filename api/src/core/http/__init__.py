@@ -1,5 +1,5 @@
 from fastapi import Body, Depends, File, Form, Header, Path, Query, Request, UploadFile as Upload
-from starlette.responses import HTMLResponse as Html, StreamingResponse as Streamed
+from starlette.responses import FileResponse as Served, HTMLResponse as Html, StreamingResponse as Streamed
 
 from .app import App, Http, Lifespan, throttle
 from .docs import Docs, Documented
@@ -19,7 +19,7 @@ warm   = Warm()
 __all__ = [
     "App", "Body", "Bound", "Depends", "Docs", "Documented", "Envelope", "Facts", "File", "Form", "Group", "Guard",
     "Handler", "Header", "Html",
-    "Http", "Lifespan", "Path", "Query", "Request", "Response", "Route", "Server", "Streamed", "Throttle", "Trace",
-    "Upload", "Warm",
+    "Http", "Lifespan", "Path", "Query", "Request", "Response", "Route", "Served", "Server", "Streamed", "Throttle",
+    "Trace", "Upload", "Warm",
     "by_client", "http", "server", "throttle", "warm",
 ]

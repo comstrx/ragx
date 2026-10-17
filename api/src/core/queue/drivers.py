@@ -59,6 +59,12 @@ class MemoryDriver:
 
         return count
 
+    async def ack ( self, _job: Job ) -> None:
+        return None
+
+    async def close ( self ) -> None:
+        return None
+
 class SyncDriver:
 
     name = "sync"
@@ -74,3 +80,9 @@ class SyncDriver:
 
     async def clear ( self, _queue: str ) -> int:
         return 0
+
+    async def ack ( self, _job: Job ) -> None:
+        return None
+
+    async def close ( self ) -> None:
+        return None

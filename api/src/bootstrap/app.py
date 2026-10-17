@@ -1,22 +1,24 @@
+from core.assets import assets
 from core.broadcast import broadcast
+from core.cache import RedisStore, cache
 from core.config import config, env
 from core.crypto import crypto
 from core.database import database
-from core.event import events
+from core.event import Bus, LocalBus, RabbitBus, events
 from core.exceptions import exceptions
 from core.fs import Path
-from core.http import App, Group, Route, http
+from core.http import App, Group, Response, Route, Served, http
 from core.log import log
 from core.mail import LogTransport, MemoryTransport, SmtpTransport, Transport, mail
-from core.queue import Driver as QueueDriver, MemoryDriver, SyncDriver, queue
+from core.queue import Driver as QueueDriver, MemoryDriver, RabbitDriver, SyncDriver, queue
 from core.rand import rand
 from core.socket import Limits, socket
 from core.storage import Disk, LocalDisk, S3Disk, S3Options, storage
 from core.token import JwtAdapter, token
 from core.view import view
 from config import (
-    AppConfig, AuthConfig, BroadcastConfig, DatabaseConfig, DocsConfig, LogConfig, MailConfig, QueueConfig,
-    ScheduleConfig, SocketConfig, StorageConfig,
+    AppConfig, AssetsConfig, AuthConfig, BroadcastConfig, CacheConfig, DatabaseConfig, DocsConfig, EventConfig,
+    LogConfig, MailConfig, QueueConfig, ScheduleConfig, SocketConfig, StorageConfig,
 )
 from app import services
 from app.exceptions import ExceptionHandler
@@ -65,6 +67,15 @@ class Application:
     def broadcasting ( self ) -> BroadcastConfig:
         return config.register("broadcast", BroadcastConfig)
 
+    def statics ( self ) -> AssetsConfig:
+        return config.register("assets", AssetsConfig)
+
+    def caching ( self ) -> CacheConfig:
+        return config.register("cache", CacheConfig)
+
+    def eventing ( self ) -> EventConfig:
+        return config.register("event", EventConfig)
+
     def boot ( self ) -> Boot:
 
         settings = self.settings()
@@ -91,10 +102,15 @@ class Application:
         )
 
         http.serve(app, self.files().url, self.files().public_path(self.root), name="storage")
+        http.serve(app, self.statics().url, self.statics().path(self.root), name="assets", cache=self.statics().cache)
+        app.add_api_route("/robots.txt", self.robots, methods=["GET"], include_in_schema=False, name="robots")
 
         if self.realtime().enabled: app.add_api_websocket_route(self.realtime().path, socket.endpoint, name="socket")
 
         return app
+
+    async def robots ( self ) -> Served:
+        return Response.file(assets.path("robots.txt"), media="text/plain")
 
     def routing ( self, settings: AppConfig ) -> Group:
 
@@ -109,16 +125,22 @@ class Application:
         files   = self.files()
         jobs    = self.queues_config()
         live    = self.realtime()
+        statics = self.statics()
+        caching = self.caching()
         secret  = auth.secret or self.ephemeral(settings)
 
         exceptions.use(ExceptionHandler())
         token.setup(JwtAdapter(secret, auth.algorithm, auth.issuer))
         crypto.setup(auth.keys or [crypto.key()])
-        view.setup(self.source / "views", { "app": settings.name })
+        assets.setup(statics.path(self.root), statics.url, settings.url, statics.versioned)
+        view.setup(self.source / "views", { "app": settings.name, "assets": assets.url })
         mail.setup(self.transport(mailing), mailing.sender, mailing.name)
         storage.setup(self.disks(), files.disk, files.pattern, files.max_size, files.allowed, files.blocked)
         queue.setup(self.driver(jobs), tuple(jobs.queues), jobs.tries, jobs.backoff)
+        events.setup(self.bus(settings))
         events.subscribe(subscriptions.listeners)
+
+        if caching.driver == "redis": cache.use(RedisStore(caching.url, caching.prefix))
         services.auth.configure(auth.access_ttl, auth.refresh_ttl)
         socket.setup(Limits(live.connections, live.queue, live.frame, live.ping, live.drops))
 
@@ -161,7 +183,20 @@ class Application:
         return disks
 
     def driver ( self, jobs: QueueConfig ) -> QueueDriver:
+
+        if jobs.driver == "rabbitmq": return RabbitDriver(jobs.url, jobs.exchange, jobs.prefetch)
+
         return SyncDriver() if jobs.driver == "sync" else MemoryDriver()
+
+    def bus ( self, settings: AppConfig ) -> Bus:
+
+        eventing = self.eventing()
+
+        if eventing.driver != "rabbitmq": return LocalBus()
+
+        inbox = eventing.queue or f"{settings.name.lower()}.events"
+
+        return RabbitBus(eventing.url, eventing.exchange, inbox, eventing.prefetch)
 
     def transport ( self, mailing: MailConfig ) -> Transport:
 

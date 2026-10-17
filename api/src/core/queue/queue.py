@@ -29,9 +29,10 @@ class Job:
     backoff   : float = BACKOFF
     attempts  : int = 0
     available : float = 0.0
+    receipt   : Any = field(default=None, compare=False, repr=False)
 
     def again ( self, delay: float ) -> Self:
-        return replace(self, attempts=self.attempts + 1, available=date.stamp() + delay)
+        return replace(self, attempts=self.attempts + 1, available=date.stamp() + delay, receipt=None)
 
     def exhausted ( self ) -> bool:
         return self.attempts + 1 >= self.tries
@@ -42,6 +43,15 @@ class Job:
             "id": self.id, "name": self.name, "args": list(self.args), "kwargs": self.kwargs, "queue": self.queue,
             "tries": self.tries, "backoff": self.backoff, "attempts": self.attempts, "available": self.available,
         }
+
+    @classmethod
+    def load ( cls, data: Mapping[str, Any], receipt: Any = None ) -> Job:
+
+        return cls(
+            str(data["id"]), str(data["name"]), tuple(data.get("args", ())), dict(data.get("kwargs", {})),
+            str(data.get("queue", DEFAULT)), int(data.get("tries", TRIES)), float(data.get("backoff", BACKOFF)),
+            int(data.get("attempts", 0)), float(data.get("available", 0.0)), receipt,
+        )
 
 class Driver(Protocol):
 
@@ -55,6 +65,10 @@ class Driver(Protocol):
     async def size ( self, queue: str ) -> int: ...
 
     async def clear ( self, queue: str ) -> int: ...
+
+    async def ack ( self, job: Job ) -> None: ...
+
+    async def close ( self ) -> None: ...
 
 class Queued:
 
@@ -169,6 +183,7 @@ class Queue:
                 log.exception("queue.failed", job=job.name, id=job.id, attempts=job.attempts + 1)
 
                 await self.bury(job, error)
+                await self.settle(job)
 
                 return False
 
@@ -177,12 +192,19 @@ class Queue:
             log.warning("queue.retry", job=job.name, id=job.id, attempt=retry.attempts, error=type(error).__name__)
 
             await self.driver().push(retry)
+            await self.settle(job)
 
             return False
 
         self._processed += 1
 
+        await self.settle(job)
+
         return True
+
+    async def settle ( self, job: Job ) -> None:
+
+        if self._driver is not None and job.receipt is not None: await self._driver.ack(job)
 
     async def bury ( self, job: Job, error: BaseException ) -> None:
 
@@ -226,6 +248,12 @@ class Queue:
         self._workers.clear()
 
         log.info("queue.stopped", processed=self._processed, failures=self._failures)
+
+    async def close ( self ) -> None:
+
+        await self.stop()
+
+        if self._driver is not None: await self._driver.close()
 
     async def drain ( self, queue: str | None = None, limit: int = 10_000 ) -> int:
 

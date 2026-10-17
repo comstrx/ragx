@@ -1,5 +1,0 @@
-apiVersion: v2
-name: apps
-description: App-of-apps — every platform application declared here
-type: application
-version: 1.0.0

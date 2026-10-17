@@ -190,6 +190,9 @@ class TestHttp:
         guest   = await client.get("/v1/hello", params={ "name": "Nobody Here" })
         invalid = await client.get("/v1/hello", params={ "name": "x" * 33 })
         docs    = await client.get("/docs")
+        icon    = await client.get("/assets/images/brand/icon.svg")
+        robots  = await client.get("/robots.txt")
+        hidden  = await client.get("/assets/../pyproject.toml")
         schema  = await client.get("/openapi.json")
         paths   = schema.json()["paths"]
         named   = { str(getattr(route, "name", "")) for route in app.routes }
@@ -203,6 +206,9 @@ class TestHttp:
         assert docs.status_code == 200 and docs.headers["content-type"].startswith("text/html")
         assert "scalar" in docs.text.lower()
         assert schema.json()["info"]["title"] == app.title
+        assert icon.status_code == 200 and icon.headers["content-type"].startswith("image/svg+xml")
+        assert icon.headers["cache-control"] == "public, max-age=31536000, immutable"
+        assert robots.status_code == 200 and "Disallow: /" in robots.text and hidden.status_code == 404
         assert { "/health", "/v1/hello", "/v1/auth/register", "/v1/auth/login" } <= set(paths)
         assert { "/v1/auth/refresh", "/v1/auth/logout", "/v1/auth/me" } <= set(paths)
         assert paths["/v1/auth/login"]["post"]["tags"] == ["auth"] and "docs" not in paths

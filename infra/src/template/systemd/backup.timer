@@ -1,0 +1,10 @@
+[Unit]
+Description=${COMPOSE_PROJECT} nightly backup
+
+[Timer]
+OnCalendar=${BACKUP_CALENDAR}
+RandomizedDelaySec=600
+Persistent=true
+
+[Install]
+WantedBy=timers.target

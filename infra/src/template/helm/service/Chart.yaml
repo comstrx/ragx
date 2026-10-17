@@ -1,6 +1,0 @@
-apiVersion: v2
-name: service
-description: Generic service chart — one image, many processes, one contract
-type: application
-version: 1.0.0
-appVersion: "1.0.0"
