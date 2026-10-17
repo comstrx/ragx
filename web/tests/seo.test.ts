@@ -37,24 +37,26 @@ const page = ( name: string, path: string, extra: Record<string, unknown> = {}, 
     ...(access ? { access, redirect: "/" } : {}),
     blocks: [block({}, [feature("intro", { heading: true, options: { title: t(`nav.${name}`) } })])],
 } as never);
-const screens = [
-    page("home", "/", { kind: "page", priority: 1, frequency: "weekly" }),
-    page("about", "/about", { kind: "about", frequency: "monthly" }),
+const screensOf = ( listed: boolean ) => [
+    page("home", "/", { kind: "page", priority: 1, frequency: "weekly", ...(listed ? {} : { index: false }) }),
+    page("about", "/about", { kind: "about", frequency: "monthly", ...(listed ? {} : { index: false }) }),
     page("team", "/about/team", { kind: "article", index: false }),
 ];
 
-function siteOf ( settings: Record<string, unknown>, seo: Record<string, unknown> = {}, url: string | null = "https://site.test" ): Site {
+function siteOf ( settings: Record<string, unknown>, seo: Record<string, unknown> = {}, listed = true ): Site {
 
+    const url = "https://site.test";
     const contents = { name: "Site", links: [], url, icon: "/images/brand/icon.svg", socials: [{ name: "x", href: "https://x.com/site" }], seo };
-    const { config, schema } = validateSpec("site", { contents, contracts: backend, settings }, { screens }, messages, features, catalogue);
+    const pages = screensOf(listed);
+    const { config, schema } = validateSpec("site", { contents, contracts: backend, settings }, { screens: pages }, messages, features, catalogue);
     const runtime = defineRuntime<CompiledScreen, "en" | "ar">({ screens: schema.screens, shell: schema.shell, messages });
 
     return { config, screens: schema.screens, routing, text: runtime.text };
 
 }
 
-const indexed = siteOf({ seo: true, output: "standalone", screen: { render: "server" } }, { title: "Site, the product", keywords: ["ai", "chat"] });
-const silent = siteOf({ seo: false, screen: { render: "server" } });
+const indexed = siteOf({ output: "standalone", screen: { render: "server" } }, { title: "Site, the product", keywords: ["ai", "chat"] });
+const silent = siteOf({ screen: { render: "server" } }, {}, false);
 const [home, about, team] = indexed.screens as [CompiledScreen, CompiledScreen, CompiledScreen];
 
 describe("page metadata", () => {
@@ -79,7 +81,7 @@ describe("page metadata", () => {
         expect(pageMetadata(indexed, team, "en").openGraph).toMatchObject({ type: "article" });
 
     });
-    test("a spec without seo keeps its titles and descriptions but closes robots and skips links and cards", () => {
+    test("a spec without an indexable screen keeps its titles and descriptions but closes robots and skips links and cards", () => {
 
         const meta = pageMetadata(silent, silent.screens[1] as CompiledScreen, "en");
 
@@ -124,7 +126,7 @@ describe("structured data", () => {
         ]);
 
     });
-    test("the home page has no breadcrumb, a nested page walks every ancestor, and nothing ships when seo is off or the page is unlisted", () => {
+    test("home has no breadcrumb, a nested page walks every ancestor, nothing ships without an indexable screen or for an unlisted page", () => {
 
         expect(structuredData(indexed, home, "en")?.["@graph"].map(( thing ) => thing["@type"])).toEqual(["Organization", "WebSite", "WebPage"]);
         expect(breadcrumbs(indexed, team, "en")?.itemListElement).toHaveLength(3);
@@ -139,7 +141,7 @@ describe("robots, sitemap and manifest", () => {
     test("robots open the site and point at the sitemap when indexed, and close everything otherwise", () => {
 
         expect(robots(indexed)).toEqual({ rules: { userAgent: "*", allow: ["/"] }, sitemap: "https://site.test/sitemap.xml" });
-        expect(robots(siteOf({ seo: true, screen: { render: "server" } }, { robots: { allow: ["/", "/about"], disallow: ["/private"] } })).rules)
+        expect(robots(siteOf({ screen: { render: "server" } }, { robots: { allow: ["/", "/about"], disallow: ["/private"] } })).rules)
             .toEqual({ userAgent: "*", allow: ["/", "/about"], disallow: ["/private"] });
         expect(robots(silent)).toEqual({ rules: { userAgent: "*", disallow: "/" } });
 

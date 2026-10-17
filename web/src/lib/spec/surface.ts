@@ -26,6 +26,10 @@ const count = countShape(6);
 const picture = z.string().regex(/^(?:\/images\/brand\/[a-zA-Z0-9/_-]+\.(?:png|webp|jpg|jpeg|svg|avif)|https:\/\/[^\s"'<>]+)$/);
 
 export const screenKinds = ["page", "about", "contact", "faq", "collection", "article"] as const;
+
+const ABSOLUTE = "an indexed screen needs contents.url: canonical links, the sitemap and the social cards are absolute.";
+const UNLISTED =
+    "contents.seo.robots: no screen is indexable (every screen renders on the client or is gated); drop the rules or server-render a public screen.";
 export const changeFrequencies = ["always", "hourly", "daily", "weekly", "monthly", "yearly", "never"] as const;
 
 export const surface = createSpecSurface({
@@ -68,11 +72,10 @@ export const surface = createSpecSurface({
         priority: z.number().min(0).max(1).optional(),
         frequency: z.enum(changeFrequencies).optional(),
     },
-    settings: { output: z.enum(["export", "standalone"]), seo: z.boolean() },
+    settings: { output: z.enum(["export", "standalone"]) },
     themeDefaults,
     settingsDefaults: {
         output: "export",
-        seo: false,
         currency,
         screen: { render: "client", title: true, nav: true, footer: false, sidebar: true, loader: true },
         block: {
@@ -111,40 +114,40 @@ export const validateSpec = surface.validator({
     endpoints,
     core,
     walk: ( screen, options ) => ({ client: options.render === "client" || (screen.access ?? "any") !== "any", session: false }),
-    configIssues: ({ content, settings }) => {
-
-        const { robots, sitemap } = content.seo;
-
-        return [
-            ...(settings.seo && !content.url
-                ? ["settings.seo needs contents.url: canonical links, the sitemap and the social cards are absolute."]
-                : []),
-            ...(!settings.seo && (robots.allow.length || robots.disallow.length)
-                ? ["contents.seo.robots: this spec is not indexed (settings.seo is off); drop the rules or turn settings.seo on."]
-                : []),
-            ...(sitemap.length
-                ? ["contents.seo.sitemap: the sitemap is derived from the screens; set index: false on a screen to leave it out."]
-                : []),
-        ];
-
-    },
+    configIssues: ({ content }) =>
+        content.seo.sitemap.length
+            ? ["contents.seo.sitemap: the sitemap is derived from the screens; set index: false on a screen to leave it out."]
+            : [],
     screen: ( screen, options, config, compiled, issues ) => {
 
-        const { name, path, index = true } = screen.contents;
+        const { name, path, index } = screen.contents;
         const access = screen.access ?? "any";
         const client = options.render === "client" || access !== "any";
-        const indexed = config.settings.seo && access === "any" && index;
+        const indexed = !client && index !== false;
         const exported = config.settings.output === "export";
 
         if ( exported && compiled.walk.params.length )
             issues.push(`${path}: an export cannot build parameterised paths; set settings.output: "standalone".`);
 
-        if ( indexed && client ) issues.push(`${name}: an indexed screen renders on the server; set render: "server" or index: false.`);
+        if ( index === true && client )
+            issues.push(`${name}: index: true needs render: "server" and open access; a client-rendered or gated screen has nothing for crawlers.`);
+
+        if ( indexed && !config.content.url && !issues.includes(ABSOLUTE) ) issues.push(ABSOLUTE);
 
         if ( exported && !client && reads(compiled.blocks, []) )
             issues.push(`${name}: an export cannot server-render backend reads; set render: "client".`);
 
         return { client, indexed };
+
+    },
+    schema: ( screens, issues, config ) => {
+
+        const indexed = screens.filter(( screen ) => screen.indexed).length;
+        const { allow, disallow } = config.content.seo.robots;
+
+        if ( !indexed && (allow.length || disallow.length) ) issues.push(UNLISTED);
+
+        return { indexed };
 
     },
 });

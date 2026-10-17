@@ -46,7 +46,7 @@ export function pictureOf ( site: Site, page: Page ): string | undefined {
 }
 export function crawlable ( site: Site ): boolean {
 
-    return site.config.settings.seo && site.config.content.url !== null;
+    return site.config.content.url !== null && site.screens.some(( screen ) => screen.indexed);
 
 }
 export function listedScreens ( site: Site ): CompiledScreen[] {

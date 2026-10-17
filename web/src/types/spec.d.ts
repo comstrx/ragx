@@ -29,7 +29,7 @@ declare module "@spec/settings" {
 }
 declare module "@spec/build" {
 
-    const build: { output: "export" | "standalone"; seo: boolean };
+    const build: { output: "export" | "standalone" };
 
     export default build;
 

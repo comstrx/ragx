@@ -41,7 +41,7 @@ export const compileSpec = tools.build(import.meta.url, {
         return {
             data: {
                 settings: settingsResource(config.settings),
-                build: { output: config.settings.output, seo: config.settings.seo },
+                build: { output: config.settings.output },
                 browser: config.api ? { ...browserConfig(config.api, config.contract), realtime: config.realtime } : null,
             },
             registry: owned("server"),
@@ -52,14 +52,14 @@ export const compileSpec = tools.build(import.meta.url, {
             },
             meta: {
                 output: config.settings.output,
-                seo: config.settings.seo,
+                indexed: spec.schema.indexed,
                 connect: origins,
                 secure: typeof site === "string" && site.startsWith("https://"),
                 insecure: spec.config.insecure,
                 media,
                 security: securityHeaders({ connect: origins, media }),
             },
-            note: `${owned("server").length} server-owned, ${owned("client").length} client-owned, seo ${config.settings.seo ? "on" : "off"}`,
+            note: `${owned("server").length} server-owned, ${owned("client").length} client-owned, ${spec.schema.indexed} indexed`,
         };
 
     },

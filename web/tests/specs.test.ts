@@ -134,32 +134,37 @@ describe("screens", () => {
         const schema = { screens: [home(hero())] };
         const server = { screen: { render: "server" } };
 
-        const client = validateSpec("site", { contents, contracts: backend, settings: server }, schema, messages, served, catalogue);
+        const site = { ...contents, url: "https://site.test" };
+        const client = validateSpec("site", { contents: site, contracts: backend, settings: server }, schema, messages, served, catalogue);
 
         expect(() => validateSpec("site", { contents, contracts: backend }, schema, messages, served, catalogue)).toThrow("client-owned");
         expect(client.schema.screens[0]?.client).toBe(false);
 
     });
-    test("seo is a setting: it needs the site url, refuses robots rules when off and never takes a sitemap list", () => {
+    test("indexing is behavior: a public server-rendered screen is indexed, needs the site url, and robots rules need one", () => {
 
-        const schema = { screens: [home(hero())] };
+        const first = home(hero());
+        const schema = { screens: [first] };
         const site = { ...contents, url: "https://site.test" };
-        const indexed = { seo: true, screen: { render: "server" } };
+        const served = { screen: { render: "server" } };
         const robots = { ...contents, seo: { robots: { allow: ["/"] } } };
         const listed = { ...site, seo: { sitemap: ["*"] } };
+        const insisted = { screens: [{ ...first, contents: { ...first.contents, index: true } }] };
 
-        expect(issues(schema, backend, { seo: true })).toContain("needs contents.url");
-        expect(() => build(site, { seo: true }, schema)).toThrow("renders on the server");
-        expect(build(site, indexed, schema).schema.screens[0]?.indexed).toBe(true);
+        expect(issues(schema, backend, served)).toContain("needs contents.url");
+        expect(build(site, served, schema).schema.screens[0]?.indexed).toBe(true);
+        expect(build(site, served, schema).schema.indexed).toBe(1);
         expect(compile(schema).schema.screens[0]?.indexed).toBe(false);
-        expect(() => build(robots, {}, schema)).toThrow("not indexed");
-        expect(() => build(listed, indexed, schema)).toThrow("derived from the screens");
+        expect(compile(schema).schema.indexed).toBe(0);
+        expect(issues(insisted)).toContain('index: true needs render: "server"');
+        expect(() => build(robots, {}, schema)).toThrow("no screen is indexable");
+        expect(() => build(listed, served, schema)).toThrow("derived from the screens");
 
     });
     test("a gated or unlisted screen is never indexed, and an export cannot server-render a backend read", () => {
 
         const site = { ...contents, url: "https://site.test" };
-        const settings = ( output: string ) => ({ seo: true, output, screen: { render: "server" } });
+        const settings = ( output: string ) => ({ output, screen: { render: "server" } });
         const cards = feature("cards", { ports: { items: read("products.list") } });
         const page = { title: t("nav.home"), description: t("nav.home") };
         const gated = { contents: { name: "account", path: "/account", ...page }, access: "user", redirect: "/", blocks: [] };

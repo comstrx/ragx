@@ -166,7 +166,7 @@ export function createSpecSurface<
         screenIssues?: (( screens: readonly Screen[] ) => string[]) | undefined;
         featureIssues?: (( features: Features ) => string[]) | undefined;
         configIssues?: (( config: Config ) => string[]) | undefined;
-        schema?: (( screens: (CompiledShape<Screen, ScreenOptions, Block> & R)[] ) => E) | undefined;
+        schema?: (( screens: (CompiledShape<Screen, ScreenOptions, Block> & R)[], issues: string[], config: Config ) => E) | undefined;
     };
 
     return {
@@ -226,11 +226,13 @@ export function createSpecSurface<
                     screens: (CompiledShape<Screen, ScreenOptions, Block> & R)[],
                     facts: { features: string[]; operations: string[] },
                     shell: Record<string, ShellPart>,
+                    issues: string[],
+                    config: Config & SurfaceConfig,
                 ) => ({
                     screens,
                     ...facts,
                     shell: shell as Record<SH, ShellPart>,
-                    ...(hooks.schema?.(screens) ?? ({} as E)),
+                    ...(hooks.schema?.(screens, issues, config) ?? ({} as E)),
                 }),
             };
 

@@ -6,7 +6,7 @@ import { PHASE_DEVELOPMENT_SERVER } from "next/constants.js";
 type Meta = {
     identity: string;
     output: "export" | "standalone";
-    seo: boolean;
+    indexed: number;
     secure: boolean;
     insecure: boolean;
     media: string[];

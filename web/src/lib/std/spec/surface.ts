@@ -114,6 +114,8 @@ export type Surface<
         screens: O[],
         facts: { features: string[]; operations: string[] },
         shell: Record<string, ShellPart>,
+        issues: string[],
+        config: C,
     ) => M;
 };
 export type SurfaceInput = {
@@ -314,7 +316,7 @@ export function compileSurface<
 
     });
     const shell = compileShell(config.settings.shell, features);
-    const schema = surface.schema(screens, schemaFacts(screens), shell);
+    const schema = surface.schema(screens, schemaFacts(screens), shell, issues, config);
 
     issues.push(...translationIssues(screens, config.settings.locale.enabled, messages, "schema"));
     issues.push(...translationIssues(shell, config.settings.locale.enabled, messages, "settings.shell"));
