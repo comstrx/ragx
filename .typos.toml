@@ -98,5 +98,6 @@ check-file = false
 "INVAILD" = "INVALID"
 
 [default.extend-words]
+brin = "brin"
 "JOD" = "JOD"
 "widnows" = "windows"

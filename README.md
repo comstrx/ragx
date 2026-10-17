@@ -42,11 +42,11 @@ Planned and phased; nothing below is shipped yet beyond the skeleton:
 
 ## 🏗️ Architecture
 
-| Part     | What it is                                                                                                                                                                                                                                                                           | Gate                                                                                    |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
-| `api/`   | Python 3.15 + FastAPI on uv. A generic `core/` engine (http, database, log, error, config, context, thread, date, string, array, number) under a Laravel-shaped app: enums → support (dna, bases) → models → repositories → services → controllers → routes, booted by `bootstrap/`. | `uv run ruff check`, `uv run mypy`, `uv run pytest`, `uv run python -m bootstrap check` |
-| `infra/` | Fully automated infrastructure: OpenTofu → Kubernetes → Argo CD → Helm, in `standard`, `light` and `full` stacks.                                                                                                                                                                    | `bash src/main.sh test --check`                                                         |
-| `web/`   | One Next.js engine on Bun. Each spec under `specs/` chooses its `output` (`export` or `standalone`), `seo` and `render`; `super` and `admin` are client-only exports, `client` is a server-rendered, indexable site.                                                                 | `bun run check`, `bun run typecheck`, `bun test`, `bun run build`                       |
+| Part     | What it is                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Gate                                                                                    |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `api/`   | Python 3.15 + FastAPI on uv, everything under `src/`. A generic `core/` engine of 29 domains (http with a route DSL and throttle, database on SQLAlchemy Core with a migration DSL and a generative ORM, a WebSocket hub with channel broadcasting, queue, event, schedule, storage with local and S3 disks, config with env layers, exceptions, crypto, token, mail, view, validate, json, …) under a Laravel-shaped app: enums → utils (dna, bases) → models → repositories → services → controllers · jobs · events · listeners · mails → routes (api, channel, events, schedule) → views, glued by `bootstrap/`. | `uv run ruff check`, `uv run mypy`, `uv run pytest`, `uv run python -m bootstrap check` |
+| `infra/` | Fully automated infrastructure: OpenTofu → Kubernetes → Argo CD → Helm, in `standard`, `light` and `full` stacks.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | `bash src/main.sh test --check`                                                         |
+| `web/`   | One Next.js engine on Bun. Each spec under `specs/` chooses its `output` (`export` or `standalone`), `seo` and `render`; `super` and `admin` are client-only exports, `client` is a server-rendered, indexable site.                                                                                                                                                                                                                                                                                                                                                                                                 | `bun run check`, `bun run typecheck`, `bun test`, `bun run build`                       |
 
 Every network, file, process and third-party access in the api lives in `core/`; the layers above it are thin pipelines. In the web, markup lives only in `elements/`, specs are declarative data, and an analyzer enforces the layer order, the import rules and a 150-column line law.
 
@@ -67,8 +67,11 @@ Measured on 2026-10-17 on a development machine, in process, not a benchmark of 
 
 | Measurement                                                       | Result                           |
 | ----------------------------------------------------------------- | -------------------------------- |
-| api boot (pool + migrations + schema warm + two warm requests)    | 47 ms                            |
-| `GET /v1/hello` through PostgreSQL, 3000 requests, concurrency 32 | 1,000 rps, p50 12 ms             |
+| api boot (pool + migrations + schema warm + two warm requests)    | 73 ms                            |
+| `GET /v1/hello` through PostgreSQL, 3000 requests, concurrency 16 | 640 rps, p50 20 ms, p99 37 ms    |
+| `GET /v1/auth/me` (JWT verify + user + roles), concurrency 8      | 280 rps, p50 24 ms               |
+| JWT issue / verify, in process                                    | 19,000 / 13,000 per second       |
+| WebSocket fan-out, one publish to 2,000 subscribed sockets        | 670,000 frames per second        |
 | web first-load JavaScript of the admin export                     | 216 KB over the wire with brotli |
 
 ---
@@ -89,12 +92,14 @@ See [SECURITY.md](SECURITY.md) for reporting a vulnerability.
 ```bash
 cd api && uv sync --locked --python 3.15 && uv run python -m bootstrap        # serve on 127.0.0.1:8000
 cd api && uv run python -m bootstrap migrate && uv run python -m bootstrap seed
+cd api && uv run python -m benches.bench_hello && uv run python -m benches.bench_socket   # benches bite on any error
+cd api && uv run python -m bootstrap work                                              # queue workers, no http
 cd web && bun install && bun run dev                                          # the first installed spec
 cd web && NEXT_PUBLIC_SPEC=client bun run build && bun run start              # the indexable site
 cd infra && bash src/main.sh test --check
 ```
 
-PostgreSQL, Redis and RabbitMQ run locally as native services; the api reads its database from `DB_*` variables, the same names the infra injects. See [CONTRIBUTING.md](CONTRIBUTING.md) and [SUPPORT.md](SUPPORT.md).
+PostgreSQL, Redis and RabbitMQ run locally as native services; the api reads its database from `DB_*` variables and its signing secret from `AUTH_SECRET`, the same names the infra injects. See [CONTRIBUTING.md](CONTRIBUTING.md) and [SUPPORT.md](SUPPORT.md).
 
 ---
 
