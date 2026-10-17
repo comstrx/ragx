@@ -28,7 +28,7 @@ RUN uv sync --no-install-project
 
 COPY ${APP_DIR}/ ./
 
-RUN uv sync && chown -R 33:33 /app/storage
+RUN uv sync && chown -R 33:33 /app/src/storage
 
 FROM base AS app
 

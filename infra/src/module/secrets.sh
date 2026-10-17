@@ -5,7 +5,7 @@
 ## the keys this stack cannot release without — grown by what the stack provisions, reaches and manages
 secrets_required () {
 
-    local keys="PROJECT BASE_DOMAIN GIT_REPO_URL GIT_TOKEN DB_PASSWORD REDIS_PASSWORD ENV_FILE"
+    local keys="PROJECT BASE_DOMAIN GIT_REPO_URL GIT_TOKEN DB_PASSWORD REDIS_PASSWORD AUTH_SECRET ENV_FILE"
 
     if [[ -n "${PROVISIONER}" ]]; then keys+=" AWS_REGION AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY ECR_REGISTRY"; else keys+=" SSH_HOST"; fi
 
