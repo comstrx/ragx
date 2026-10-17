@@ -115,6 +115,7 @@ class TestHttp:
         nowhere = await bare.get("/v1/nowhere")
 
         assert listed.status_code == 200 and listed.json()["data"] == [{ "id": 1 }]
+        assert listed.headers["x-content-type-options"] == "nosniff"
         assert listed.json()["meta"] == {
             "request_id": listed.headers["x-request-id"], "page": 2, "limit": 20, "total": 41, "pages": 3,
         }
@@ -123,6 +124,7 @@ class TestHttp:
         assert (removed.status_code, removed.json()["message"]) == (200, "removed 7")
         assert (put.status_code, put.json()["code"]) == (405, "method_not_allowed")
         assert (nowhere.status_code, nowhere.json()["code"], nowhere.json()["data"]) == (404, "not_found", None)
+        assert (await bare.get("/openapi.json")).status_code == 404 and (await bare.get("/docs")).status_code == 404
 
     async def test_failures_are_enveloped_masked_and_traced ( self, bare: AsyncClient ) -> None:
 

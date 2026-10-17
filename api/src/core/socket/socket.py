@@ -29,7 +29,7 @@ class Transport(Protocol):
 
     async def send_bytes ( self, data: bytes ) -> None: ...
 
-    async def receive_text ( self ) -> str: ...
+    async def receive ( self ) -> Mapping[str, Any]: ...
 
     async def close ( self, code: int = 1000, reason: str | None = None ) -> None: ...
 
@@ -86,9 +86,12 @@ class Connection:
 
             if self.socket.client_state != WebSocketState.CONNECTED: break
 
-            await self.socket.send_bytes(data)
+            try: await self.socket.send_bytes(data)
+            except (WebSocketDisconnect, RuntimeError, OSError): break
 
             self.sent += 1
+
+        self.closed = True
 
     async def close ( self, code: int = GOING_AWAY, reason: str = "" ) -> None:
 
@@ -165,7 +168,7 @@ class Socket:
         while not connection.closed:
 
             try:
-                async with asyncio.timeout(self._limits.ping): raw = await connection.socket.receive_text()
+                async with asyncio.timeout(self._limits.ping): raw = await self.receive(connection)
             except TimeoutError:
 
                 idle += 1
@@ -189,6 +192,16 @@ class Socket:
                 return
 
             await self.handle(connection, raw)
+
+    async def receive ( self, connection: Connection ) -> str:
+
+        message = await connection.socket.receive()
+
+        if message.get("type") == "websocket.disconnect": raise WebSocketDisconnect(int(message.get("code", 1000)))
+
+        data = message.get("bytes")
+
+        return bytes(data).decode(errors="replace") if data is not None else str(message.get("text") or "")
 
     async def handle ( self, connection: Connection, raw: str ) -> None:
 

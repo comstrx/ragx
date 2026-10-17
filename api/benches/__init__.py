@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from statistics import quantiles
 
 from httpx import ASGITransport, AsyncClient
+from core.log import log
 from bootstrap import application
 import asyncio, os, time
 
@@ -12,6 +13,9 @@ PERCENTILES = (50, 95, 99)
 SCALE       = float(os.environ.get("BENCH_SCALE", "1"))
 
 class Bench:
+
+    def quiet ( self ) -> None:
+        log.setup(os.environ.get("LOG_LEVEL", "warning"))
 
     def budget ( self, label: str, fallback: float ) -> float:
         return float(os.environ.get(f"BENCH_{label.upper()}_P99_MS", fallback)) * SCALE

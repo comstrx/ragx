@@ -5,6 +5,7 @@ from core.exceptions import Code, Fault
 from core.http import App
 from core.rand import rand
 from core.storage import LocalDisk, Storage, storage
+from config import StorageConfig
 import pytest, re
 
 PNG  = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
@@ -43,7 +44,7 @@ class TestStorage:
             "private" : LocalDisk("private", tmp_path / "private"),
         }
 
-        store.setup(disks, pattern="{Y}/{m}")
+        store.setup(disks, pattern="{Y}/{m}", blocked=("HTML", ".php"))
 
         assert re.fullmatch(r"uploads/\d{4}/\d{2}", store.dated("uploads"))
         assert re.fullmatch(r"x/\d{4}/\d{3}", store.dated("x", "{Y}/{j}"))
@@ -82,12 +83,20 @@ class TestStorage:
             (Upload("x.exe", b"MZ", "application/x-msdownload"), { "allowed": ("image/*",) }, "Expected one of"),
             (Upload("x.png", b"", "image/png"), {}, "empty"),
             (Upload("x.png", PNG, "image/png"), { "limit": 8 }, "exceeds"),
+            (Upload("page.HTML", b"<h1>", "text/html"), {}, "not accepted"),
         ):
 
             with pytest.raises(Fault) as refused: await store.upload(file, "x", **policy)
 
             assert refused.value.code == Code.VALIDATION
             assert message in (refused.value.errors or {})["file"][0]
+
+        paths = StorageConfig(root="../shared", public="pub", private="/var/private", logs="logs")
+
+        assert paths.public_path(tmp_path / "api") == (tmp_path / "shared" / "pub").resolve()
+        assert paths.private_path(tmp_path / "api") == Path("/var/private")
+        assert paths.logs_path(tmp_path / "api") == (tmp_path / "shared" / "logs").resolve()
+        assert StorageConfig().public_path(tmp_path) == tmp_path / "src" / "storage" / "app" / "public"
 
         with pytest.raises(Fault) as escape: store.clean("../etc/passwd")
         with pytest.raises(Fault) as unknown: store.disk("nowhere")

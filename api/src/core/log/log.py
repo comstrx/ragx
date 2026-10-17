@@ -1,8 +1,9 @@
 from collections.abc import Iterator, MutableMapping
 from contextlib import contextmanager
-from typing import Any
+from pathlib import Path
+from typing import Any, TextIO
 
-from structlog import configure, make_filtering_bound_logger
+from structlog import PrintLoggerFactory, WriteLoggerFactory, configure, make_filtering_bound_logger
 from structlog.dev import ConsoleRenderer
 from structlog.processors import JSONRenderer, StackInfoRenderer, TimeStamper, add_log_level, format_exc_info
 from structlog.stdlib import BoundLogger, get_logger
@@ -16,9 +17,15 @@ class Log:
 
     name = "app"
 
-    def setup ( self, level: str = "info", renderer: str = "console" ) -> None:
+    def __init__ ( self ) -> None:
 
-        render: Processor = JSONRenderer(serializer=self._json_) if renderer == "json" else ConsoleRenderer()
+        self._sink: TextIO | None = None
+
+    def setup ( self, level: str = "info", renderer: str = "console", file: Path | None = None ) -> None:
+
+        render: Processor = (
+            JSONRenderer(serializer=self._json_) if renderer == "json" else ConsoleRenderer(colors=file is None)
+        )
         processors: list[Processor] = [
             self._correlate_, add_log_level, TimeStamper(fmt="iso", utc=True),
             StackInfoRenderer(), format_exc_info, render,
@@ -27,8 +34,23 @@ class Log:
         configure(
             processors=processors,
             wrapper_class=make_filtering_bound_logger(self._level_(level)),
+            logger_factory=self._factory_(file),
             cache_logger_on_first_use=True,
         )
+
+    def _factory_ ( self, file: Path | None ) -> Any:
+
+        if self._sink is not None: self._sink.close()
+
+        self._sink = None
+
+        if file is None: return PrintLoggerFactory()
+
+        file.parent.mkdir(parents=True, exist_ok=True)
+
+        self._sink = file.open("a", encoding="utf-8")
+
+        return WriteLoggerFactory(file=self._sink)
 
     def get ( self, name: str | None = None ) -> BoundLogger:
         return get_logger(name or self.name)

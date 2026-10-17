@@ -1,4 +1,4 @@
-from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Self
 
@@ -228,6 +228,59 @@ class Query[M: Model]:
         count     = await self._run_(lambda session: session.execute(statement))
 
         return int(count)
+
+    async def first_or_create ( self, where: Values, values: Values | None = None ) -> M:
+
+        scoped = self
+
+        for column, item in where.items(): scoped = scoped.where(column, item)
+
+        found = await scoped.first()
+
+        return found if found is not None else await self.create({ **where, **(values or {}) })
+
+    async def update_or_create ( self, where: Values, values: Values ) -> M:
+
+        scoped = self
+
+        for column, item in where.items(): scoped = scoped.where(column, item)
+
+        found = await scoped.first()
+
+        if found is None: return await self.create({ **where, **values })
+
+        await self.where(self._model.primary, found.key()).update(values)
+
+        return await self.find_or_fail(found.key())
+
+    async def increment ( self, column: str, step: int = 1 ) -> int:
+
+        payload   = self._stamp_({}, creating=False)
+        statement = sa.update(self._table).where(*self._where_()).values(
+            { self._table.c[column]: self._table.c[column] + step, **payload },
+        )
+        count     = await self._run_(lambda session: session.execute(statement))
+
+        return int(count)
+
+    async def decrement ( self, column: str, step: int = 1 ) -> int:
+        return await self.increment(column, -step)
+
+    async def chunk ( self, size: int = 500 ) -> AsyncIterator[list[M]]:
+
+        offset = 0
+
+        while True:
+
+            batch = await self.limit(size).offset(offset).get()
+
+            if not batch: return
+
+            yield batch
+
+            if len(batch) < size: return
+
+            offset += size
 
     async def delete ( self ) -> int:
 

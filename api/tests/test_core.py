@@ -1,16 +1,21 @@
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from enum import Enum
 from email.message import EmailMessage
 from pathlib import Path
+from typing import ClassVar
 
 from core.array import array
 from core.cache import Cache
+from core.config import Config, Env, Settings
 from core.crypto import Crypto
 from core.date import date
-from core.exceptions import Code, Fault, Faults
+from core.exceptions import Code, Fault, Faults, Handler
 from core.fs import fs
 from core.func import func
 from core.http import Envelope
+from core.json import json
 from core.mail import Attachment, Mail, MemoryTransport, Message
 from core.net import net
 from core.number import number
@@ -20,15 +25,29 @@ from core.token import Claims, JwtAdapter, Token
 from core.validate import Email, Password, validate
 from core.value import value
 from core.view import View
-from pydantic import BaseModel
-import asyncio, hashlib, pytest
+from pydantic import BaseModel, Field
+from pydantic_settings import SettingsConfigDict
+import asyncio, hashlib, os, pytest
 
 SECRET = "unit-secret-that-is-long-enough-for-hs256-ok"
+SCRUB  = ("DEMO_NAME", "DEMO_PORT", "DEMO_TAGS", "DEMO_SECRET_KEY", "SHARED", "APP_ENV")
 
 class Signup(BaseModel):
 
     email    : Email
     password : Password
+
+class Demo(Settings):
+
+    model_config = SettingsConfigDict(env_prefix="DEMO_")
+
+    name  : str = "demo"
+    port  : int = 1
+    tags  : list[str] = Field(default_factory=list)
+
+class Shade(Enum):
+
+    DARK = "dark"
 
 class TestPrimitives:
 
@@ -88,6 +107,93 @@ class TestPrimitives:
         assert date.between(now, date.add(now, minutes=-1), date.add(now, minutes=1))
 
         with pytest.raises(ValueError): string.from_base64("!!")
+
+class TestConfig:
+
+    def test_env_layers_files_by_mode_and_config_reads_dotted_keys ( self, tmp_path: Path ) -> None:
+
+        (tmp_path / ".env").write_text("DEMO_NAME=base\nDEMO_PORT=10\nAPP_ENV=local\nSHARED=env\n")
+        (tmp_path / ".env.local").write_text('DEMO_NAME=local\nDEMO_TAGS=["a","b"]\n')
+        (tmp_path / ".env.production").write_text("DEMO_NAME=production\n")
+        (tmp_path / ".env.prod").write_text("DEMO_PORT=443\n")
+        (tmp_path / ".secret").write_text("DEMO_SECRET_KEY=hidden\n")
+
+        for key in SCRUB: os.environ.pop(key, None)
+
+        os.environ["SHARED"] = "process"
+
+        env = Env()
+
+        assert env.load(tmp_path) == "local"
+        assert [path.name for path in env.loaded()] == [".env", ".env.local", ".secret"]
+        assert (env.get("DEMO_NAME"), env.int("DEMO_PORT"), env.get("SHARED")) == ("local", 10, "process")
+        assert env.list("DEMO_TAGS") == ["a", "b"] and env.get("DEMO_SECRET_KEY") == "hidden" and env.mode() == "local"
+
+        config = Config()
+        demo   = config.register("demo", Demo)
+
+        assert (demo.name, demo.port, demo.tags) == ("local", 10, ["a", "b"])
+        assert config.get("demo.name") == "local" and config.get("demo.missing", "d") == "d"
+        assert config.names() == ["demo"]
+        assert config.register("demo", Demo) is demo and config.of("demo", Demo) is demo
+
+        config.set("demo.name", "override")
+
+        assert config.get("demo.name") == "override" and config.all()["demo"]["name"] == "override"
+        assert config.remove("demo.name") and not config.remove("demo.name") and config.get("demo.name") == "local"
+
+        for key in SCRUB: os.environ.pop(key, None)
+
+        production = Env()
+
+        assert production.load(tmp_path, "production") == "production"
+        assert [path.name for path in production.loaded()] == [".env", ".env.production", ".env.prod", ".secret"]
+        assert (production.get("DEMO_NAME"), production.int("DEMO_PORT")) == ("production", 443)
+        production.set("DEMO_PORT", 8)
+
+        assert production.int("DEMO_PORT") == 8 and production.remove("DEMO_PORT")
+
+        with pytest.raises(KeyError): production.require("DEMO_PORT")
+        with pytest.raises(KeyError): config.require("demo.nothing")
+
+        for key in SCRUB: os.environ.pop(key, None)
+
+    def test_json_encodes_rich_values_and_digs_into_documents ( self ) -> None:
+
+        document = { "d": Decimal("1.50"), "k": Shade.DARK, "s": { 2, 1 }, "b": b"hi", "n": { "m": [10, { "x": 1 }] } }
+        encoded  = json.dumps(document, sort=True)
+
+        assert encoded == '{"b":"hi","d":"1.50","k":"dark","n":{"m":[10,{"x":1}]},"s":[1,2]}'
+        assert json.loads(encoded)["n"]["m"][1] == { "x": 1 } and json.pretty({ "a": 1 }) == '{\n  "a": 1\n}'
+        assert json.parse("{bad", "fallback") == "fallback" and json.parse(b"[1]") == [1] and json.parse(5) is None
+        assert json.valid('{"a":1}') and not json.valid("{a}") and json.looks(" [1]") and not json.looks("12")
+        assert json.dig(document, "n.m.1.x") == 1 and json.dig(document, "n.m.-1.x") == 1
+        assert json.dig(document, "n.q", 0) == 0
+        assert json.flatten({ "a": { "b": { "c": 1 } }, "d": 2 }) == { "a.b.c": 1, "d": 2 }
+        assert json.clone(document)["d"] == "1.50" and json.dumps(object(), lenient=True).startswith('"<object')
+
+        with pytest.raises(TypeError): json.dumps(object())
+        with pytest.raises(Fault): json.loads("{nope")
+
+    def test_exception_handlers_map_report_and_never_leak ( self ) -> None:
+
+        def located ( error: BaseException ) -> Fault:
+            return Fault(Code.NOT_FOUND, reason=str(error))
+
+        class Mapped(Handler):
+
+            maps   : ClassVar[Mapping[type[BaseException], Code | Callable[[BaseException], Fault]]] = {
+                ValueError: Code.BAD_REQUEST, LookupError: located,
+            }
+            silent : ClassVar[tuple[type[BaseException], ...]] = (KeyError,)
+
+        handler = Mapped()
+
+        assert handler.fault_of(ValueError("x")).code == Code.BAD_REQUEST
+        assert handler.fault_of(KeyError("k")).reason == "'k'" and handler.fault_of(IndexError()).code == Code.NOT_FOUND
+        assert handler.fault_of(RuntimeError("secret")).message == "Something went wrong"
+        assert handler.handle(Fault(Code.FORBIDDEN, reason="nope")).reason == "nope"
+        assert Handler().fault_of(ValueError("x")).code == Code.INTERNAL
 
 class TestFunc:
 

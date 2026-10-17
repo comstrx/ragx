@@ -36,6 +36,7 @@ class Trace:
                 headers = MutableHeaders(scope=message)
 
                 headers.append(self.header, context.request_id() or "")
+                headers.append("X-Content-Type-Options", "nosniff")
 
                 for name, header in LIMITS:
 

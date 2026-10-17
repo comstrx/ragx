@@ -51,8 +51,8 @@ class StubSocket:
     async def send_bytes ( self, data: bytes ) -> None:
         self.sent.append(data)
 
-    async def receive_text ( self ) -> str:
-        return ""
+    async def receive ( self ) -> dict[str, object]:
+        return { "type": "websocket.disconnect", "code": 1000 }
 
     async def close ( self, code: int = 1000, reason: str | None = None ) -> None:
         self.closed = (code, reason)

@@ -242,6 +242,14 @@ class TestOrm:
             assert await users.query().with_trashed().find(bob.id) is not None
             assert [user.id for user in await scoped.only_trashed().get()] == [bob.id]
             assert await users.restore(bob.id) and await users.find(bob.id) is not None and await scoped.count() == 2
+
+            mail  = { "email": f"carol-{tag}@unit.test" }
+            carol = await users.query().first_or_create(mail, { "name": "Carol", "password": None })
+            same  = await users.query().first_or_create(mail, { "name": "Other" })
+            moved = await users.query().update_or_create(mail, { "name": f"Carole {tag}" })
+            pages = [len(batch) async for batch in scoped.order_by("name").chunk(2)]
+
+            assert carol.id == same.id == moved.id and moved.name == f"Carole {tag}" and pages == [2, 1]
             assert await tokens.revoke(minted.id) and not await tokens.revoke(minted.id)
             assert await tokens.alive(f"fp-{tag}-1", TokenKind.REFRESH) is None
             assert await tokens.alive(f"fp-{tag}-2", TokenKind.ACCESS) is not None
@@ -260,7 +268,7 @@ class TestOrm:
 
         finally:
 
-            assert await users.query().where_in("id", [alice.id, bob.id]).with_trashed().force_delete() == 2
+            assert await scoped.with_trashed().force_delete() == 3
 
         assert await users.query().where("id", alice.id).with_trashed().count() == 0
 

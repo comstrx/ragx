@@ -14,8 +14,8 @@ class Sink:
     async def send_bytes ( self, _data: bytes ) -> None:
         self.count += 1
 
-    async def receive_text ( self ) -> str:
-        return ""
+    async def receive ( self ) -> dict[str, object]:
+        return { "type": "websocket.disconnect", "code": 1000 }
 
     async def close ( self, _code: int = 1000, _reason: str | None = None ) -> None:
         return None
@@ -26,6 +26,8 @@ class SocketBench(Bench):
     publishes   = 500
 
     async def run ( self ) -> None:
+
+        self.quiet()
 
         hub   = Socket()
         sinks = [Sink() for _ in range(self.connections)]

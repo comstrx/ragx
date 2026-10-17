@@ -84,10 +84,11 @@ class Storage:
         self._pattern = PATTERN
         self._limit   = 10 * KILO * KILO
         self._allowed: tuple[str, ...] = ()
+        self._blocked: tuple[str, ...] = ()
 
     def setup (
         self, disks: Mapping[str, Disk], default: str = "public", pattern: str = PATTERN,
-        limit: int = 10 * KILO * KILO, allowed: Sequence[str] = (),
+        limit: int = 10 * KILO * KILO, allowed: Sequence[str] = (), blocked: Sequence[str] = (),
     ) -> None:
 
         self._disks   = dict(disks)
@@ -95,6 +96,7 @@ class Storage:
         self._pattern = pattern
         self._limit   = limit
         self._allowed = tuple(allowed)
+        self._blocked = tuple(item.lower().lstrip(".") for item in blocked)
 
     def register ( self, name: str, disk: Disk ) -> None:
         self._disks[name] = disk
@@ -174,6 +176,11 @@ class Storage:
         kinds = tuple(allowed) or self._allowed
         cap   = limit or self._limit
 
+        if self.extension(label) in self._blocked:
+
+            refused = f"Files of type .{self.extension(label)} are not accepted"
+
+            raise Fault(Code.VALIDATION, errors={ "file": [refused] })
         if len(data) == 0: raise Fault(Code.VALIDATION, errors={ "file": ["The file is empty"] })
         if len(data) > cap: raise Fault(Code.VALIDATION, errors={ "file": [f"The file exceeds {cap // KILO} KB"] })
         if kinds and not self.accepts(kind, kinds):

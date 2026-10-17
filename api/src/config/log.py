@@ -12,3 +12,4 @@ class LogConfig(Settings):
 
     level    : Level    = "info"
     renderer : Renderer = "console"
+    file     : str      = ""

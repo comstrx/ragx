@@ -79,7 +79,7 @@ class Application:
         settings = self.settings()
         logging  = self.logging()
 
-        log.setup(level=logging.level, renderer=logging.renderer)
+        log.setup(logging.level, logging.renderer, self.logfile())
 
         self.wire(settings)
 
@@ -90,7 +90,7 @@ class Application:
             facts=facts, origins=settings.origins, lifespan=self.boot().lifespan,
         )
 
-        http.serve(app, self.files().url, self.source / "storage" / "app" / "public", name="storage")
+        http.serve(app, self.files().url, self.files().public_path(self.root), name="storage")
 
         if self.realtime().enabled: app.add_api_websocket_route(self.realtime().path, socket.endpoint, name="socket")
 
@@ -116,7 +116,7 @@ class Application:
         crypto.setup(auth.keys or [crypto.key()])
         view.setup(self.source / "views", { "app": settings.name })
         mail.setup(self.transport(mailing), mailing.sender, mailing.name)
-        storage.setup(self.disks(), files.disk, files.pattern, files.max_size, files.allowed)
+        storage.setup(self.disks(), files.disk, files.pattern, files.max_size, files.allowed, files.blocked)
         queue.setup(self.driver(jobs), tuple(jobs.queues), jobs.tries, jobs.backoff)
         events.subscribe(subscriptions.listeners)
         services.auth.configure(auth.access_ttl, auth.refresh_ttl)
@@ -136,13 +136,18 @@ class Application:
 
         return rand.token(48)
 
+    def logfile ( self ) -> Path | None:
+
+        logging = self.logging()
+
+        return self.files().logs_path(self.root) / logging.file if logging.file else None
+
     def disks ( self ) -> dict[str, Disk]:
 
         files = self.files()
-        root  = self.source / "storage" / "app"
         disks: dict[str, Disk] = {
-            "public"  : LocalDisk("public", root / "public", files.url),
-            "private" : LocalDisk("private", root / "private"),
+            "public"  : LocalDisk("public", files.public_path(self.root), files.url),
+            "private" : LocalDisk("private", files.private_path(self.root)),
         }
 
         if files.s3_bucket:

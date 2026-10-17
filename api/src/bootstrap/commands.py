@@ -41,7 +41,7 @@ class Commands:
         application = Application()
         logging     = application.logging()
 
-        log.setup(level=logging.level, renderer=logging.renderer)
+        log.setup(logging.level, logging.renderer, application.logfile())
 
         if name == "check": return await self.check(application)
         if name == "runbook": return self.runbook(application)
