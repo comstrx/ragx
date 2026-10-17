@@ -1,0 +1,49 @@
+api:
+  - changed-files:
+      - any-glob-to-any-file: ['api/**']
+
+infra:
+  - changed-files:
+      - any-glob-to-any-file: ['infra/**']
+
+panel:
+  - changed-files:
+      - any-glob-to-any-file: ['panel/**']
+
+global:
+  - changed-files:
+      - any-glob-to-any-file: ['*', '.*', '.github/**']
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file: ['.github/workflows/**', '.github/dependabot.yml', '.zizmor.yml']
+
+deps:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/pyproject.toml'
+          - '**/uv.lock'
+          - '**/package.json'
+          - '**/bun.lock'
+          - '**/composer.json'
+          - '**/composer.lock'
+          - '**/Dockerfile*'
+          - '**/Chart.yaml'
+          - '**/Chart.lock'
+
+docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*.md'
+          - 'LICENSE'
+
+security:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'SECURITY.md'
+          - '.gitleaks.toml'
+          - '.trivy.yml'
+          - '.syft.yml'
+          - '.zizmor.yml'
+          - '**/.semgrep.yml'
+          - '**/.trivyignore'
