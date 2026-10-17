@@ -165,7 +165,7 @@ export function stage ( folder: string, publicFolder: string ): Staged {
     ];
     const copied = copies.flatMap(( [from, to] ) => {
 
-        if ( !existsSync(from) ) return [];
+        if ( !existsSync(from) || existsSync(to) ) return [];
 
         cpSync(from, to, { recursive: true, dereference: true });
 

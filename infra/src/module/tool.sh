@@ -31,58 +31,24 @@ tool_flock () {
     pkg_install util-linux
 
 }
-tool_pgclient () {
+tool_jq () {
 
-    local codename="" major="${DB_ENGINE_VERSION%%.*}"
-
-    [[ -n "${major}" ]] || die "Cannot resolve the postgres major from DB_ENGINE_VERSION"
-
-    ensure curl
-    tool_certs
-
-    codename="$(. /etc/os-release && printf '%s' "${VERSION_CODENAME:-${UBUNTU_CODENAME:-}}")"
-
-    [[ -n "${codename}" ]] || die "Cannot resolve the distro for the postgres repo"
-
-    as_root install -m 0755 -d ${APT_KEYRINGS}
-
-    curl -fsSL "${PGDG_KEY_URL}" | as_root tee ${APT_KEYRINGS}/pgdg.asc >/dev/null || die "Cannot fetch the postgres signing key"
-    as_root chmod a+r ${APT_KEYRINGS}/pgdg.asc
-
-    printf 'deb [arch=%s signed-by=${APT_KEYRINGS}/pgdg.asc] %s %s-pgdg main\n' \
-        "$(tool_arch)" "${PGDG_APT_URL}" "${codename}" | as_root tee ${APT_SOURCES}/pgdg.list >/dev/null
-
-    pkg_install "postgresql-client-${major}"
+    pkg_install jq
 
 }
-tool_pg_dump () {
+tool_sshpass () {
 
-    tool_pgclient
-
-}
-tool_psql () {
-
-    tool_pgclient
+    pkg_install sshpass
 
 }
-tool_pg_restore () {
+tool_openssl () {
 
-    tool_pgclient
-
-}
-tool_createdb () {
-
-    tool_pgclient
+    pkg_install openssl
 
 }
-tool_htpasswd () {
+tool_certs () {
 
-    pkg_install apache2-utils
-
-}
-tool_gpg () {
-
-    pkg_install gnupg
+    [[ -f "${CA_BUNDLE}" ]] || pkg_install ca-certificates
 
 }
 tool_bin () {
@@ -99,23 +65,6 @@ tool_bin () {
         install -m 0755 "${file}" "$(path_expand "${INFRA_INSTALL_DIR}")/${name}"
 
     fi
-
-}
-tool_kubeconform () {
-
-    local dir=""
-
-    ensure curl tar
-    tool_certs
-
-    dir="$(tmp_dir)"
-
-    curl -fsSL "${KUBECONFORM_RELEASES}/${KUBECONFORM_VERSION}/kubeconform-linux-$(tool_arch).tar.gz" \
-        | tar xz -C "${dir}" kubeconform || die "Cannot download kubeconform ${KUBECONFORM_VERSION}"
-
-    tool_bin "${dir}/kubeconform" kubeconform
-
-    rm -rf "${dir}"
 
 }
 tool_actionlint () {
@@ -176,11 +125,6 @@ tool_trivy () {
     rm -rf "${dir}"
 
 }
-tool_certs () {
-
-    [[ -f "${CA_BUNDLE}" ]] || pkg_install ca-certificates
-
-}
 tool_docker () {
 
     local os="" codename="" conflict=""
@@ -204,77 +148,22 @@ tool_docker () {
 
     done
 
-    as_root install -m 0755 -d ${APT_KEYRINGS}
+    as_root install -m 0755 -d "${APT_KEYRINGS}"
 
-    curl -fsSL "${DOCKER_APT_URL}/${os}/gpg" | as_root tee ${APT_KEYRINGS}/docker.asc >/dev/null || die "Cannot fetch the docker signing key"
-    as_root chmod a+r ${APT_KEYRINGS}/docker.asc
+    curl -fsSL "${DOCKER_APT_URL}/${os}/gpg" | as_root tee "${APT_KEYRINGS}/docker.asc" >/dev/null || die "Cannot fetch the docker signing key"
+    as_root chmod a+r "${APT_KEYRINGS}/docker.asc"
 
-    printf 'deb [arch=%s signed-by=${APT_KEYRINGS}/docker.asc] %s/%s %s stable\n' \
-        "$(tool_arch)" "${DOCKER_APT_URL}" "${os}" "${codename}" | as_root tee ${APT_SOURCES}/docker.list >/dev/null
+    printf 'deb [arch=%s signed-by=%s/docker.asc] %s/%s %s stable\n' \
+        "$(tool_arch)" "${APT_KEYRINGS}" "${DOCKER_APT_URL}" "${os}" "${codename}" | as_root tee "${APT_SOURCES}/docker.list" >/dev/null
 
     pkg_install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
     ! has systemctl || as_root systemctl enable --now docker
 
-}
-tool_kubectl () {
-
-    local version="" arch="" dir=""
-
-    ensure curl
-    tool_certs
-
-    version="$(curl -fsSL "${K8S_RELEASE_URL}/stable${K8S_VERSION:+-${K8S_VERSION}}.txt")" || die "Cannot resolve kubectl version"
-    arch="$(tool_arch)"
-    dir="$(tmp_dir)"
-
-    curl -fsSLo "${dir}/kubectl" "${K8S_RELEASE_URL}/${version}/bin/linux/${arch}/kubectl"
-    curl -fsSLo "${dir}/kubectl.sha256" "${K8S_RELEASE_URL}/${version}/bin/linux/${arch}/kubectl.sha256"
-
-    ( cd "${dir}" && printf '%s  kubectl\n' "$(cat kubectl.sha256)" | sha256sum --check --quiet ) || die "kubectl checksum mismatch"
-
-    as_root install -o root -g root -m 0755 "${dir}/kubectl" "${TOOL_BIN_DIR}/kubectl"
-
-    rm -rf "${dir}"
+    [[ "$(id -u)" == "0" ]] || as_root usermod -aG docker "$(id -un)"
 
 }
-tool_helm () {
-
-    ensure curl openssl tar
-    tool_certs
-
-    curl -fsSL "${HELM_INSTALLER_URL}" | as_root bash
-
-}
-tool_tofu () {
-
-    ensure curl gpg
-    tool_certs
-
-    curl -fsSL "${TOFU_INSTALLER_URL}" | as_root sh -s -- --install-method deb
-
-}
-tool_aws () {
-
-    local dir="" arch=""
-
-    ensure curl unzip
-    tool_certs
-
-    dir="$(tmp_dir)"
-    arch="$(tool_arch)"
-
-    if [[ "${arch}" == "arm64" ]]; then arch=aarch64; else arch=x86_64; fi
-
-    curl -fsSLo "${dir}/aws.zip" "${AWSCLI_URL}/awscli-exe-linux-${arch}.zip"
-    unzip -q "${dir}/aws.zip" -d "${dir}"
-
-    as_root "${dir}/aws/install" --update
-
-    rm -rf "${dir}"
-
-}
-## install any listed tool if missing (docker, kubectl, helm, tofu, aws, psql, trivy, ...)
+## install any listed tool if missing (docker, jq, trivy, gitleaks, actionlint, ...)
 tool_ensure () {
 
     ensure "$@"

@@ -6,11 +6,21 @@ on:
     paths:
       - 'infra/**'
       - '.github/workflows/infra.yml'
+      - 'api/pyproject.toml'
+      - 'api/uv.lock'
+      - 'api/.python-version'
+      - 'web/package.json'
+      - 'web/bun.lock'
 
   pull_request:
     paths:
       - 'infra/**'
       - '.github/workflows/infra.yml'
+      - 'api/pyproject.toml'
+      - 'api/uv.lock'
+      - 'api/.python-version'
+      - 'web/package.json'
+      - 'web/bun.lock'
 
   workflow_dispatch:
 
@@ -26,7 +36,6 @@ permissions:
 defaults:
   run:
     shell: bash
-    working-directory: infra
 
 jobs:
   verify:
@@ -40,4 +49,39 @@ jobs:
           persist-credentials: false
 
       - name: Test
+        working-directory: infra
         run: bash src/main.sh test --check
+
+  images:
+    name: image ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: api
+            file: infra/src/template/docker/Dockerfile
+            target: app
+            spec: ''
+          - name: web
+            file: infra/src/template/docker/Dockerfile.web
+            target: runtime
+            spec: admin
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build
+        env:
+          FILE: ${{ matrix.file }}
+          TARGET: ${{ matrix.target }}
+          SPEC: ${{ matrix.spec }}
+          NAME: ${{ matrix.name }}
+        run: >
+          docker build --file "${FILE}" --target "${TARGET}"
+          ${SPEC:+--build-arg "SPEC=${SPEC}"}
+          --tag "ragx/${NAME}:ci" .

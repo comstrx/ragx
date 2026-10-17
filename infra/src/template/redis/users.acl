@@ -1,2 +1,0 @@
-user default off resetpass -@all
-user ${REDIS_USER} on >${REDIS_PASSWORD} ~* &* +@all -@dangerous

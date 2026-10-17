@@ -8,10 +8,9 @@ Wants=network-online.target
 Type=oneshot
 RemainAfterExit=yes
 User=${SSH_USER}
-WorkingDirectory=${COMPOSE_DIR}
-Environment=COMPOSE_PROFILES=${COMPOSE_PROFILES}
-ExecStart=/usr/bin/docker compose up -d --remove-orphans
-ExecStop=/usr/bin/docker compose stop
+WorkingDirectory=${SERVER_PATH}
+ExecStart=${SERVER_PATH}/infra --config ${SERVER_PATH}/.env -s ${STACK} -y compose up
+ExecStop=${SERVER_PATH}/infra --config ${SERVER_PATH}/.env -s ${STACK} -y compose stop
 TimeoutStartSec=0
 
 [Install]

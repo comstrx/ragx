@@ -4,14 +4,7 @@
 
 server_host () {
 
-    if [[ -z "${SSH_HOST}" ]]; then
-
-        SSH_HOST="$(tofu_output server_ip 2>/dev/null)" || true
-        export SSH_HOST
-
-    fi
-
-    [[ -n "${SSH_HOST}" ]] || die "Missing SSH_HOST — set it in your config or apply an ec2 stack"
+    [[ -n "${SSH_HOST}" ]] || die "Missing SSH_HOST — the address of the box this stack lives on"
 
     printf '%s' "${SSH_HOST}"
 
@@ -68,6 +61,50 @@ server_session () {
     fi
 
 }
+## true when this bundle runs on the box itself, or no box is named at all — the verbs then act locally instead of over ssh
+server_here () {
+
+    [[ -z "${SSH_HOST}" || "$(dirname -- "${INFRA_BIN}")" == "${SERVER_PATH}" ]]
+
+}
+## run a command on the server over ssh
+server_run () {
+
+    server_session ssh -p "${SSH_USER}@$(server_host)" "$@"
+
+}
+## run a command on the server with a terminal attached
+server_tty () {
+
+    server_session ssh -p -t "${SSH_USER}@$(server_host)" "$@"
+
+}
+## hand a verb to the bundle on the box — the same release, config and secrets it runs with
+server_forward () {
+
+    local path=""
+
+    path="$(server_path)"
+
+    if [[ -t 0 && -t 1 ]]; then
+
+        server_tty "cd '${path}' && ./infra --config .env -s ${STACK} -y$(server_overrides) $(printf '%q ' "$@")"
+
+    else
+
+        server_run "cd '${path}' && ./infra --config .env -s ${STACK} -y$(server_overrides) $(printf '%q ' "$@")"
+
+    fi
+
+}
+## copy a local file onto the server
+server_copy () {
+
+    local source="${1:?Usage: server copy <source> <destination>}" destination="${2:?Missing destination}"
+
+    server_session scp -P -r "${source}" "${SSH_USER}@$(server_host):${destination}"
+
+}
 ## block until the server accepts ssh — a freshly built box needs a minute to boot
 server_wait () {
 
@@ -86,99 +123,10 @@ server_wait () {
     die "Server ${host} never accepted ssh within ${SERVER_WAIT}s"
 
 }
-## true when the platform already answers on the server — the converge check
+## true when the stack already runs on the box — the converge check
 server_ready () {
 
-    server_run "sudo k3s kubectl -n '${K8S_NAMESPACE}' get 'deploy/${SERVICE_NAME}-web' >/dev/null 2>&1" 2>/dev/null
-
-}
-## push the current config and re-apply the app secrets — pods restart only when their env changed
-server_refresh () {
-
-    local path="" overrides=""
-
-    path="$(server_path)"
-    overrides="$(server_overrides)"
-    server_wait
-    server_push
-    server_run "cd '${path}' && ./infra --config .env -s ${STACK} -y${overrides} k8s secrets && ./infra --config .env -s ${STACK} -y${overrides} argocd bootstrap && ./infra --config .env -s ${STACK} -y${overrides} server verify"
-    succ "Server config refreshed — secrets reconciled, the app-of-apps re-applied, this release rolled out."
-
-}
-## converge the server: bootstrap it when the platform is not there yet, otherwise refresh its config
-server_ensure () {
-
-    if server_ready; then
-
-        server_refresh
-        return 0
-
-    fi
-
-    server_deploy
-
-}
-## run a command on the server over ssh
-server_run () {
-
-    server_session ssh -p "${SSH_USER}@$(server_host)" "$@"
-
-}
-## copy a local file onto the server
-server_copy () {
-
-    local source="${1:?Usage: server copy <source> <destination>}" destination="${2:?Missing destination}"
-
-    server_session scp -P -r "${source}" "${SSH_USER}@$(server_host):${destination}"
-
-}
-server_installer () {
-
-    local pin="INSTALL_K3S_VERSION=${K3S_VERSION}"
-
-    [[ -n "${K3S_VERSION}" ]] || pin="INSTALL_K3S_CHANNEL=v${K8S_VERSION:?Missing K8S_VERSION — the channel the installer pins to}"
-
-    printf 'printf "fs.inotify.max_user_instances = %s\\nfs.inotify.max_user_watches = %s\\n" | sudo tee %s >/dev/null && sudo sysctl -q --system; command -v curl >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y curl; } || { sudo apt-get update -qq && sudo apt-get install -y curl; }; curl -sfL %s | %q sh -s - %s%s' \
-        "${INOTIFY_INSTANCES}" "${INOTIFY_WATCHES}" "${INOTIFY_CONF}" "${K3S_INSTALL_URL}" "${pin}" "${K3S_INSTALL_ARGS}" "${1:+ --tls-san $1}"
-
-}
-## install k3s on the server (confirmed)
-server_setup () {
-
-    local host=""
-
-    host="$(server_host)"
-
-    confirm "Install k3s on '${SSH_USER}@${host}'?"
-
-    server_run "$(server_installer "${host}")"
-
-    succ "k3s ready on ${host}."
-
-}
-## sync this bundle, the resolved config and the stack values to the server — the box reads the image tag from the same file CI bumped
-server_push () {
-
-    local secrets="" path=""
-
-    path="$(server_path)"
-    secrets="$(tmp_file)"
-
-    IMAGE_TAG_OVERRIDE="$(ci_tag)"
-    export IMAGE_TAG_OVERRIDE
-
-    config_render "${secrets}"
-
-    server_run "rm -rf '${path:?}' 2>/dev/null || sudo rm -rf '${path:?}'; mkdir -p '${path}' 2>/dev/null || { sudo mkdir -p '${path}' && sudo chown -R \$(id -un): '${path}'; }"
-
-    server_copy "${INFRA_BIN}" "${path}/infra"
-    server_copy "${secrets}" "${path}/.env"
-
-    server_run "chmod 700 '${path}/infra' && chmod 600 '${path}/.env'"
-
-    rm -f "${secrets}"
-
-    succ "Bundle + config synced to ${path}."
+    server_run "test -f '${SERVER_PATH}/stack/compose.yaml' && cd '${SERVER_PATH}/stack' && [ -n \"\$(docker compose ps -q api 2>/dev/null)\" ]" 2>/dev/null
 
 }
 server_overrides () {
@@ -196,137 +144,180 @@ server_overrides () {
     printf '%s' "${out}"
 
 }
-## the ONE verb: push everything and bootstrap the whole platform remotely
-server_deploy () {
+## sync this bundle and the resolved config to the box — the box reads the release tag from the same file CI resolved
+server_push () {
 
-    local host="" path=""
+    local secrets="" path=""
 
-    host="$(server_host)"
     path="$(server_path)"
+    secrets="$(tmp_file)"
 
-    confirm "Deploy the '${STACK}' stack on '${SSH_USER}@${host}'?"
+    IMAGE_TAG_OVERRIDE="$(ci_tag)"
+    COMPOSE_DIR="${path}/stack"
+
+    export IMAGE_TAG_OVERRIDE COMPOSE_DIR
+
+    config_render "${secrets}"
+
+    server_run "mkdir -p '${path}' 2>/dev/null || { sudo mkdir -p '${path}' && sudo chown -R \$(id -un): '${path}'; }"
+
+    server_copy "${INFRA_BIN}" "${path}/infra"
+    server_copy "${secrets}" "${path}/.env"
+
+    server_run "chmod 700 '${path}/infra' && chmod 600 '${path}/.env'"
+
+    rm -f "${secrets}"
+
+    succ "Bundle + config synced to ${path}."
+
+}
+## push the bundle and the resolved config, then roll this release on the box
+server_refresh () {
 
     server_wait
     server_push
+    server_forward compose deploy
+    server_forward server verify
 
-    server_run "cd '${path}' && ./infra --config .env -s ${STACK} -y -e SSH_HOST='${host}'$(server_overrides) server bootstrap"
-
-    succ "Stack '${STACK}' live on ${host} — grab access with: infra k8s kubeconfig"
-
-}
-server_node () {
-
-    local left="${NODE_REGISTER_TRIES}"
-
-    while (( left-- )); do
-
-        [[ -z "$(kubectl get nodes -o name 2>/dev/null)" ]] || return 0
-
-        sleep "${NODE_REGISTER_POLL}"
-
-    done
-
-    die "k3s never registered a node — inspect: journalctl -u k3s"
+    succ "Release $(ci_tag) rolled on $(server_host)."
 
 }
-## run the on-box side: k3s, secrets, gitops handover, verify
-server_bootstrap () {
+## converge the server: bootstrap it when the stack is not there yet, otherwise roll the release
+server_ensure () {
 
-    ensure curl
+    if server_ready; then
 
-    bash -c "$(server_installer "${SSH_HOST}")"
-
-    ensure_dir "$(dirname "${KUBECONFIG}")"
-
-    as_root cat ${K3S_KUBECONFIG} > "${KUBECONFIG}"
-    chmod 600 "${KUBECONFIG}"
-
-    server_node
-
-    run kubectl wait --for=condition=Ready node --all --timeout="${NODE_READY_TIMEOUT}"
-
-    k8s_bootstrap
-    server_verify
-
-}
-## block until argocd has this release's image rolled out
-server_verify () {
-
-    local left="${SERVER_ROLLOUT_TRIES}" tag="" live="" app="" tick=0
-
-    ensure kubectl
-
-    tag="$(helm_tag)"
-
-    step "Waiting for ArgoCD to roll '${SERVICE_NAME}' onto ${tag}"
-
-    while (( left-- )); do
-
-        live="$(kubectl -n "${K8S_NAMESPACE}" get "deploy/${SERVICE_NAME}-web" -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)"
-
-        [[ "${live}" == *":${tag}" ]] && break
-
-        if (( tick++ % ARGOCD_NUDGE_TICKS == 0 )); then
-
-            for app in root "${SERVICE_NAME}"; do
-
-                argocd_report "${app}"
-                ! argocd_stalled "${app}" || argocd_sync "${app}"
-
-            done
-
-            k8s_unhealthy
-
-        fi
-
-        sleep "${SERVER_ROLLOUT_POLL}"
-
-    done
-
-    if [[ "${live}" != *":${tag}" ]]; then
-
-        argocd_report root
-        argocd_report "${SERVICE_NAME}"
-        k8s_status
-        k8s_unhealthy
-
-        die "ArgoCD never moved '${SERVICE_NAME}' onto ${tag} — the report above carries the reason"
+        server_refresh
+        return 0
 
     fi
 
-    for app in $(kubectl -n "${K8S_NAMESPACE}" get deploy -l "app.kubernetes.io/name=${SERVICE_NAME}" -o name 2>/dev/null); do
-
-        run kubectl -n "${K8S_NAMESPACE}" rollout status "${app}" --timeout="${ROLLOUT_TIMEOUT}" && continue
-
-        k8s_unhealthy
-
-        die "'${app}' never became ready on ${tag} — the report above carries the reason"
-
-    done
-
-    succ "Release ${tag} rolled out — every workload this service runs is live on it."
+    server_deploy
 
 }
-## fetch the k3s kubeconfig over the wire
-server_kubeconfig () {
+## prepare the box without deploying: docker, compose, kernel limits (confirmed)
+server_setup () {
 
     local host=""
 
     host="$(server_host)"
 
-    ensure_dir "$(dirname "${KUBECONFIG}")"
+    confirm "Prepare '${SSH_USER}@${host}' for the platform?"
 
-    server_run "sudo cat ${K3S_KUBECONFIG}" \
-        | sed "s|https://127.0.0.1:${K3S_API_PORT}|https://${host}:${K3S_API_PORT}|" > "${KUBECONFIG}"
+    server_wait
+    server_push
+    server_forward server prepare
 
-    chmod 600 "${KUBECONFIG}"
-
-    succ "Kubeconfig written: ${KUBECONFIG}"
+    succ "${host} carries docker and the kernel limits — 'infra server deploy' brings the stack."
 
 }
-## quick node + pod glance over ssh
+## the ONE verb: push everything and bootstrap the whole platform on the box
+server_deploy () {
+
+    local host=""
+
+    host="$(server_host)"
+
+    confirm "Deploy the '${STACK}' stack on '${SSH_USER}@${host}'?"
+
+    server_wait
+    server_push
+    server_forward server bootstrap
+
+    succ "Stack '${STACK}' live on ${host} — 'infra server status' shows it."
+
+}
+## the on-box side: docker, kernel, registry login, names, certificate, the stack, the units, the verification
+server_bootstrap () {
+
+    server_prepare
+    ci_login
+    dns_ensure
+    edge_prepare
+    compose_deploy
+    server_units
+    server_verify
+
+}
+## docker, compose and the kernel limits — the box is ready to carry containers
+server_prepare () {
+
+    ensure docker curl jq envsubst
+
+    compose_docker compose version >/dev/null 2>&1 || die "The docker compose plugin is missing — install docker-compose-plugin"
+
+    ensure_dir "${COMPOSE_DIR}"
+    render "${TEMPLATE_DIR}/systemd/sysctl.conf" "${COMPOSE_DIR}/sysctl.conf"
+
+    as_root install -m 0644 "${COMPOSE_DIR}/sysctl.conf" "/etc/sysctl.d/90-${PROJECT}.conf"
+    as_root sysctl -q --system >/dev/null
+
+    succ "Box prepared — docker $(compose_docker version --format '{{.Server.Version}}' 2>/dev/null || echo ready), kernel limits applied."
+
+}
+## install the systemd units: the stack on boot, the nightly backup, the certificate renewal
+server_units () {
+
+    local unit=""
+
+    has systemctl || { warn "No systemd here — the stack restarts with docker, backups and renewals need a scheduler of yours"; return 0; }
+
+    for unit in "${COMPOSE_DIR}"/systemd/*; do
+
+        as_root install -m 0644 "${unit}" "/etc/systemd/system/$(basename "${unit}")"
+
+    done
+
+    as_root systemctl daemon-reload
+    as_root systemctl enable "${COMPOSE_PROJECT}.service" >/dev/null 2>&1
+    as_root systemctl enable --now "${COMPOSE_PROJECT}-backup.timer" >/dev/null 2>&1
+
+    [[ "${TLS_ENABLED}" != "true" ]] || as_root systemctl enable --now "${COMPOSE_PROJECT}-renew.timer" >/dev/null 2>&1
+
+    succ "Units installed — ${COMPOSE_PROJECT} on boot, backups at ${BACKUP_CALENDAR}, renewals twice a day."
+
+}
+## block until the edge on this box serves this release
+server_verify () {
+
+    local tag="" url="" live="" waited=0
+
+    server_here || { server_forward server verify; return; }
+
+    ensure curl jq
+
+    tag="$(ci_tag)"
+    url="$(config_origin "${API_HOST}")${RELEASE_PATH}"
+
+    step "Waiting for ${API_HOST} to serve ${tag}"
+
+    while (( waited < RELEASE_WAIT )); do
+
+        live="$(curl -sk -m 15 --resolve "${API_HOST}:${PUBLIC_PORT}:127.0.0.1" "${url}" 2>/dev/null | jq -r '.data.release // empty' 2>/dev/null || true)"
+
+        if [[ "${live}" == "${tag}" ]]; then
+
+            succ "Release ${tag} is live on ${API_HOST} after ${waited}s."
+            return 0
+
+        fi
+
+        sleep "${RELEASE_POLL}"
+        waited=$(( waited + RELEASE_POLL ))
+
+    done
+
+    compose_cmd ps -a
+    compose_cmd logs --tail "${LOG_TAIL}" api nginx
+
+    die "Release ${tag} is not live after ${RELEASE_WAIT}s (the edge serves '${live:-nothing}') — the report above carries the reason"
+
+}
+## the containers on the box
 server_status () {
 
-    server_run "systemctl is-active k3s && sudo k3s kubectl get nodes"
+    server_here || { server_forward compose ps; return; }
+
+    compose_ps
 
 }

@@ -13,6 +13,24 @@ from .serve import Serve
 
 HIDDEN = { "password", "secret", "keys", "s3_secret" }
 
+def masked ( url: str ) -> str:
+
+    start = url.find("://")
+    end   = url.find("@", start + 3) if start >= 0 else -1
+    colon = url.find(":", start + 3, end) if end > 0 else -1
+
+    if colon < 0 or "/" in url[start + 3:end]: return url
+
+    return f"{url[:colon + 1]}***{url[end:]}"
+
+def redacted ( value: object ) -> object:
+
+    if isinstance(value, str): return masked(value)
+    if isinstance(value, dict): return { key: redacted(item) for key, item in value.items() }
+    if isinstance(value, list): return [redacted(item) for item in value]
+
+    return value
+
 class Commands:
 
     names = ("serve", "migrate", "rollback", "status", "seed", "check", "work", "schedule", "runbook")
@@ -88,7 +106,7 @@ class Commands:
             "schedule" : schedule.status(),
             "queues"   : list(application.queues_config().queues),
             "handlers" : queue.names(),
-            "config"   : { name: config.get(name).model_dump(exclude=HIDDEN) for name in config.names() },
+            "config"   : { name: redacted(config.get(name).model_dump(exclude=HIDDEN)) for name in config.names() },
             "openapi"  : len(app.openapi().get("paths", {})),
         }
 

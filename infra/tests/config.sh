@@ -7,17 +7,18 @@ test_config_precedence () {
     file="$(mktemp)"
     build="$(mktemp -d)"
 
-    printf 'STACK=light\nPROJECT=filed\nWEB_MEMORY=777Mi\n' > "${file}"
+    printf 'STACK=staging\nPROJECT=filed\nAPI_MEMORY=777m\n' > "${file}"
 
     export BUILD_DIR="${build}"
 
     assert_eq "$("${INFRA_BIN}" --config "${file}" ci setting PROJECT)" "filed" "a --config file fills an empty default"
-    assert_eq "$("${INFRA_BIN}" --config "${file}" ci setting WEB_MEMORY)" "777Mi" "a --config file beats a built-in default"
-    assert_eq "$("${INFRA_BIN}" --config "${file}" ci setting ARGOCD_NAMESPACE)" "argocd" "a built-in default reaches the run"
-    assert_eq "$(WEB_MEMORY=999Mi "${INFRA_BIN}" --config "${file}" ci setting WEB_MEMORY)" "999Mi" "the process env beats a --config file"
-    assert_eq "$(JSON_ENV='{"WEB_MEMORY":"111Mi","FOREIGN_THING":"x"}' "${INFRA_BIN}" --config "${file}" ci setting WEB_MEMORY)" "111Mi" "JSON_ENV beats a --config file"
+    assert_eq "$("${INFRA_BIN}" --config "${file}" ci setting API_MEMORY)" "777m" "a --config file beats a built-in default"
+    assert_eq "$("${INFRA_BIN}" --config "${file}" ci setting HTTP_PORT)" "80" "a built-in default reaches the run"
+    assert_eq "$(API_MEMORY=999m "${INFRA_BIN}" --config "${file}" ci setting API_MEMORY)" "999m" "the process env beats a --config file"
+    assert_eq "$(JSON_ENV='{"API_MEMORY":"111m","FOREIGN_THING":"x"}' "${INFRA_BIN}" --config "${file}" ci setting API_MEMORY)" "111m" "JSON_ENV beats a --config file"
     assert_eq "$(JSON_ENV='{"FOREIGN_THING":"x"}' "${INFRA_BIN}" --config "${file}" ci setting FOREIGN_THING)" "" "JSON_ENV cannot smuggle a foreign key"
-    assert_eq "$(WEB_MEMORY=999Mi "${INFRA_BIN}" --config "${file}" -e WEB_MEMORY=1Gi ci setting WEB_MEMORY)" "1Gi" "a flag beats everything"
+    assert_eq "$(API_MEMORY=999m "${INFRA_BIN}" --config "${file}" -e API_MEMORY=1g ci setting API_MEMORY)" "1g" "a flag beats everything"
+    assert_eq "$("${INFRA_BIN}" --config "${file}" -s production ci setting STACK)" "production" "the stack flag beats the file"
 
     rm -rf "${file}" "${build}"
 
@@ -30,20 +31,20 @@ test_config_last_file_wins () {
     two="$(mktemp)"
     build="$(mktemp -d)"
 
-    printf 'STACK=light\nWEB_MEMORY=1Mi\n' > "${one}"
-    printf 'WEB_MEMORY=2Mi\n' > "${two}"
+    printf 'STACK=production\nAPI_MEMORY=1m\n' > "${one}"
+    printf 'API_MEMORY=2m\n' > "${two}"
 
     export BUILD_DIR="${build}"
 
-    assert_eq "$("${INFRA_BIN}" --config "${one}" --config "${two}" ci setting WEB_MEMORY)" "2Mi" "the last --config file wins"
-    assert_eq "$("${INFRA_BIN}" --config "${two}" --config "${one}" ci setting WEB_MEMORY)" "1Mi" "order decides, not name"
+    assert_eq "$("${INFRA_BIN}" --config "${one}" --config "${two}" ci setting API_MEMORY)" "2m" "the last --config file wins"
+    assert_eq "$("${INFRA_BIN}" --config "${two}" --config "${one}" ci setting API_MEMORY)" "1m" "order decides, not name"
 
     rm -rf "${one}" "${two}" "${build}"
 
 }
 test_defaults_are_neutral () {
 
-    local key="" value="" biased="PROJECT BASE_DOMAIN GATEWAY_DOMAIN GIT_REPO_URL SSH_HOST AWS_REGION CLUSTER_NAME K8S_NAMESPACE IMAGE_NAME SSL_EMAIL ALARM_EMAIL ECR_REGISTRY S3_BUCKET S3_BACKUP_BUCKET TF_STATE_BUCKET CLOUDFLARE_DOMAIN_ID ALERT_CHAT_ID LOAD_TARGET_HOST"
+    local key="" value="" biased="PROJECT BASE_DOMAIN GIT_REPO_URL SSH_HOST SSL_EMAIL CLOUDFLARE_ZONE_ID ALERT_CHAT_ID S3_BUCKET S3_BACKUP_BUCKET WATCH_TARGETS WEB_API_URL IMAGE_NAME"
 
     for key in ${biased}; do
 
@@ -54,6 +55,24 @@ test_defaults_are_neutral () {
     done
 
 }
+test_the_stack_chooses_the_acme_directory () {
+
+    local file="" build=""
+
+    file="$(mktemp)"
+    build="$(mktemp -d)"
+
+    printf 'STACK=production\n' > "${file}"
+
+    export BUILD_DIR="${build}"
+
+    assert_contains "$("${INFRA_BIN}" --config "${file}" ci setting ACME_URL)" "acme-v02" "production asks the live directory"
+    assert_contains "$("${INFRA_BIN}" --config "${file}" -s staging ci setting ACME_URL)" "acme-staging-v02" "staging asks the staging directory — rate limits never bite a rehearsal"
+    assert_eq "$("${INFRA_BIN}" --config "${file}" -s staging -e ACME_URL=https://acme.example/dir ci setting ACME_URL)" "https://acme.example/dir" "an explicit directory beats the stack"
+
+    rm -rf "${file}" "${build}"
+
+}
 # test
 manifests_are_disjoint_and_every_key_is_read () {
 
@@ -62,7 +81,7 @@ manifests_are_disjoint_and_every_key_is_read () {
     file="$(mktemp)"
     build="$(mktemp -d)"
 
-    printf 'STACK=light\n' > "${file}"
+    printf 'STACK=production\n' > "${file}"
 
     export BUILD_DIR="${build}"
 

@@ -49,14 +49,14 @@ EXPOSE 8000
 
 USER 33:33
 
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=30s --start-interval=2s \
     CMD python -c "import os, sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:' + os.environ['APP_PORT'] + os.environ['HEALTH_PATH'], timeout=4).status < 400 else 1)" || exit 1
 
 ENTRYPOINT ["python", "-m", "bootstrap"]
 
 FROM ${BACKUP_IMAGE} AS backup
 
-RUN apk add --no-cache aws-cli
+RUN apk add --no-cache aws-cli && mkdir -p /backups && chown postgres:postgres /backups
 
 COPY --chmod=0755 backup.sh /usr/local/bin/backup
 

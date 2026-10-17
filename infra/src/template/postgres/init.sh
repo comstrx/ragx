@@ -14,8 +14,9 @@ WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'app_db') \gexec
 SELECT format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', :'app_db') \gexec
 SQL
 
+psql -v ON_ERROR_STOP=1 --username "${POSTGRES_USER}" --dbname postgres -c 'CREATE EXTENSION IF NOT EXISTS pg_stat_statements'
+
 psql -v ON_ERROR_STOP=1 --username "${POSTGRES_USER}" --dbname "${APP_DB_NAME}" <<'SQL'
-CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS citext;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;

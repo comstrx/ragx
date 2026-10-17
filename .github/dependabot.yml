@@ -43,34 +43,6 @@ updates:
     commit-message:
       prefix: 'infra(deps)'
 
-  - package-ecosystem: helm
-    directories: ['/infra/src/template/helm/*', '/infra/src/template/argocd/apps']
-    schedule:
-      interval: weekly
-      day: monday
-    cooldown:
-      default-days: 7
-    groups:
-      helm:
-        patterns: ['*']
-    labels: [deps]
-    commit-message:
-      prefix: 'infra(deps)'
-
-  - package-ecosystem: opentofu
-    directories: ['/infra/src/template/tofu/aws/stacks/*', '/infra/src/template/tofu/aws/modules/*']
-    schedule:
-      interval: weekly
-      day: monday
-    cooldown:
-      default-days: 7
-    groups:
-      opentofu:
-        patterns: ['*']
-    labels: [deps]
-    commit-message:
-      prefix: 'infra(deps)'
-
   - package-ecosystem: bun
     directory: /web
     schedule:

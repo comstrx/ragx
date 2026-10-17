@@ -20,177 +20,104 @@ audit_check () {
     AUDIT_FAILED=1
 
 }
-audit_probe () {
+audit_code () {
 
-    local script="${1:?Missing script}" name="" phase="" left="${AUDIT_PROBE_TRIES}" out=""
+    local host="${1:?Missing host}" path="${2:-/}"
 
-    name="audit-$(date -u +%s)-${RANDOM}"
+    curl -sk -o /dev/null -m 15 -w '%{http_code}' --resolve "${host}:${PUBLIC_PORT}:$(server_host)" "$(config_origin "${host}")${path}" 2>/dev/null || echo 000
 
-    kubectl -n "${OBSERVABILITY_NAMESPACE}" run "${name}" \
-        --restart=Never --image="${AUDIT_IMAGE}" --command -- sh -c "${script}" >/dev/null 2>&1
+}
+## every public name answers through the edge on the box
+audit_edge () {
 
-    while (( left-- )); do
+    local host="" code=""
 
-        phase="$(kubectl -n "${OBSERVABILITY_NAMESPACE}" get "pod/${name}" -o jsonpath='{.status.phase}' 2>/dev/null)"
+    ensure curl
 
-        [[ "${phase}" != "Succeeded" && "${phase}" != "Failed" ]] || break
+    code="$(audit_code "${API_HOST}" "${RELEASE_PATH}")"
 
-        sleep "${AUDIT_PROBE_POLL}"
+    audit_check "The api answers on ${API_HOST}" "$( [[ "${code}" == "200" ]] && echo true )" "HTTP ${code}"
+
+    compose_enabled web || return 0
+
+    for host in "${SUPER_HOST}" "${ADMIN_HOST}" "${CLIENT_HOST}"; do
+
+        code="$(audit_code "${host}" /)"
+
+        audit_check "The web answers on ${host}" "$( [[ "${code}" =~ ^[23] ]] && echo true )" "HTTP ${code}"
 
     done
 
-    out="$(kubectl -n "${OBSERVABILITY_NAMESPACE}" logs "${name}" 2>/dev/null | head -1 | tr -d '\r\n')"
+}
+## the certificate is not dying
+audit_tls () {
 
-    kubectl -n "${OBSERVABILITY_NAMESPACE}" delete "pod/${name}" --wait=false >/dev/null 2>&1
+    local days=""
 
-    printf '%s' "${out}"
+    [[ "${TLS_ENABLED}" == "true" ]] || { info "TLS is off — no certificate to audit"; return 0; }
+
+    days="$(edge_days || true)"
+
+    audit_check "The certificate has time left" "$( [[ -n "${days}" ]] && (( days > WATCH_CERT_DAYS )) && echo true )" "${days:-no} day(s)"
 
 }
-audit_metric () {
+## every container the stack runs is up and healthy
+audit_services () {
 
-    local query="${1:?Missing query}"
+    local report="" bad=""
 
-    audit_probe "curl -sG http://${METRICS_RELEASE}-kube-prometheus-st-prometheus:${PROMETHEUS_PORT}/api/v1/query --data-urlencode 'query=${query}' \
-        | sed -n 's/.*\"value\":\[[0-9.]*,\"\([0-9.e+-]*\)\"\].*/\1/p' | head -1"
+    if server_here; then
 
-}
-## argocd apps all synced + healthy
-audit_apps () {
+        report="$(compose_cmd ps --format '{{.Service}} {{.State}} {{.Health}}' 2>/dev/null)"
 
-    local total="" healthy=""
+    else
 
-    ensure kubectl
+        report="$(server_run "cd '${SERVER_PATH}/stack' && docker compose ps --format '{{.Service}} {{.State}} {{.Health}}'" 2>/dev/null)"
 
-    total="$(kubectl get application -n "${ARGOCD_NAMESPACE}" --no-headers 2>/dev/null | wc -l)"
-    healthy="$(kubectl get application -n "${ARGOCD_NAMESPACE}" --no-headers 2>/dev/null | grep -c "Synced.*Healthy")"
+    fi
 
-    audit_check "Every application reconciles from git" "$( [[ "${total}" -gt 0 && "${total}" == "${healthy}" ]] && echo true )" "${healthy}/${total} synced and healthy"
+    bad="$(awk '$2 != "running" || ($3 != "" && $3 != "healthy") { print $1 }' <<< "${report}" | paste -sd ' ' -)"
 
-}
-## prometheus targets all up
-audit_targets () {
-
-    local down=""
-
-    down="$(audit_metric 'count(up == 0)')"
-
-    audit_check "Everything the platform measures answers" "$( [[ -z "${down}" ]] && echo true )" "${down:-0} target(s) down"
-
-}
-## no alerts firing
-audit_alerts () {
-
-    local firing=""
-
-    firing="$(audit_metric 'count(ALERTS{alertstate="firing", alertname!="Watchdog"})')"
-
-    audit_check "Nothing is alerting" "$( [[ -z "${firing}" ]] && echo true )" "${firing:-0} alert(s) firing"
-
-}
-## alert rules loaded
-audit_rules () {
-
-    local rules=""
-
-    rules="$(audit_metric 'count(count by (alertname) (ALERTS_FOR_STATE)) or vector(0)')"
-
-    audit_check "Alert rules are loaded" "$( [[ -n "${rules}" ]] && (( ${rules%.*} > 0 )) && echo true )" "${rules:-no} rule(s) evaluating"
+    audit_check "Every container is running and healthy" "$( [[ -n "${report}" && -z "${bad}" ]] && echo true )" "${bad:-$(wc -l <<< "${report}") container(s)}"
 
 }
 ## a recent backup exists
 audit_backup () {
 
-    local age=""
+    local newest="" age=""
 
-    age="$(audit_metric "round((time() - max(kube_job_status_completion_time{namespace=\"${K8S_NAMESPACE}\", job_name=~\"${SERVICE_NAME}-backup.*\"})) / 3600)")"
+    newest="$(backup_list 2>/dev/null | grep -oE '[0-9]{8}-[0-9]{6}' | sort | tail -1)"
 
-    audit_check "A recent backup exists" "$( [[ -n "${age}" ]] && (( ${age%.*} < 36 )) && echo true )" "${age:-no} hour(s) old"
+    [[ -z "${newest}" ]] || age=$(( ( $(date +%s) - $(date -u -d "${newest:0:4}-${newest:4:2}-${newest:6:2} ${newest:9:2}:${newest:11:2}:${newest:13:2}" +%s) ) / 3600 ))
 
-}
-## the edge serves the expected certificate
-audit_serves_tls () {
-
-    [[ -n "$(kubectl -n "${GATEWAY_NAMESPACE}" get gateway gateway \
-        -o jsonpath='{.spec.listeners[?(@.protocol=="HTTPS")].name}' 2>/dev/null)" ]]
-
-}
-## cert validity window
-audit_certificate () {
-
-    local days=""
-
-    audit_serves_tls || return 0
-
-    days="$(audit_metric 'round(min(certmanager_certificate_expiration_timestamp_seconds - time()) / 86400)')"
-
-    audit_check "The certificate has life left" "$( [[ -n "${days}" ]] && (( ${days%.*} > 14 )) && echo true )" "${days:-no} day(s) remaining"
-
-}
-## loki receives logs
-audit_logs () {
-
-    local lines=""
-
-    [[ "${LOGS_ENABLED}" == "true" ]] || return 0
-
-    lines="$(audit_probe "curl -sG http://${LOGS_RELEASE}-loki:${LOKI_PORT}/loki/api/v1/query \
-        --data-urlencode 'query=sum(count_over_time({namespace=\"${K8S_NAMESPACE}\"}[10m]))' \
-        | sed -n 's/.*\"value\":\[[0-9.]*,\"\([0-9.]*\)\"\].*/\1/p' | head -1")"
-
-    audit_check "Logs are reaching the store" "$( [[ -n "${lines}" ]] && echo true )" "${lines:-0} line(s) in ten minutes"
-
-}
-## edge answers on every managed name
-audit_edge () {
-
-    local address="" code="" scheme=http port=80
-
-    ! audit_serves_tls || { scheme=https; port=443; }
-
-    address="$(k8s_gateway_address clusterIP)"
-
-    if [[ -z "${address}" ]]; then
-
-        audit_check "The platform answers on its own address" "" "the gateway has no service"
-
-        return 0
-
-    fi
-
-    code="$(audit_probe "curl -s -o /dev/null -w '%{http_code}' -m 15 --resolve ${GATEWAY_DOMAIN}:${port}:${address} ${scheme}://${GATEWAY_DOMAIN}${HEALTH_PATH}")"
-
-    audit_check "The platform answers on its own address" "$( [[ "${code}" == "200" ]] && echo true )" "${scheme}://${GATEWAY_DOMAIN}${HEALTH_PATH} through its own edge → ${code:-no answer}"
+    audit_check "A recent backup exists" "$( [[ -n "${age}" ]] && (( age < BACKUP_MAX_AGE_HOURS )) && echo true )" "${age:-no} hour(s) old"
 
 }
 ## run every audit in one sweep
 audit_all () {
 
-    ensure kubectl
+    step "Auditing the '${STACK}' stack on $(server_host)"
 
-    step "Auditing the '${STACK}' stack"
-
-    audit_apps
-    audit_targets
-    audit_rules
-    audit_alerts
     audit_edge
+    audit_tls
+    audit_services
     audit_backup
-    audit_certificate
-    audit_logs
 
     (( AUDIT_FAILED == 0 )) || die "The stack is not in the shape it claims — the lines above say where"
 
-    succ "Stack '${STACK}' audited — reconciled, measured, alerting, answering, backed up."
+    succ "Stack '${STACK}' audited — answering, certified, healthy, backed up."
 
 }
-## probe every watched target from outside: /up answers 200 and the certificate is not dying
+## probe every watched target from outside: the health path answers 200 and the certificate is not dying
 audit_watch () {
 
-    local target="" code="" expiry="" left="" report="" targets="${WATCH_TARGETS:-${GATEWAY_DOMAIN}}"
+    local target="" code="" expiry="" left="" report="" targets="${WATCH_TARGETS:-${API_HOST}}"
+
+    ensure curl openssl
 
     for target in ${targets}; do
 
-        code="$(curl -sS -o /dev/null -m 15 -w '%{http_code}' "https://${target}${HEALTH_PATH}" || echo 000)"
+        code="$(curl -sS -o /dev/null -m 15 -w '%{http_code}' "${SCHEME}://${target}${RELEASE_PATH}" || echo 000)"
 
         if [[ "${code}" != "200" ]]; then
 
@@ -199,7 +126,9 @@ audit_watch () {
 
         fi
 
-        expiry="$(echo | openssl s_client -connect "${target}:443" -servername "${target}" 2>/dev/null \
+        [[ "${SCHEME}" == "https" ]] || continue
+
+        expiry="$(printf '' | openssl s_client -connect "${target}:${HTTPS_PORT}" -servername "${target}" 2>/dev/null \
             | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)"
 
         [[ -n "${expiry}" ]] || continue
@@ -223,6 +152,7 @@ audit_watch () {
     return 1
 
 }
+## tell the alert channel — silent when no bot token or chat id is configured
 audit_alarm () {
 
     local token=""
@@ -236,4 +166,3 @@ audit_alarm () {
         --data-urlencode "text=${1:?audit_alarm needs a message}"
 
 }
-

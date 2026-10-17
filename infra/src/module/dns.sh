@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-## managed names — point every domain at the stack edge
+## managed names — point every name at the box, through cloudflare, only when a token says so
 
 dns_call () {
 
@@ -13,22 +13,22 @@ dns_call () {
         ${body:+--data "${body}"}
 
 }
-## the zone this stack answers in — CLOUDFLARE_DOMAIN_ID when the manifest names it, looked up by BASE_DOMAIN otherwise
+## the zone this stack answers in — CLOUDFLARE_ZONE_ID when the config names it, looked up by BASE_DOMAIN otherwise
 dns_zone () {
 
-    if [[ -z "${CLOUDFLARE_DOMAIN_ID}" ]]; then
+    if [[ -z "${CLOUDFLARE_ZONE_ID}" ]]; then
 
         ensure curl jq
 
-        CLOUDFLARE_DOMAIN_ID="$(dns_call GET "/zones?name=${BASE_DOMAIN}" | jq -r '.result[0].id // empty')"
+        CLOUDFLARE_ZONE_ID="$(dns_call GET "/zones?name=${BASE_DOMAIN}" | jq -r '.result[0].id // empty')"
 
-        [[ -n "${CLOUDFLARE_DOMAIN_ID}" ]] || die "No Cloudflare zone answers for ${BASE_DOMAIN} — the token cannot see it, or the zone is not there"
+        [[ -n "${CLOUDFLARE_ZONE_ID}" ]] || die "No Cloudflare zone answers for ${BASE_DOMAIN} — the token cannot see it, or the zone is not there"
 
-        export CLOUDFLARE_DOMAIN_ID
+        export CLOUDFLARE_ZONE_ID
 
     fi
 
-    printf '%s' "${CLOUDFLARE_DOMAIN_ID}"
+    printf '%s' "${CLOUDFLARE_ZONE_ID}"
 
 }
 dns_api () {
@@ -38,30 +38,14 @@ dns_api () {
     dns_call "${method}" "/zones/$(dns_zone)${path}" "${body}"
 
 }
-## true when this stack owns names — the manifest check already demanded the token
+## true when this stack owns its names — a token exists and nobody turned it off
 dns_managed () {
 
-    [[ -n "${DNS_MANAGED}" ]]
+    [[ "${DNS_MANAGED}" == "true" ]]
 
 }
-## resolve the current edge address
+## the address every managed name points at
 dns_edge () {
-
-    local address=""
-
-    if [[ -n "${EDGE_TYPE}" ]]; then
-
-        ensure kubectl
-
-        address="$(k8s_gateway_address hostname)"
-
-        [[ -n "${address}" ]] || { warn "The gateway has no load balancer address yet — run 'infra dns sync' once it does"; return 1; }
-
-        printf 'CNAME %s' "${address}"
-
-        return 0
-
-    fi
 
     printf 'A %s' "$(server_host)"
 
@@ -69,14 +53,16 @@ dns_edge () {
 ## upsert one dns record
 dns_record () {
 
-    local name="${1:?Missing name}" type="${2:?Missing type}" content="${3:?Missing content}" id="" body=""
+    local name="${1:?Missing name}" type="${2:?Missing type}" content="${3:?Missing content}" id="" body="" proxied=false ttl="${DNS_TTL}"
 
     ensure curl jq
 
-    id="$(dns_api GET "/dns_records?name=${name}" | jq -r '.result[0].id // empty')"
+    [[ "${DNS_PROXIED}" != "true" ]] || { proxied=true; ttl=1; }
 
-    body="$(jq -nc --arg type "${type}" --arg name "${name}" --arg content "${content}" \
-        '{type: $type, name: $name, content: $content, proxied: false, ttl: 60}')"
+    id="$(dns_api GET "/dns_records?name=${name}&type=${type}" | jq -r '.result[0].id // empty')"
+
+    body="$(jq -nc --arg type "${type}" --arg name "${name}" --arg content "${content}" --argjson proxied "${proxied}" --argjson ttl "${ttl}" \
+        '{type: $type, name: $name, content: $content, proxied: $proxied, ttl: $ttl}')"
 
     if [[ -n "${id}" ]]; then
 
@@ -93,37 +79,36 @@ dns_record () {
     info "${name} → ${type} ${content} (new)"
 
 }
-## list the names this stack manages
+## the names this stack manages
 dns_names () {
 
-    printf '%s' "${DNS_MANAGED}"
+    printf '%s\n' "${DNS_NAMES// /$'\n'}"
 
 }
-## point every managed name at the current edge
+## point every managed name at the box
 dns_sync () {
 
     local edge="" type="" content="" name=""
 
-    dns_managed || die "Missing DNS_MANAGED — name the records this stack owns, or no stack owns any"
+    dns_managed || die "This stack manages no names — a CLOUDFLARE_API_TOKEN turns it on, DNS_MANAGED=false keeps it off"
 
     edge="$(dns_edge)"
     type="${edge%% *}"
     content="${edge#* }"
 
-    for name in $(dns_names); do
+    for name in ${DNS_NAMES}; do
 
         dns_record "${name}" "${type}" "${content}"
 
     done
 
-    succ "DNS points at this stack — every managed name resolves to its edge."
+    succ "DNS points at this stack — every managed name resolves to $(server_host)."
 
 }
-## converge the edge names when this stack manages any — silent otherwise
+## converge the names when this stack manages any — silent otherwise
 dns_ensure () {
 
     dns_managed || { info "No managed names for this stack — dns converge skipped."; return 0; }
-    dns_edge >/dev/null 2>&1 || { warn "The edge has no address yet — names stay as they are until it does."; return 0; }
 
     dns_sync
 

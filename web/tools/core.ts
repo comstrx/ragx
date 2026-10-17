@@ -18,6 +18,7 @@ const free = ["tokens.css"];
 export const tools = createTools<Compiled, Locale>({
     root: new URL("..", import.meta.url),
     variable: "NEXT_PUBLIC_SPEC",
+    origin: "SPEC_API_URL",
     locales: supportedLocales,
     catalogue: catalogueFacts(endpoints),
     reasons,

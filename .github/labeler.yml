@@ -26,9 +26,7 @@ deps:
           - '**/package.json'
           - '**/bun.lock'
           - '**/Dockerfile*'
-          - '**/Chart.yaml'
-          - '**/Chart.lock'
-          - '**/.terraform.lock.hcl'
+          - 'infra/.env.example'
 
 docs:
   - changed-files:

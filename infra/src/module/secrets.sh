@@ -2,22 +2,24 @@
 
 ## secret resolution diagnostics — never prints values
 
-## the keys this stack cannot release without — grown by what the stack provisions, reaches and manages
+## the keys this stack cannot release without — grown by what the stack reaches and manages
 secrets_required () {
 
-    local keys="PROJECT BASE_DOMAIN GIT_REPO_URL GIT_TOKEN DB_PASSWORD REDIS_PASSWORD AUTH_SECRET ENV_FILE"
+    local keys="PROJECT BASE_DOMAIN GIT_REPO_URL GIT_TOKEN SSH_HOST DB_PASSWORD PG_PASSWORD RABBITMQ_PASSWORD REDIS_PASSWORD AUTH_SECRET"
 
-    if [[ -n "${PROVISIONER}" ]]; then keys+=" AWS_REGION AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY ECR_REGISTRY"; else keys+=" SSH_HOST"; fi
-
-    ! secret_split || keys+=" DB_APP_PASSWORD"
-
-    [[ "${CLUSTER_SOURCE}" != "ssh" ]] || keys+=" SSH_PRIVATE_KEY"
-    [[ "${CLUSTER_SOURCE}" != "ssh" || -z "${PROVISIONER}" ]] || keys+=" SSH_PUBLIC_KEY"
-    [[ "${CLOUD_IDENTITY}" == "true" || "${BACKUP_TARGET}" != "s3" ]] || keys+=" BACKUP_AWS_ACCESS_KEY_ID BACKUP_AWS_SECRET_ACCESS_KEY"
-    [[ "${GATEWAY_TLS}" != "true" || "${GATEWAY_DNS01}" != "true" ]] || keys+=" CLOUDFLARE_API_TOKEN"
-    [[ -z "${DNS_MANAGED}" ]] || keys+=" CLOUDFLARE_API_TOKEN"
+    [[ "${TLS_ENABLED}" != "true" ]] || keys+=" SSL_EMAIL"
+    [[ "${TLS_ENABLED}" != "true" || "${TLS_DNS01}" != "true" ]] || keys+=" CLOUDFLARE_API_TOKEN"
+    [[ "${DNS_MANAGED}" != "true" ]] || keys+=" CLOUDFLARE_API_TOKEN"
+    [[ "${BACKUP_TARGET}" != "s3" ]] || keys+=" S3_BACKUP_BUCKET BACKUP_AWS_ACCESS_KEY_ID BACKUP_AWS_SECRET_ACCESS_KEY"
+    [[ "${APP_STORAGE}" != "s3" ]] || keys+=" S3_BUCKET S3_REGION STORAGE_S3_KEY STORAGE_S3_SECRET"
 
     printf ' %s ' "${keys}"
+
+}
+## one way onto the server — a private key in the manifest, a key file, or a password
+secrets_reach () {
+
+    [[ -n "$(secret_get SSH_PRIVATE_KEY)" || -n "$(secret_get SSH_PASSWORD)" || -f "${SSH_KEY:-/nonexistent}" ]]
 
 }
 ## which expected secrets resolve and which are missing — a missing required one refuses the release
@@ -27,7 +29,7 @@ secrets_check () {
 
     required="$(secrets_required)"
 
-    info "Manifest for '${STACK}' — provisioner: ${PROVISIONER:-none} · cluster: ${CLUSTER_SOURCE}"
+    info "Manifest for '${STACK}' — tls: ${TLS_ENABLED} · dns-01: ${TLS_DNS01} · names: ${DNS_MANAGED} · backups: ${BACKUP_TARGET} · files: ${APP_STORAGE}"
 
     while IFS= read -r key; do
 
@@ -53,45 +55,48 @@ secrets_check () {
 
     done < <({ tr ' ' '\n' <<< "${required}"; secret_keys; } | sort -u)
 
-    (( broken == 0 )) || die "Required secrets are missing — the cluster cannot deploy without them."
+    secrets_reach || { err "SSH_PRIVATE_KEY, SSH_KEY or SSH_PASSWORD — one way onto the server is required"; broken=1; }
+
+    (( broken == 0 )) || die "Required secrets are missing — the stack cannot deploy without them."
+
+    secret_clean
 
     if (( missing == 0 )); then succ "All secrets resolve."; else warn "Optional secrets are missing — their features stay dark until filled."; fi
 
     secrets_drift
 
 }
-## the app env must carry the app's own secrets, and must not contradict the manifest where both speak
+## the app env must not contradict the manifest where both speak, and must carry nothing the containers would read as literal text
 secrets_drift () {
 
-    local line="" key="" value="" mine="" drift=0 appkey=0 loose=0
+    local line="" key="" value="" mine="" drift=0 loose=0
 
     while IFS= read -r line; do
 
         key="${line%%=*}"
         value="${line#*=}"
-        [[ "${key}" != "APP_KEY" ]] || appkey=1
         mine="$(secret_get "${key}")"
-        [[ -z "${mine}" || "${mine}" == "${value}" ]] || { warn "${key}: ENV_FILE disagrees with the manifest — the manifest wins on the cluster"; drift=$(( drift + 1 )); }
+
+        [[ -z "${mine}" || "${mine}" == "${value}" ]] || { warn "${key}: ENV_FILE disagrees with the manifest — the manifest wins on the server"; drift=$(( drift + 1 )); }
 
         [[ ! "${value}" =~ \$\{([A-Za-z_][A-Za-z0-9_]*)\} ]] \
-            || { err "${key}: ENV_FILE names \${${BASH_REMATCH[1]}} — this becomes a kubernetes secret, and kubernetes expands nothing"; loose=$(( loose + 1 )); }
+            || { err "${key}: ENV_FILE names \${${BASH_REMATCH[1]}} — the containers expand nothing"; loose=$(( loose + 1 )); }
 
     done < <(secret_env_pairs)
 
-    (( loose == 0 )) || die "ENV_FILE ships ${loose} placeholder(s) the pods would receive as literal text"
-    (( appkey == 1 )) || die "ENV_FILE carries no APP_KEY — the service cannot boot"
+    (( loose == 0 )) || die "ENV_FILE ships ${loose} placeholder(s) the containers would receive as literal text"
+
     if (( drift == 0 )); then succ "ENV_FILE and the manifest agree on every shared key."; else warn "${drift} shared key(s) drift between ENV_FILE and the manifest."; fi
 
 }
-## the app env this manifest carries — key names only, never values
+## the extra app env this manifest carries — key names only, never values
 secrets_env () {
 
     local n=0 key=""
 
     while IFS= read -r key; do printf '  %s\n' "${key%%=*}"; n=$(( n + 1 )); done < <(secret_env_pairs)
 
-    (( n > 0 )) || die "ENV_FILE is empty — the service has no environment to run on"
-    succ "${n} app keys ride in ENV_FILE."
+    succ "${n} extra app key(s) ride in ENV_FILE — the platform renders the rest."
 
 }
 ## law: the two examples are disjoint, and every key they name is read by the platform

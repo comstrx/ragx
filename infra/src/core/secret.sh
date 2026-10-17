@@ -50,40 +50,42 @@ secret_env_pairs () {
     done < <(base64 -d <<< "${raw}" 2>/dev/null | env_pairs || die "ENV_FILE is not base64")
 
 }
-## the roles are split when a runtime role exists that is not the schema owner
-secret_split () {
+## single quotes carry a value literally through docker compose — a value holding one has no safe spelling
+secret_quote () {
 
-    [[ -n "${DB_APP_USER:-}" && "${DB_APP_USER}" != "${DB_USER}" ]]
+    local value="${1-}" name="${2:-A value}"
+
+    [[ "${value}" != *\'* && "${value}" != *$'\n'* ]] || die "${name} carries a single quote or a newline — no env file can hold it literally; choose another value"
+
+    printf "'%s'" "${value}"
 
 }
-## the env the pods run on — scope 'app' carries the runtime login only, scope 'owner' adds the owner password for the hook, the run jobs and the backup
-secret_env_file () {
+## law: every secret the manifest carries survives an env file literally
+secret_clean () {
 
-    local dst="${1:?secret_env_file needs a destination}" scope="${2:-app}" key="" value="" line="" managed=""
+    local key=""
 
-    ( umask 077 && : > "${dst}" ) || die "Cannot write: ${dst}"
-    chmod 600 "${dst}"
+    while IFS= read -r key; do
 
-    for key in ${APP_SECRET_KEYS}; do
+        secret_quote "$(secret_get "${key}")" "${key}" >/dev/null
 
-        value="$(secret_get "${key}")"
+    done < <(secret_keys)
 
-        [[ "${key}" != "DB_PASSWORD" ]] || ! secret_split || value="$(secret_require DB_APP_PASSWORD)"
-        [[ -n "${value}" ]] && printf '%s=%s\n' "${key}" "${value}" >> "${dst}"
+}
+## the extra app keys ENV_FILE carries, appended behind what the platform renders — never over it
+secret_env_extra () {
 
-    done
+    local dst="${1:?secret_env_extra needs a destination}" line="" key="" managed=""
 
-    [[ "${scope}" != "owner" ]] || ! secret_split || printf 'DB_MIGRATE_PASSWORD=%s\n' "$(secret_require DB_PASSWORD)" >> "${dst}"
-    [[ -z "$(secret_get APP_AWS_ACCESS_KEY_ID)" ]] || printf 'AWS_ACCESS_KEY_ID=%s\nAWS_SECRET_ACCESS_KEY=%s\n' "$(secret_get APP_AWS_ACCESS_KEY_ID)" "$(secret_require APP_AWS_SECRET_ACCESS_KEY)" >> "${dst}"
-
-    managed=" $(config_managed_keys) "
+    managed=" $(config_managed_keys | paste -sd ' ' -) "
 
     while IFS= read -r line; do
 
         key="${line%%=*}"
-        [[ " ${managed} " != *" ${key} "* ]] || continue
-        [[ "${scope}" == "owner" || "${key}" != "DB_MIGRATE_PASSWORD" ]] || continue
-        grep -qE "^${key}=" "${dst}" || printf '%s\n' "${line}" >> "${dst}"
+
+        [[ "${managed}" != *" ${key} "* ]] || continue
+
+        grep -qE "^${key}=" "${dst}" || printf '%s=%s\n' "${key}" "$(secret_quote "${line#*=}" "${key}")" >> "${dst}"
 
     done < <(secret_env_pairs)
 

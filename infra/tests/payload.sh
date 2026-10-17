@@ -7,15 +7,18 @@ test_payload_extracts_once_and_verifies () {
     file="$(mktemp)"
     build="$(mktemp -d)"
 
-    printf 'STACK=light\n' > "${file}"
+    printf 'STACK=production\n' > "${file}"
 
     export BUILD_DIR="${build}" INFRA_DEV_TEMPLATE=""
 
     dir="$("${INFRA_BIN}" --config "${file}" ci setting TEMPLATE_DIR)"
 
     assert_contains "${dir}" "${build}/template/${INFRA_VERSION}-" "the templates unpack under the build dir, stamped by version"
-    assert_ok "the service chart is in the payload" test -f "${dir}/helm/service/Chart.yaml"
-    assert_ok "the light stack is in the payload" test -f "${dir}/tofu/aws/stacks/light/main.tf"
+    assert_ok "the compose file is in the payload" test -f "${dir}/compose/compose.yaml"
+    assert_ok "the edge is in the payload" test -f "${dir}/nginx/nginx.conf"
+    assert_ok "the web image recipe is in the payload" test -f "${dir}/docker/Dockerfile.web"
+    assert_fails "no chart survived the kubernetes era" test -d "${dir}/helm"
+    assert_fails "no tofu stack survived the kubernetes era" test -d "${dir}/tofu"
     assert_eq "$(cat "${dir}/.sha256")" "${INFRA_TEMPLATE_SHA}" "the extracted payload carries the header stamp"
 
     stamp="$(stat -c %Y "${dir}/.sha256")"
@@ -34,14 +37,14 @@ test_payload_stays_readable_when_a_key_is_materialized () {
     file="$(mktemp)"
     build="$(mktemp -d)"
 
-    printf 'STACK=light\n' > "${file}"
+    printf 'STACK=production\n' > "${file}"
 
     export BUILD_DIR="${build}" INFRA_DEV_TEMPLATE=""
 
     dir="$(umask 022; SSH_PRIVATE_KEY="$(printf 'probe' | base64)" SSH_KEY="" "${INFRA_BIN}" --config "${file}" ci setting TEMPLATE_DIR)"
 
     assert_eq "$(stat -c %a "${dir}/docker/backup.sh")" "644" "a materialized ssh key never narrows the modes the payload unpacks with"
-    assert_eq "$(stat -c %a "${dir}/helm/service/Chart.yaml")" "644" "every template stays readable beyond the user that unpacked it"
+    assert_eq "$(stat -c %a "${dir}/compose/compose.yaml")" "644" "every template stays readable beyond the user that unpacked it"
 
     rm -rf "${file}" "${build}"
 
@@ -54,7 +57,7 @@ test_payload_refuses_a_tampered_bundle () {
     build="$(mktemp -d)"
     copy="${build}/tampered.sh"
 
-    printf 'STACK=light\n' > "${file}"
+    printf 'STACK=production\n' > "${file}"
 
     export BUILD_DIR="${build}" INFRA_DEV_TEMPLATE=""
 

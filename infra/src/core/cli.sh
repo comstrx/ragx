@@ -112,10 +112,10 @@ usage () {
     printf '%s\n' \
         "" \
         "Examples:" \
-        "  infra -s light ci release              build, prove, push, scan, vendor, bump — argocd deploys" \
-        "  infra -s standard -y server deploy     any linux over ssh becomes the platform" \
-        "  infra -s light app run -- python -c \"import bootstrap\"   one command on the release — same image, env, secrets" \
-        "  infra audit all                        every live production check in one sweep" \
+        "  infra -s production ci release         build, prove, push, scan, converge the server and the names, wait for the edge" \
+        "  infra -s production -y server deploy   any linux over ssh becomes the platform — docker, nginx, postgres, rabbitmq, redis" \
+        "  infra -s production app run -- migrate one command on the release — same image, env, secrets" \
+        "  infra -s production audit all          every live production check in one sweep" \
         "  infra self update                      the latest release, checksum verified"
 
     exit "${1:-0}"

@@ -105,18 +105,70 @@ config_preset () {
 
     case "${STACK}" in
 
-        full  ) printf '%s\n' 'cluster=managed' 'provisioner=full'  'database=managed' 'identity=true'  'files=s3'  'edge=nlb' 'registry=' 'rollout=surge' ;;
-        light ) printf '%s\n' 'cluster=ssh'     'provisioner=light' 'database=cluster' 'identity=true'  'files=s3'  'edge='    'registry=' 'rollout=swap' ;;
-        *     ) printf '%s\n' 'cluster=ssh'     'provisioner='      'database=cluster' 'identity=false' 'files=pvc' 'edge='    "registry=${GHCR_REGISTRY}" 'rollout=surge' ;;
+        production ) printf '%s\n' "acme=${ACME_LIVE_URL}" ;;
+        *          ) printf '%s\n' "acme=${ACME_STAGING_URL}" ;;
 
     esac
 
 }
+config_encode () {
+
+    local raw="${1-}" out="" hex="" c="" i=0
+
+    for (( i = 0; i < ${#raw}; i++ )); do
+
+        c="${raw:i:1}"
+
+        case "${c}" in
+            [A-Za-z0-9._~-] ) out+="${c}" ;;
+            * ) printf -v hex '%%%02X' "'${c}"; out+="${hex}" ;;
+        esac
+
+    done
+
+    printf '%s' "${out}"
+
+}
+config_origin () {
+
+    local host="${1-}"
+
+    if [[ "${SCHEME}:${PUBLIC_PORT}" == "https:443" || "${SCHEME}:${PUBLIC_PORT}" == "http:80" ]]; then
+
+        printf '%s://%s' "${SCHEME}" "${host}"
+        return 0
+
+    fi
+
+    printf '%s://%s:%s' "${SCHEME}" "${host}" "${PUBLIC_PORT}"
+
+}
+config_memory () {
+
+    local memory="${PG_MEMORY_MB}" work=0 maintenance=0 wal=0
+
+    work=$(( memory * 1024 / 4 / PG_MAX_CONNECTIONS ))
+    maintenance=$(( memory / 16 ))
+    wal=$(( memory / 2 ))
+
+    (( work >= 4096 )) || work=4096
+    (( maintenance >= 64 )) || maintenance=64
+    (( maintenance <= 1024 )) || maintenance=1024
+    (( wal >= 1024 )) || wal=1024
+
+    export PG_SHARED_BUFFERS="${PG_SHARED_BUFFERS:-$(( memory / 4 ))MB}"
+    export PG_EFFECTIVE_CACHE_SIZE="${PG_EFFECTIVE_CACHE_SIZE:-$(( memory * 3 / 4 ))MB}"
+    export PG_WORK_MEM="${PG_WORK_MEM:-${work}kB}"
+    export PG_MAINTENANCE_WORK_MEM="${PG_MAINTENANCE_WORK_MEM:-${maintenance}MB}"
+    export PG_MAX_WAL_SIZE="${PG_MAX_WAL_SIZE:-${wal}MB}"
+    export PG_SHM_SIZE="${PG_SHM_SIZE:-$(( memory / 4 ))m}"
+    export PG_MEMORY_LIMIT="${PG_MEMORY_LIMIT:-$(( memory * 5 / 4 ))m}"
+
+}
 config_derive () {
 
-    local cluster="" provisioner="" database="" identity="" files="" edge="" registry="" rollout="" surge=1 unavailable=0 \
-          class="${LOCAL_STORAGE_CLASS}" managed=false local_pg=true section=http backup=s3 pull=false ceiling="${APP_MAX_REPLICAS_SSH}" \
-          keys="${BACKUP_SECRET_KEYS}" owner="" repo="${GIT_REPO:-}" hosts="" line=""
+    local acme="" line="" owner="" hosts="" names="" origins="" profiles="" trusted="" header="X-Forwarded-For" \
+          dns01=false wildcard=false workers="${QUEUE_WORKERS}" schedule=true scheme=http port="${HTTP_PORT}"
 
     while IFS= read -r line; do
 
@@ -124,73 +176,76 @@ config_derive () {
 
     done < <(config_preset)
 
-    export CLUSTER_SOURCE="${CLUSTER_SOURCE:-${cluster}}"
-    export PROVISIONER="${PROVISIONER:-${provisioner}}"
-    export DATABASE="${DATABASE:-${database}}"
-    export CLOUD_IDENTITY="${CLOUD_IDENTITY:-${identity}}"
-    export APP_STORAGE="${APP_STORAGE:-${files}}"
-    export EDGE_TYPE="${EDGE_TYPE:-${edge}}"
-
-    [[ "${CLUSTER_SOURCE}" != "managed" ]] || { managed=true; class="${MANAGED_STORAGE_CLASS}"; ceiling="${APP_MAX_REPLICAS_MANAGED}"; }
-    [[ "${DATABASE}" != "managed" ]] || local_pg=false
-    [[ "${APP_STORAGE}" != "pvc" ]] || backup=pvc
-    [[ "${GATEWAY_TLS}" != "true" ]] || section=https
-    [[ "${CLOUD_IDENTITY}" == "true" ]] || keys+=" BACKUP_AWS_ACCESS_KEY_ID BACKUP_AWS_SECRET_ACCESS_KEY"
-    [[ "${rollout}" != "swap" ]] || { surge=0; unavailable=1; }
-
-    owner="${repo%%/*}"
-
-    export REGISTRY="${REGISTRY:-${registry}}"
-    export REGISTRY_USER="${REGISTRY_USER:-${REGISTRY:+${owner}}}"
-
-    [[ -z "${REGISTRY_USER}" ]] || pull=true
-    [[ -n "${REGISTRY}" || "${CLOUD_IDENTITY}" != "true" || "${managed}" == "true" ]] || pull=true
-
-    export CLUSTER_NAME="${CLUSTER_NAME:-${PROJECT}}"
-    export K8S_NAMESPACE="${K8S_NAMESPACE:-${PROJECT}}"
-    export IMAGE_NAME="${IMAGE_NAME:-${PROJECT}/${SERVICE_NAME}}"
-    export DB_USER="${DB_USER:-${PROJECT}}"
-    export TF_STATE_BUCKET="${TF_STATE_BUCKET:-${PROJECT}-tf-state}"
-    export S3_BUCKET="${S3_BUCKET:-${PROJECT}-storage}"
-    export S3_BACKUP_BUCKET="${S3_BACKUP_BUCKET:-${PROJECT}-backups}"
-    export GATEWAY_DOMAIN="${GATEWAY_DOMAIN:-${BASE_DOMAIN}}"
     export GIT_REPO="${GIT_REPO:-$(printf '%s' "${GIT_REPO_URL%.git}" | sed -E 's#^.*[:/]([^/]+/[^/]+)$#\1#')}"
 
-    hosts="\"${BASE_DOMAIN}\",\"*.${BASE_DOMAIN}\",\"*.${TENANT_SUBDOMAIN}.${BASE_DOMAIN}\""
+    owner="${GIT_REPO%%/*}"
 
-    case "${GATEWAY_DOMAIN}" in
+    export REGISTRY_USER="${REGISTRY_USER:-${owner}}"
+    export IMAGE_NAME="${IMAGE_NAME:-${GIT_REPO,,}}"
+    export IMAGE_API="${IMAGE_API:-${REGISTRY}/${IMAGE_NAME}/api}"
+    export IMAGE_WEB="${IMAGE_WEB:-${REGISTRY}/${IMAGE_NAME}/web}"
+    export ACME_URL="${ACME_URL:-${acme}}"
 
-        "${BASE_DOMAIN}" | *".${BASE_DOMAIN}" ) ;;
-        * ) hosts="\"${GATEWAY_DOMAIN}\",${hosts}" ;;
+    [[ -z "$(secret_get CLOUDFLARE_API_TOKEN)" ]] || dns01=true
+    [[ "${TLS_ENABLED}" != "true" ]] || { scheme=https; port="${HTTPS_PORT}"; }
 
-    esac
+    export TLS_DNS01="${TLS_DNS01:-${dns01}}"
 
-    export APP_HOSTNAMES="${APP_HOSTNAMES:-[${hosts}]}"
-    export GATEWAY_SECTION="${GATEWAY_SECTION:-${section}}"
-    export GRAFANA_HOSTNAME="${GRAFANA_HOSTNAME:-${GRAFANA_SUBDOMAIN}.${BASE_DOMAIN}}"
-    export QUEUE_KEYS="${QUEUE_KEYS:-${PROJECT}${QUEUE_KEYS_SUFFIX}}"
-    export VOLUME_CLASS="${VOLUME_CLASS:-${class}}"
-    export PLATFORM_STORAGE_CLASS="${PLATFORM_STORAGE_CLASS:-${VOLUME_CLASS}}"
-    export PLATFORM_PG_ENABLED="${PLATFORM_PG_ENABLED:-${local_pg}}"
-    export APP_MAX_REPLICAS="${APP_MAX_REPLICAS:-${ceiling}}"
-    export ROLLOUT_SURGE="${ROLLOUT_SURGE:-${surge}}"
-    export ROLLOUT_UNAVAILABLE="${ROLLOUT_UNAVAILABLE:-${unavailable}}"
-    export AUTOSCALER_ENABLED="${AUTOSCALER_ENABLED:-${managed}}"
-    export METRICS_SERVER_ENABLED="${METRICS_SERVER_ENABLED:-${managed}}"
-    export CLOUD_METRICS="${CLOUD_METRICS:-${CLOUD_IDENTITY}}"
-    export BACKUP_SECRET_KEYS="${keys}"
-    export BACKUP_TARGET="${BACKUP_TARGET:-${backup}}"
-    export REGISTRY_PULL="${REGISTRY_PULL:-${pull}}"
-    export KUBECONFIG="${KUBECONFIG:-$(path_expand "${KUBE_DIR}")/${PROJECT}.yaml}"
+    [[ "${TLS_ENABLED}" != "true" || "${TLS_DNS01}" != "true" ]] || wildcard=true
+
+    export TLS_WILDCARD="${TLS_WILDCARD:-${wildcard}}"
+    export DNS_MANAGED="${DNS_MANAGED:-${dns01}}"
+    export SCHEME="${scheme}"
+    export PUBLIC_PORT="${port}"
+    export API_HOST="${API_HOST:-${API_SUBDOMAIN}.${BASE_DOMAIN}}"
+    export SUPER_HOST="${SUPER_HOST:-${SUPER_SUBDOMAIN}.${BASE_DOMAIN}}"
+    export ADMIN_HOST="${ADMIN_HOST:-${ADMIN_SUBDOMAIN}.${BASE_DOMAIN}}"
+    export CLIENT_HOST="${CLIENT_HOST:-${BASE_DOMAIN}}"
+
+    hosts="${CLIENT_HOST} www.${CLIENT_HOST}"
+    names="${API_HOST}"
+
+    if [[ "${WEB_ENABLED}" == "true" ]]; then
+
+        names+=" ${SUPER_HOST} ${ADMIN_HOST} ${CLIENT_HOST} www.${CLIENT_HOST}"
+        origins="\"$(config_origin "${SUPER_HOST}")\",\"$(config_origin "${ADMIN_HOST}")\",\"$(config_origin "${CLIENT_HOST}")\",\"$(config_origin "www.${CLIENT_HOST}")\""
+        profiles+="web,"
+
+    fi
+
+    [[ "${TLS_WILDCARD}" != "true" ]] || { hosts+=" *.${BASE_DOMAIN}"; names+=" *.${BASE_DOMAIN}"; }
+    (( WORKER_REPLICAS == 0 )) || { profiles+="worker,"; workers=0; }
+    [[ "${SCHEDULER_ENABLED}" != "true" ]] || { profiles+="scheduler,"; schedule=false; }
+    [[ "${DNS_PROXIED}" != "true" ]] || { trusted="${CLOUDFLARE_CIDRS}"; header="CF-Connecting-IP"; }
+
+    export CLIENT_HOSTS="${CLIENT_HOSTS:-${hosts}}"
+    export TLS_NAMES="${TLS_NAMES:-${names}}"
+    export TLS_NAME="${TLS_NAME:-${BASE_DOMAIN}}"
+    export DNS_NAMES="${DNS_NAMES:-${names}}"
+    export API_URL="${API_URL:-$(config_origin "${API_HOST}")}"
+    export API_ORIGINS="${API_ORIGINS:-[${origins}]}"
+    export COMPOSE_PROFILES="${COMPOSE_PROFILES:-${profiles%,}}"
+    export API_QUEUE_WORKERS="${API_QUEUE_WORKERS:-${workers}}"
+    export API_SCHEDULE="${API_SCHEDULE:-${schedule}}"
+    export COMPOSE_PROJECT="${COMPOSE_PROJECT:-${PROJECT}-${STACK}}"
+    export COMPOSE_DIR="${COMPOSE_DIR:-${BUILD_DIR}/compose/${STACK}}"
+    export HTTP_BIND="${HTTP_BIND:-${BIND_ADDRESS}:${HTTP_PORT}}"
+    export HTTPS_BIND="${HTTPS_BIND:-${BIND_ADDRESS}:${HTTPS_PORT}}"
+    export EDGE_TRUSTED_CIDRS="${EDGE_TRUSTED_CIDRS:-${trusted}}"
+    export REAL_IP_HEADER="${REAL_IP_HEADER:-${header}}"
+    export AMQP_URL="${AMQP_URL:-amqp://$(config_encode "${RABBITMQ_USER}"):$(config_encode "$(secret_get RABBITMQ_PASSWORD)")@rabbitmq:5672/$(config_encode "${RABBITMQ_VHOST}")}"
+    export REDIS_URL="${REDIS_URL:-redis://$(config_encode "${REDIS_USER}"):$(config_encode "$(secret_get REDIS_PASSWORD)")@redis:6379/0}"
+    export UPLOAD_MAX_BYTES="${UPLOAD_MAX_BYTES:-$(( UPLOAD_MAX_MB * 1024 * 1024 ))}"
     export SERVER_PATH="${SERVER_PATH:-${SERVER_ROOT}/${PROJECT}/infra}"
-    export INFRA_REPO_URL="${INFRA_REPO_URL:-https://github.com/${INFRA_REPO}.git}"
-    export INFRA_TAG="${INFRA_TAG:-v${INFRA_VERSION}}"
-    export INFRA_DERIVED="CLUSTER_SOURCE PROVISIONER DATABASE CLOUD_IDENTITY APP_STORAGE EDGE_TYPE REGISTRY REGISTRY_USER REGISTRY_PULL GATEWAY_DOMAIN GIT_REPO APP_HOSTNAMES GATEWAY_SECTION GRAFANA_HOSTNAME QUEUE_KEYS VOLUME_CLASS PLATFORM_STORAGE_CLASS PLATFORM_PG_ENABLED APP_MAX_REPLICAS ROLLOUT_SURGE ROLLOUT_UNAVAILABLE AUTOSCALER_ENABLED METRICS_SERVER_ENABLED CLOUD_METRICS BACKUP_SECRET_KEYS BACKUP_TARGET KUBECONFIG SERVER_PATH INFRA_REPO_URL INFRA_TAG"
+
+    config_memory
+
+    export INFRA_DERIVED="GIT_REPO REGISTRY_USER IMAGE_NAME IMAGE_API IMAGE_WEB ACME_URL TLS_DNS01 TLS_WILDCARD DNS_MANAGED SCHEME PUBLIC_PORT API_HOST SUPER_HOST ADMIN_HOST CLIENT_HOST CLIENT_HOSTS TLS_NAMES TLS_NAME DNS_NAMES API_URL API_ORIGINS COMPOSE_PROFILES API_QUEUE_WORKERS API_SCHEDULE COMPOSE_PROJECT COMPOSE_DIR HTTP_BIND HTTPS_BIND EDGE_TRUSTED_CIDRS REAL_IP_HEADER AMQP_URL REDIS_URL UPLOAD_MAX_BYTES SERVER_PATH PG_SHARED_BUFFERS PG_EFFECTIVE_CACHE_SIZE PG_WORK_MEM PG_MAINTENANCE_WORK_MEM PG_MAX_WAL_SIZE PG_SHM_SIZE PG_MEMORY_LIMIT"
 
 }
 config_managed_keys () {
 
-    grep -oE '^  [A-Z][A-Z0-9_]+:' "${TEMPLATE_DIR}/helm/values/${SERVICE_NAME}.tpl" | tr -d ' :' | paste -sd ' ' -
+    sed -nE 's/^([A-Z][A-Z0-9_]*)=.*/\1/p' "${TEMPLATE_DIR}/compose/api.env"
 
 }
 config_render () {
@@ -249,17 +304,6 @@ config_roots () {
     export REPO_ROOT BUILD_DIR TEMPLATE_DIR
 
 }
-cloud () {
-
-    local fn="${CLOUD:?Missing CLOUD — the provider this platform provisions on}_${1:?cloud needs a verb}"
-
-    shift
-
-    declare -F "${fn}" >/dev/null || die "Cloud '${CLOUD}' does not implement '${fn}' — teach module/${CLOUD}.sh"
-
-    "${fn}" "$@"
-
-}
 config_load () {
 
     config_roots
@@ -268,6 +312,7 @@ config_load () {
     env_json_load
     env_files_load
     env_apply keep < <(infra_defaults | env_pairs)
+    env_apply keep < <(infra_manifest | env_pairs)
 
     config_ssh_key
 
@@ -275,9 +320,6 @@ config_load () {
     export STACKS="${STACKS:?Missing STACKS — the stack names this platform recognizes}"
 
     [[ " ${STACKS} " == *" ${STACK} "* ]] || die "Unknown stack '${STACK}' — STACKS declares: ${STACKS}"
-
-    [[ -n "${AWS_PROFILE:-}" ]] || unset AWS_PROFILE
-    [[ -z "${AWS_ACCESS_KEY_ID:-}" ]] || unset AWS_PROFILE
 
     config_derive
     template_ensure

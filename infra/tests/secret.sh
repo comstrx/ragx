@@ -1,143 +1,99 @@
 #!/usr/bin/env bash
 
-secret_probe_config () {
+test_the_app_env_carries_the_runtime_secrets_and_the_extras_never_override () {
 
-    local file="${1:?secret_probe_config needs a file}"
-
-    printf 'STACK=light\nPROJECT=probe\nBASE_DOMAIN=probe.test\nDB_APP_USER=probe_app\nDB_PASSWORD=owner-pw\nDB_APP_PASSWORD=app-pw\nREDIS_PASSWORD=redis-pw\nENV_FILE=%s\n' \
-        "$(printf 'APP_KEY=base64:probe\nDB_PASSWORD=stale-pw\nDB_MIGRATE_PASSWORD=leaked-pw\n' | base64 -w0)" > "${file}"
-
-}
-test_the_app_secret_carries_the_runtime_login_and_never_the_owner_password () {
-
-    local file="" build="" app="" owner=""
+    local file="" build="" dir="" env=""
 
     file="$(mktemp)"
     build="$(mktemp -d)"
-    app="${build}/app.env"
-    owner="${build}/owner.env"
+    dir="${build}/stack"
 
-    secret_probe_config "${file}"
+    stack_probe_config "${file}" "ENV_FILE=$(printf 'MAIL_PASSWORD=mail-pw\nDB_PASSWORD=stale-pw\nAPP_DEBUG=true\nMAIL_SENDER="hello@probe.test"\n' | base64 -w0)"
 
     export BUILD_DIR="${build}"
 
-    INFRA_CONFIG="$(realpath "${file}")" bash -c "source '${INFRA_BIN}'; config_load; secret_env_file '${app}'; secret_env_file '${owner}' owner" >/dev/null
+    stack_render "${file}" "${dir}"
 
-    assert_contains "$(cat "${app}")" "DB_PASSWORD=app-pw" "the pods log in as the runtime role"
-    assert_eq "$(grep -c 'owner-pw' "${app}")" "0" "the owner password never reaches an app pod"
-    assert_eq "$(grep -c '^DB_MIGRATE_PASSWORD=' "${app}")" "0" "the app secret carries no migrate login"
-    assert_eq "$(grep -c 'stale-pw' "${app}")" "0" "the manifest outranks a password ENV_FILE still carries"
-    assert_eq "$(grep -c 'leaked-pw' "${app}")" "0" "an owner password smuggled through ENV_FILE never reaches an app pod"
-    assert_contains "$(cat "${owner}")" "DB_PASSWORD=app-pw" "the owner scope still runs the app as the runtime role"
-    assert_contains "$(cat "${owner}")" "DB_MIGRATE_PASSWORD=owner-pw" "the owner scope carries the owner password for the hook"
-    assert_contains "$(cat "${app}")" "APP_KEY=base64:probe" "the app env still rides in"
+    env="$(cat "${dir}/api.env")"
+
+    assert_contains "${env}" "DB_PASSWORD='db-pw'" "the api logs in with the manifest password"
+    assert_contains "${env}" "AUTH_SECRET='auth-pw'" "the api signs with the manifest secret"
+    assert_contains "${env}" "MAIL_PASSWORD='mail-pw'" "an extra key rides in from ENV_FILE"
+    assert_contains "${env}" "MAIL_SENDER='hello@probe.test'" "an extra key is requoted literally"
+    assert_eq "$(grep -c 'stale-pw' "${dir}/api.env")" "0" "the manifest outranks a password ENV_FILE still carries"
+    assert_eq "$(grep -c '^APP_DEBUG=' "${dir}/api.env")" "1" "a key the platform renders is rendered once"
+    assert_contains "${env}" "APP_DEBUG='false'" "and the platform's value wins"
 
     rm -rf "${file}" "${build}"
 
 }
-test_without_a_split_one_password_serves_and_no_owner_login_is_added () {
-
-    local file="" build="" app="" owner=""
-
-    file="$(mktemp)"
-    build="$(mktemp -d)"
-    app="${build}/app.env"
-    owner="${build}/owner.env"
-
-    printf 'STACK=light\nPROJECT=probe\nDB_PASSWORD=owner-pw\nREDIS_PASSWORD=redis-pw\n' > "${file}"
-
-    export BUILD_DIR="${build}"
-
-    INFRA_CONFIG="$(realpath "${file}")" bash -c "source '${INFRA_BIN}'; config_load; secret_env_file '${app}'; secret_env_file '${owner}' owner" >/dev/null
-
-    assert_contains "$(cat "${app}")" "DB_PASSWORD=owner-pw" "the owner serves when the roles are not split"
-    assert_eq "$(cat "${app}")" "$(cat "${owner}")" "both scopes agree when there is one role"
-
-    rm -rf "${file}" "${build}"
-
-}
-test_the_runtime_password_is_required_once_the_roles_split () {
+test_a_quote_or_a_placeholder_in_a_secret_is_refused () {
 
     local file=""
 
     file="$(mktemp)"
 
-    secret_probe_config "${file}"
+    stack_probe_config "${file}" "DB_PASSWORD=it's"
 
-    assert_contains "$(INFRA_CONFIG="$(realpath "${file}")" bash -c "source '${INFRA_BIN}'; config_load; secrets_required")" " DB_APP_PASSWORD " "a split manifest cannot release without the runtime password"
+    assert_fails "a single quote in a secret is refused — no env file carries it literally" env INFRA_CONFIG="${file}" bash -c "source '${INFRA_BIN}'; config_load; secret_clean"
 
-    printf 'STACK=light\nPROJECT=probe\n' > "${file}"
+    stack_probe_config "${file}" "ENV_FILE=$(printf 'MAIL_URL=${MAIL_HOST}\n' | base64 -w0)"
 
-    assert_eq "$(INFRA_CONFIG="$(realpath "${file}")" bash -c "source '${INFRA_BIN}'; config_load; secrets_required" | grep -c 'DB_APP_PASSWORD')" "0" "one role asks for one password"
+    assert_fails "a placeholder in ENV_FILE is refused — the containers expand nothing" env INFRA_CONFIG="${file}" bash -c "source '${INFRA_BIN}'; config_load; secrets_drift"
+
+    stack_probe_config "${file}"
+
+    assert_ok "clean secrets pass" env INFRA_CONFIG="${file}" bash -c "source '${INFRA_BIN}'; config_load; secret_clean; secrets_drift"
 
     rm -f "${file}"
 
 }
-test_the_owner_secret_reaches_only_the_hook_the_run_jobs_and_the_backup () {
+test_required_secrets_grow_with_the_features () {
 
-    local file="" dir=""
+    local file="" required=""
 
     file="$(mktemp)"
 
-    printf 'STACK=light\nPROJECT=owned\n' > "${file}"
+    stack_probe_config "${file}"
 
-    dir="$("${INFRA_BIN}" --config "${file}" ci setting TEMPLATE_DIR)"
+    required="$(env INFRA_CONFIG="${file}" bash -c "source '${INFRA_BIN}'; config_load; secrets_required")"
 
-    assert_contains "$(cat "${dir}/helm/service/templates/migrate.yaml")" 'service.ownerSecretRef' "the migrate hook reads the owner secret"
-    assert_contains "$(cat "${dir}/k8s/run.yaml")" 'owner-secrets' "a run job reads the owner secret"
-    assert_eq "$(grep -c 'owner' "${dir}/helm/service/templates/deployment.yaml")" "0" "the app pods never read the owner secret"
+    assert_contains "${required}" " PG_PASSWORD " "the cluster superuser password is required"
+    assert_contains "${required}" " RABBITMQ_PASSWORD " "the broker password is required"
+    assert_contains "${required}" " SSL_EMAIL " "tls needs an acme account owner"
+    assert_eq "$(grep -c 'CLOUDFLARE_API_TOKEN' <<< "${required}")" "0" "no managed names, no token required"
+    assert_eq "$(grep -c 'BACKUP_AWS' <<< "${required}")" "0" "local backups need no cloud keys"
+
+    required="$(env INFRA_CONFIG="${file}" DNS_MANAGED=true BACKUP_TARGET=s3 APP_STORAGE=s3 TLS_ENABLED=false bash -c "source '${INFRA_BIN}'; config_load; secrets_required")"
+
+    assert_contains "${required}" " CLOUDFLARE_API_TOKEN " "managed names require the token"
+    assert_contains "${required}" " BACKUP_AWS_SECRET_ACCESS_KEY " "s3 backups require their keys"
+    assert_contains "${required}" " STORAGE_S3_SECRET " "s3 files require their keys"
+    assert_eq "$(grep -c 'SSL_EMAIL' <<< "${required}")" "0" "no tls, no acme owner"
 
     rm -f "${file}"
 
 }
-test_the_roles_take_the_passwords_before_any_secret_carries_them () {
+test_the_server_env_never_carries_the_way_in () {
 
-    local body="" roles="" secrets="" pods=""
-
-    body="$(declare -f k8s_secrets)"
-    roles="$(grep -n 'k8s_platform_passwords' <<< "${body}" | head -1 | cut -d: -f1)"
-    secrets="$(grep -n 'create secret generic' <<< "${body}" | head -1 | cut -d: -f1)"
-
-    assert_ne "${roles}" "" "the secrets step moves the roles"
-    assert_ok "the roles take the passwords before the first secret is written" test "${roles}" -lt "${secrets}"
-
-    body="$(declare -f k8s_rotate)"
-    secrets="$(grep -n 'k8s_secrets' <<< "${body}" | head -1 | cut -d: -f1)"
-    pods="$(grep -n 'rollout restart deployment' <<< "${body}" | head -1 | cut -d: -f1)"
-
-    assert_ok "the secrets land before the pods restart" test "${secrets}" -lt "${pods}"
-
-}
-test_the_app_secret_carries_the_scoped_storage_keys_when_the_manifest_names_them () {
-
-    local file="" build="" app=""
+    local file="" build="" rendered=""
 
     file="$(mktemp)"
     build="$(mktemp -d)"
-    app="${build}/app.env"
+    rendered="${build}/.env"
 
-    printf 'STACK=light\nPROJECT=probe\nDB_PASSWORD=owner-pw\nREDIS_PASSWORD=redis-pw\nAPP_AWS_ACCESS_KEY_ID=AKIAPROBE\nAPP_AWS_SECRET_ACCESS_KEY=probe-secret\n' > "${file}"
+    stack_probe_config "${file}" "SSH_PRIVATE_KEY=$(printf 'probe' | base64)" "SSH_PASSWORD=ssh-pw" "SSH_KEY=/tmp/nowhere"
 
     export BUILD_DIR="${build}"
 
-    INFRA_CONFIG="$(realpath "${file}")" bash -c "source '${INFRA_BIN}'; config_load; secret_env_file '${app}'" >/dev/null
+    env INFRA_CONFIG="${file}" bash -c "source '${INFRA_BIN}'; config_load; config_render '${rendered}'"
 
-    assert_contains "$(cat "${app}")" "AWS_ACCESS_KEY_ID=AKIAPROBE" "the pods log into storage with the scoped key"
-    assert_contains "$(cat "${app}")" "AWS_SECRET_ACCESS_KEY=probe-secret" "the pods carry the scoped secret"
+    assert_eq "$(stat -c %a "${rendered}")" "600" "the server env is private"
+    assert_eq "$(grep -c '^SSH_PRIVATE_KEY=\|^SSH_PASSWORD=\|^SSH_KEY=' "${rendered}")" "0" "the box never receives the way onto itself"
+    assert_contains "$(cat "${rendered}")" "GIT_TOKEN=probe-token" "the box can pull its images"
+    assert_contains "$(cat "${rendered}")" "DB_PASSWORD=db-pw" "the box can render its stack"
+    assert_contains "$(cat "${rendered}")" "SSH_HOST=203.0.113.10" "the box knows it is the box"
 
     rm -rf "${file}" "${build}"
-
-}
-test_the_backup_secret_carries_the_scoped_backup_keys_from_the_manifest () {
-
-    local body="" filtered="" minted="" created=""
-
-    body="$(declare -f k8s_secrets)"
-    filtered="$(grep -n 'BACKUP_SECRET_KEYS' <<< "${body}" | head -1 | cut -d: -f1)"
-    minted="$(grep -n 'BACKUP_AWS_SECRET_ACCESS_KEY=%s' <<< "${body}" | head -1 | cut -d: -f1)"
-    created="$(grep -n 'backup-secrets' <<< "${body}" | head -1 | cut -d: -f1)"
-
-    assert_ne "${minted}" "" "the backup secret learns the scoped backup keys from the manifest"
-    assert_ok "the keys join the filtered owner env before the backup secret is written" test "${filtered}" -lt "${minted}" -a "${minted}" -lt "${created}"
 
 }

@@ -36,5 +36,5 @@ export { type Features, featureFacts } from "./features.ts";
 export { type StaticFont, staticFonts } from "./fonts.ts";
 export { type IconFont, type IconFormat, iconFont } from "./icons.ts";
 export { composeMessages, type Dictionaries, type MessageContracts, type MessageSources, messageIssues } from "./messages.ts";
-export { identityOf, type Loaded, type Loader, type LoaderOptions, type Validate } from "./specs.ts";
+export { type Deployable, deployedContracts, identityOf, type Loaded, type Loader, type LoaderOptions, type Validate } from "./specs.ts";
 export { createTools, type SurfaceAssets, type Tools, type ToolsOptions } from "./tools.ts";

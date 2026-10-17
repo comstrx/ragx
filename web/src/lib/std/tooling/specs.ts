@@ -23,7 +23,9 @@ export type LoaderOptions<C, L extends string> = {
     brandFolders: readonly string[];
     catalogue: Catalogue;
     validate: Validate<C, L>;
+    origin?: string | undefined;
 };
+export type Deployable = { contracts?: { urls?: Record<string, unknown>; options?: Record<string, unknown> } | null };
 export type Loaded<C, L extends string> = C & { messages: Dictionaries<L>; identity: string; folder: string };
 export type Loader<C, L extends string> = {
     installedSpecs: ( directory?: string ) => string[];
@@ -37,6 +39,22 @@ const parts = ["config", "schema"];
 export function identityOf ( path: string ): string {
 
     return path.slice(path.lastIndexOf("/") + 1);
+
+}
+export function deployedContracts ( config: unknown, origin: string | undefined ): unknown {
+
+    const address = origin?.trim();
+
+    if ( !address || !config || typeof config !== "object" ) return config;
+
+    const { contracts } = config as Deployable;
+
+    if ( !contracts ) return config;
+
+    const urls = { ...contracts.urls, production: address, ...(contracts.urls?.browser === undefined ? {} : { browser: address }) };
+    const options = address.startsWith("https://") ? { ...contracts.options, insecure: false } : contracts.options;
+
+    return { ...config, contracts: { ...contracts, urls, options } };
 
 }
 function named ( value: string ): boolean {
@@ -92,7 +110,7 @@ function brandIssues ( folder: string, brandFolders: readonly string[] ): void {
 }
 export function createLoader<C, L extends string> ( options: LoaderOptions<C, L> ): Loader<C, L> {
 
-    const { root, variable, locales, brandFolders, catalogue, validate } = options;
+    const { root, variable, locales, brandFolders, catalogue, validate, origin } = options;
     const specs = resolve(root, "specs");
     const features = resolve(root, "src", "features");
     const messages = resolve(root, "messages");
@@ -139,7 +157,7 @@ export function createLoader<C, L extends string> ( options: LoaderOptions<C, L>
         const dictionaries = composeMessages({ core: messages, brand: resolve(folder, "brand/messages"), locales });
 
         return {
-            ...validate(identity, config, schema, dictionaries, facts, catalogue),
+            ...validate(identity, deployedContracts(config, origin ? process.env[origin] : undefined), schema, dictionaries, facts, catalogue),
             messages: dictionaries,
             identity,
             folder,
