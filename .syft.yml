@@ -91,6 +91,7 @@ file:
     selection: 'owned-by-package'
     digests:
       - 'sha256'
+
   content:
     skip-files-above-size: 256000
 
@@ -103,5 +104,6 @@ source:
 registry:
   insecure-skip-tls-verify: false
   insecure-use-http: false
+
   ca-cert: ''
   auth: []

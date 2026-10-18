@@ -1,5 +1,4 @@
 debug: false
-ignorefile: .trivyignore.yaml
 quiet: false
 insecure: false
 timeout: 10m0s
@@ -33,9 +32,10 @@ vulnerability:
 scan:
   disable-telemetry: true
   skip-version-check: true
-  parallel: 10
-  detection-priority: comprehensive
   show-suppressed: true
+
+  detection-priority: comprehensive
+  parallel: 10
 
   scanners:
     - vuln
@@ -87,6 +87,7 @@ scan:
 
 license:
   full: true
+
   ignored:
     - MIT
     - Apache-2.0

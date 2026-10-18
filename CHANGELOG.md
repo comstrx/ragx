@@ -33,7 +33,8 @@ Every release of RagX, one section per tag, one block per part.
 
 ### global
 
-- The infra workflow builds the api image and one web image on every infra, lockfile or manifest change; Dependabot drops the helm and opentofu ecosystems; the trivy exception file is empty again.
+- `AGENTS.md` and `skill/` (`index vision stack style work api web infra global github`): the self-contained operating contract for every agent and engineer, outranking defaults and habits.
+- The infra workflow builds the api image and one web image on every infra, lockfile or manifest change; Dependabot drops the helm and opentofu ecosystems; `.trivyignore.yaml` and `.prettierignore` are gone: no finding is accepted and Prettier formats every YAML, the compose template included; the dependency-review job is gone too, trivy over the lockfiles and Dependabot alerts cover it.
 
 ### infra
 

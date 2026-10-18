@@ -26,7 +26,6 @@ deps:
           - '**/package.json'
           - '**/bun.lock'
           - '**/Dockerfile*'
-          - 'infra/.env.example'
 
 docs:
   - changed-files:
@@ -43,4 +42,3 @@ security:
           - '.syft.yml'
           - '.zizmor.yml'
           - '**/.semgrep.yml'
-          - '**/.trivyignore'

@@ -3,8 +3,8 @@ name: ${COMPOSE_PROJECT}
 x-logging: &logging
   driver: json-file
   options:
-    max-size: "${LOG_MAX_SIZE}"
-    max-file: "${LOG_MAX_FILES}"
+    max-size: '${LOG_MAX_SIZE}'
+    max-file: '${LOG_MAX_FILES}'
 
 x-hardened: &hardened
   restart: unless-stopped
@@ -41,7 +41,13 @@ x-web: &web
     - /app/.next/out/standalone/.next/cache:mode=1777
   networks: [edge]
   healthcheck:
-    test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then((r) => process.exit(r.status < 500 ? 0 : 1)).catch(() => process.exit(1))"]
+    test:
+      [
+        'CMD',
+        'node',
+        '-e',
+        "fetch('http://127.0.0.1:3000/').then((r) => process.exit(r.status < 500 ? 0 : 1)).catch(() => process.exit(1))",
+      ]
     interval: 30s
     timeout: 5s
     retries: 3
@@ -50,18 +56,18 @@ x-web: &web
   deploy:
     resources:
       limits:
-        cpus: "${WEB_CPUS}"
+        cpus: '${WEB_CPUS}'
         memory: ${WEB_MEMORY}
 
 services:
   nginx:
     <<: *hardened
     image: ${NGINX_IMAGE}
-    command: [nginx, -c, /etc/nginx/platform/nginx.conf, -g, "daemon off;"]
+    command: [nginx, -c, /etc/nginx/platform/nginx.conf, -g, 'daemon off;']
     ports:
-      - "${HTTP_BIND}:8080"
-      - "${HTTPS_BIND}:8443"
-      - "${HTTPS_BIND}:8443/udp"
+      - '${HTTP_BIND}:8080'
+      - '${HTTPS_BIND}:8443'
+      - '${HTTPS_BIND}:8443/udp'
     read_only: true
     tmpfs:
       - /tmp:mode=1777,size=${EDGE_TMP_SIZE}
@@ -71,14 +77,14 @@ services:
       - acme:/var/www/acme:ro
     networks: [edge]
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/nginx-health"]
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1:8080/nginx-health']
       interval: 30s
       timeout: 5s
       retries: 3
     deploy:
       resources:
         limits:
-          cpus: "${EDGE_CPUS}"
+          cpus: '${EDGE_CPUS}'
           memory: ${EDGE_MEMORY}
 
   api:
@@ -88,7 +94,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "${API_CPUS}"
+          cpus: '${API_CPUS}'
           memory: ${API_MEMORY}
 
   worker:
@@ -100,9 +106,9 @@ services:
       api:
         condition: service_healthy
     environment:
-      QUEUE_WORKERS: "${WORKER_CONCURRENCY}"
+      QUEUE_WORKERS: '${WORKER_CONCURRENCY}'
     healthcheck:
-      test: ["CMD", "sh", "-c", "grep -q work /proc/1/cmdline"]
+      test: ['CMD', 'sh', '-c', 'grep -q work /proc/1/cmdline']
       interval: 30s
       timeout: 5s
       retries: 3
@@ -110,7 +116,7 @@ services:
       replicas: ${WORKER_REPLICAS}
       resources:
         limits:
-          cpus: "${WORKER_CPUS}"
+          cpus: '${WORKER_CPUS}'
           memory: ${WORKER_MEMORY}
 
   scheduler:
@@ -122,14 +128,14 @@ services:
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "sh", "-c", "grep -q schedule /proc/1/cmdline"]
+      test: ['CMD', 'sh', '-c', 'grep -q schedule /proc/1/cmdline']
       interval: 30s
       timeout: 5s
       retries: 3
     deploy:
       resources:
         limits:
-          cpus: "${SCHEDULER_CPUS}"
+          cpus: '${SCHEDULER_CPUS}'
           memory: ${SCHEDULER_MEMORY}
 
   web-super:
@@ -147,7 +153,7 @@ services:
   postgres:
     <<: *hardened
     image: ${POSTGRES_IMAGE}
-    user: "999:999"
+    user: '999:999'
     command: [postgres, -c, config_file=/etc/postgresql/postgresql.conf, -c, hba_file=/etc/postgresql/pg_hba.conf]
     env_file: postgres.env
     shm_size: ${PG_SHM_SIZE}
@@ -163,7 +169,7 @@ services:
     networks: [data]
     stop_grace_period: 90s
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d postgres']
       interval: 10s
       timeout: 5s
       retries: 12
@@ -172,14 +178,14 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "${PG_CPUS}"
+          cpus: '${PG_CPUS}'
           memory: ${PG_MEMORY_LIMIT}
 
   rabbitmq:
     <<: *hardened
     image: ${RABBITMQ_IMAGE}
     hostname: rabbitmq
-    user: "100:101"
+    user: '100:101'
     env_file: rabbitmq.env
     read_only: true
     tmpfs:
@@ -190,7 +196,7 @@ services:
     networks: [data]
     stop_grace_period: 60s
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      test: ['CMD', 'rabbitmq-diagnostics', '-q', 'ping']
       interval: 15s
       timeout: 10s
       retries: 12
@@ -199,14 +205,19 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "${RABBITMQ_CPUS}"
+          cpus: '${RABBITMQ_CPUS}'
           memory: ${RABBITMQ_MEMORY}
 
   redis:
     <<: *hardened
     image: ${REDIS_IMAGE}
-    user: "999:1000"
-    command: ["sh", "-c", "exec redis-server /etc/redis/redis.conf --user default off resetpass -@all --user \"$$REDIS_USER\" on \">$$REDISCLI_AUTH\" '~*' '&*' +@all -@dangerous"]
+    user: '999:1000'
+    command:
+      [
+        'sh',
+        '-c',
+        'exec redis-server /etc/redis/redis.conf --user default off resetpass -@all --user "$$REDIS_USER" on ">$$REDISCLI_AUTH" ''~*'' ''&*'' +@all -@dangerous',
+      ]
     env_file: redis.env
     read_only: true
     tmpfs:
@@ -215,21 +226,21 @@ services:
       - ./redis/redis.conf:/etc/redis/redis.conf:ro
     networks: [data]
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli --user \"$$REDIS_USER\" --no-auth-warning ping | grep -q PONG"]
+      test: ['CMD-SHELL', 'redis-cli --user "$$REDIS_USER" --no-auth-warning ping | grep -q PONG']
       interval: 10s
       timeout: 5s
       retries: 6
     deploy:
       resources:
         limits:
-          cpus: "${REDIS_CPUS}"
+          cpus: '${REDIS_CPUS}'
           memory: ${REDIS_MEMORY}
 
   backup:
     <<: *hardened
     image: ${IMAGE_API}:backup-${IMAGE_TAG}
     profiles: [ops]
-    restart: "no"
+    restart: 'no'
     env_file: backup.env
     read_only: true
     tmpfs:
@@ -244,7 +255,7 @@ services:
   certbot:
     image: ${CERTBOT_IMAGE}
     profiles: [ops]
-    restart: "no"
+    restart: 'no'
     security_opt:
       - no-new-privileges:true
     cap_drop:

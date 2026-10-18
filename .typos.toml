@@ -58,6 +58,7 @@ unicode = true
 locale = "en-us"
 
 extend-ignore-words-re = ["(?i)^fpr$"]
+
 extend-ignore-re = [
     "(?s)-----BEGIN PGP SIGNATURE-----.*?-----END PGP SIGNATURE-----",
     "\\bnl -ba\\b",

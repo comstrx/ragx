@@ -120,7 +120,10 @@ justfile              text eol=lf
 *.min.js              -diff
 *.min.css             -diff
 *.map                 -diff
+*.py                  diff=python
 *.isle                linguist-language=Lisp
 dist/**               linguist-generated=true
 build/**              linguist-generated=true
 generated/**          linguist-generated=true
+uv.lock               linguist-generated=true merge=binary
+bun.lock              linguist-generated=true merge=binary

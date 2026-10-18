@@ -3,7 +3,6 @@ rules:
     config:
       allow:
         - actions/checkout
-        - actions/dependency-review-action
         - actions/labeler
         - actions/setup-node
         - actions/upload-artifact
@@ -16,11 +15,14 @@ rules:
         - gitleaks/gitleaks-action
         - oven-sh/setup-bun
         - zizmorcore/zizmor-action
+
     remap:
       severity: high
+
   unpinned-uses:
     config:
       policies:
         '*': hash-pin
+
     remap:
       severity: high

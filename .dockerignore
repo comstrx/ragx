@@ -38,15 +38,15 @@ LICENSE
 **/*.pfx
 **/*.jks
 **/*.keystore
-**/*.mobileprovision
 **/*.cer
 **/*.crt
-**/*~
 **/.DS_Store
 **/Thumbs.db
 **/ehthumbs.db
 **/Desktop.ini
+**/*.mobileprovision
 **/*:Zone.Identifier
+**/*~
 
 **/*.log
 **/*.trace
@@ -64,6 +64,7 @@ LICENSE
 **/*.dSYM/
 **/mutants.out*/
 **/rustc-ice-*.txt
+**/src-tauri/gen/schemas/
 **/fuzz/artifacts/
 **/fuzz/corpus/
 **/fuzz/coverage/
@@ -79,8 +80,14 @@ LICENSE
 **/public/build/
 **/public/storage
 **/public/hot
+**/.phpactor.json
+**/Homestead.json
+**/Homestead.yaml
+**/public/index.html
+**/frankenphp
+**/frankenphp-worker.php
+
 **/bootstrap/cache/*.php
-**/storage/geo/
 **/storage/logs/*
 **/storage/app/livewire-tmp/*
 **/storage/framework/sessions/*
@@ -93,11 +100,6 @@ LICENSE
 !**/storage/framework/views/.gitignore
 !**/storage/app/private/.gitignore
 !**/storage/app/public/.gitignore
-**/.phpactor.json
-**/Homestead.json
-**/Homestead.yaml
-**/frankenphp
-**/frankenphp-worker.php
 
 **/node_modules/
 **/.pnpm-store/
@@ -150,12 +152,9 @@ LICENSE
 **/*.p8
 
 **/coverage/
-**/.coverage
-**/.coverage.*
 **/.nyc_output/
 **/lcov.info
 **/coverage.xml
-**/coverage.json
 **/htmlcov/
 **/test-results/
 **/playwright-report/
@@ -173,8 +172,8 @@ LICENSE
 **/.dmypy.json
 **/.ruff_cache/
 **/.hypothesis/
+**/*.egg-info/
+**/wheels/
+**/.eggs/
 **/.tox/
 **/.nox/
-**/*.egg-info/
-**/.eggs/
-**/wheels/

@@ -58,6 +58,7 @@ Every network, file, process and third-party access in the api lives in `core/`;
 - Boundaries are enforced by tests, lints and CI, never by documentation alone: strict mypy, ruff with every rule on, Biome, an import analyzer, and markup render tests.
 - Settled decisions stay settled; a change needs evidence. Performance claims come with a measurement.
 - Zero comments in code: a name that needs a comment is renamed.
+- Every agent and engineer starts at [AGENTS.md](AGENTS.md), which points to [`skill/`](skill/index.md): the vision, the stack, the style, the way of working and the laws of each part, self-contained and binding.
 
 ---
 

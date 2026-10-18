@@ -80,22 +80,6 @@ jobs:
           path: sbom.json
           if-no-files-found: error
 
-  review:
-    name: review
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
-        with:
-          fail-on-severity: low
-          comment-summary-in-pr: on-failure
-
   actions:
     name: actions
     runs-on: ubuntu-latest
@@ -151,14 +135,14 @@ jobs:
       - name: Prettier
         run: >
           bunx "${PRETTIER}" --config .prettierrc.yml
-          --ignore-path .gitignore --ignore-path .prettierignore
+          --ignore-path .gitignore
           --no-error-on-unmatched-pattern
           --check "**/*.{md,mdx,yml,yaml,json,jsonc}"
 
   gate:
     name: gate
     if: always()
-    needs: [leaks, vulns, sbom, review, actions, spelling, formatting]
+    needs: [leaks, vulns, sbom, actions, spelling, formatting]
     runs-on: ubuntu-latest
     timeout-minutes: 5
 

@@ -48,6 +48,7 @@ paths = [
 [[allowlists]]
 description = "Ignore obvious placeholders"
 regexTarget = "secret"
+
 regexes = [
     '''(?i)\b(?:fake|dummy|example|sample|placeholder|redacted)\b''',
     '''(?i)\b(?:xxxx+|yyyy+|zzzz+|0000+|1111+)\b''',
@@ -58,5 +59,6 @@ regexes = [
 description = "The lab Reverb key: a public app key bound to a loopback socket"
 condition = "AND"
 regexTarget = "line"
+
 paths = ['''(?:^|/)specs/(?:\([^/]+\)/)*[^/]+/config/contracts\.ts$''']
 regexes = ['''realtime:\s*\{\s*url:\s*"ws://127\.0\.0\.1:\d+",\s*key:''']
