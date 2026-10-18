@@ -1,61 +1,25 @@
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 
 from core.event import Event, events
-from core.exceptions import Code, Fault
+from core.error import Code, Fault
 from core.log import log
 from core.socket import Connection, Grant, Socket
-import inspect, re
+from .channel import Authorize, Channel, Channels, Verdict
+from .driver import Driver, LocalDriver
+import inspect
 
-type Verdict = Grant | Mapping[str, Any] | bool | None
-type Authorize = Callable[..., Awaitable[Verdict] | Verdict]
 type Guard = Callable[[str | None], Awaitable[Any]]
-
-PRIVATE  = "private-"
-PRESENCE = "presence-"
-PARAM    = re.compile(r"\{(\w+)\}")
-
-class Driver(Protocol):
-
-    @property
-    def name ( self ) -> str: ...
-
-    def publish ( self, channel: str, event: str, data: Any, exclude: str | None ) -> int: ...
-
-class LocalDriver:
-
-    name = "local"
-
-    def __init__ ( self, socket: Socket ) -> None:
-
-        self._socket = socket
-
-    def publish ( self, channel: str, event: str, data: Any, exclude: str | None ) -> int:
-        return self._socket.publish(channel, event, data, exclude)
-
-@dataclass(frozen=True, slots=True)
-class Channel:
-
-    pattern   : str
-    matcher   : re.Pattern[str]
-    authorize : Authorize | None
-    guests    : bool = False
-
-    def match ( self, name: str ) -> dict[str, str] | None:
-
-        found = self.matcher.fullmatch(name)
-
-        return found.groupdict() if found else None
 
 class Broadcast:
 
     def __init__ ( self ) -> None:
 
-        self._channels: list[Channel] = []
+        self._channels = Channels()
         self._socket: Socket | None = None
         self._driver: Driver | None = None
         self._guard: Guard | None = None
+        self._emitted = 0
 
     def setup ( self, socket: Socket, guard: Guard | None = None, driver: Driver | None = None ) -> None:
 
@@ -69,45 +33,26 @@ class Broadcast:
     def ready ( self ) -> bool:
         return self._driver is not None
 
+    def registry ( self ) -> Channels:
+        return self._channels
+
     def channel ( self, pattern: str, authorize: Authorize | None = None, guests: bool = False ) -> Channel:
-
-        escaped = re.escape(pattern).replace(r"\{", "{").replace(r"\}", "}")
-        regex   = PARAM.sub(lambda found: f"(?P<{found.group(1)}>[^.]+)", escaped)
-        channel = Channel(pattern, re.compile(regex), authorize, guests)
-
-        self._channels.append(channel)
-
-        return channel
+        return self._channels.channel(pattern, authorize, guests)
 
     def public ( self, pattern: str ) -> Channel:
-        return self.channel(pattern, None, guests=True)
+        return self._channels.public(pattern)
 
     def channels ( self ) -> list[str]:
-        return [channel.pattern for channel in self._channels]
+        return self._channels.patterns()
 
     def find ( self, name: str ) -> tuple[Channel, dict[str, str]] | None:
-
-        for channel in self._channels:
-
-            params = channel.match(name)
-
-            if params is not None: return channel, params
-
-        return None
+        return self._channels.find(name)
 
     def kind ( self, name: str ) -> str:
-
-        if name.startswith(PRESENCE): return "presence"
-        if name.startswith(PRIVATE): return "private"
-
-        return "public"
+        return self._channels.kind(name)
 
     def bare ( self, name: str ) -> str:
-
-        for prefix in (PRESENCE, PRIVATE):
-            if name.startswith(prefix): return name[len(prefix):]
-
-        return name
+        return self._channels.bare(name)
 
     async def grant ( self, connection: Connection, name: str, auth: str | None ) -> Grant:
 
@@ -146,12 +91,19 @@ class Broadcast:
 
         return Grant(reason="channel.denied")
 
-    def emit ( self, channels: str | Sequence[str], event: str, data: Any = None, exclude: str | None = None ) -> int:
+    def driver ( self ) -> Driver:
 
         if self._driver is None: raise Fault(Code.INTERNAL, reason="broadcast")
 
+        return self._driver
+
+    def emit ( self, channels: str | Sequence[str], event: str, data: Any = None, exclude: str | None = None ) -> int:
+
+        driver  = self.driver()
         names   = (channels,) if isinstance(channels, str) else tuple(channels)
-        reached = sum(self._driver.publish(name, event, data, exclude) for name in names)
+        reached = sum(driver.publish(name, event, data, exclude) for name in names)
+
+        self._emitted += 1
 
         log.debug("broadcast.emitted", name=event, channels=list(names), reached=reached)
 
@@ -159,6 +111,12 @@ class Broadcast:
 
     def to ( self, *channels: str ) -> Emission:
         return Emission(self, channels)
+
+    def to_user ( self, user_id: str ) -> Emission:
+        return Emission(self, (f"private-users.{user_id}",))
+
+    def to_everyone ( self, event: str, data: Any = None ) -> int:
+        return self.socket().broadcast(event, data)
 
     async def relay ( self, event: Event ) -> None:
 
@@ -171,6 +129,21 @@ class Broadcast:
         if self._socket is None: raise Fault(Code.INTERNAL, reason="broadcast")
 
         return self._socket
+
+    async def start ( self ) -> None:
+
+        if self._driver is not None: await self._driver.start()
+
+    async def stop ( self ) -> None:
+
+        if self._driver is not None: await self._driver.stop()
+
+    def describe ( self ) -> dict[str, Any]:
+
+        return {
+            "driver": self._driver.name if self._driver else None, "channels": self._channels.describe(),
+            "emitted": self._emitted, "socket": self._socket.stats() if self._socket else None,
+        }
 
 class Emission:
 
@@ -188,3 +161,6 @@ class Emission:
 
     def send ( self, event: str, data: Any = None ) -> int:
         return self._owner.emit(self._channels, event, data, self._exclude)
+
+    def send_event ( self, event: Event ) -> int:
+        return self._owner.emit(self._channels, event.label(), event.payload(), self._exclude)

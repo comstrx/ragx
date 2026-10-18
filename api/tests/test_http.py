@@ -1,8 +1,9 @@
 from collections.abc import AsyncIterator
 
 from httpx import ASGITransport, AsyncClient
-from core.exceptions import Code, Fault, Faults, exceptions
-from core.http import App, Request, Response, Route, http
+from core.error import Code, Fault, Faults
+from core.exception import exception
+from core.http import App, EventStream, Incoming, Redirect, Request, Response, Route, Sse, Streamed, http
 from app.exceptions import ExceptionHandler
 import pytest
 
@@ -76,7 +77,7 @@ def forwarded ( address: str ) -> dict[str, str]:
 @pytest.fixture
 async def bare () -> AsyncIterator[AsyncClient]:
 
-    exceptions.use(ExceptionHandler())
+    exception.use(ExceptionHandler())
 
     app       = http.build("Bare", "0.0.1", groups, origins=["http://web.test"])
     transport = ASGITransport(app=app, raise_app_exceptions=False)
@@ -199,6 +200,8 @@ class TestHttp:
 
         assert health.status_code == 200 and health.json()["data"]["status"] == "ok"
         assert health.json()["data"]["database"]["alive"] is True
+        assert health.json()["data"]["checks"]["database"]["status"] == "ok"
+        assert "llm" in health.json()["data"]["checks"]
         assert hello.json()["data"]["message"] == "Hello World"
         assert hello.json()["data"]["user"]["email"] == "world@ragx.test"
         assert guest.json()["data"] == { "message": "Hello Nobody Here", "user": None }
@@ -215,3 +218,177 @@ class TestHttp:
         assert { "401", "422", "429", "500" } <= set(paths["/v1/auth/login"]["post"]["responses"])
         assert schema.json()["components"]["schemas"]["Envelope"]["required"][0] == "data"
         assert { "health", "v1.hello", "v1.auth.register", "v1.auth.login", "v1.auth.me" } <= named
+
+async def echo ( payload: Incoming ) -> Response:
+
+    return Response.ok({
+        "all": payload.all(), "name": payload.text("name"), "n": payload.integer("n"), "flag": payload.boolean("flag"),
+        "tags": payload.items("tags"), "has": payload.has("name", "n"), "filled": payload.filled("empty"),
+        "bearer": payload.bearer(), "json": payload.is_json(), "route": payload.route_name(), "ip": payload.ip(),
+        "only": payload.only("name"), "nested": payload.input("meta.deep"), "missing": payload.missing("zzz"),
+        "without": sorted(payload.except_("name", "key", "n", "tags")), "wants": payload.wants_json(),
+    })
+
+async def ticks () -> EventStream:
+
+    async def source () -> AsyncIterator[Sse | dict[str, object] | str]:
+
+        yield Sse({ "n": 1 }, event="tick", id="1")
+        yield { "data": "two", "event": "tick" }
+        yield "three"
+
+    return Response.sse(source(), ping=0)
+
+async def rows () -> Streamed:
+    return Response.ndjson([{ "a": 1 }, { "b": 2 }])
+
+async def gone () -> Redirect:
+    return Response.redirect("/v2/items", 308)
+
+async def shaped ( payload: Incoming ) -> Response:
+    return Response.ok(payload.shape(name=str, age=int))
+
+async def required ( payload: Incoming ) -> Response:
+    return Response.ok(payload.require("name"))
+
+async def lost ( payload: Incoming ) -> Response:
+    return Response.problem(Code.NOT_FOUND, payload.param("fallback"))
+
+async def probe ( payload: Incoming ) -> Response:
+
+    day = payload.date("day")
+
+    return Response.with_cookie(Response.ok({
+        "agent": payload.user_agent(), "ips": payload.ips(), "is": payload.is_("d/probe*"),
+        "route": payload.route_is("d.pr*"), "day": day.isoformat() if day else None,
+        "merged": payload.merge(x=1).input("x"), "has": payload.when_has("name", str.upper, "none"),
+        "filled": payload.when_filled("empty", str.upper, "blank"), "file": payload.has_file("upload"),
+    }), "seen", "1", max_age=60)
+
+async def pulled () -> Streamed:
+
+    async def chunks () -> AsyncIterator[bytes]:
+        yield b"abc"
+
+    return Response.stream_download(chunks(), "dump.bin")
+
+async def tenant_home ( request: Request ) -> Response:
+    return Response.ok(request.state.domain)
+
+hosts = Route.group("/h", [
+    Route.get("/home", tenant_home, name="home").domain("{tenant}.api.test"),
+    Route.group("/t", [Route.get("/x", items.index, name="x")], name="t", domain="www.api.test"),
+    Route.fallback(lost),
+], name="h")
+
+dsl = Route.group("/d", [
+    Route.post("/echo/{key}", echo, name="echo"),
+    Route.get("/events", ticks, name="events"),
+    Route.get("/rows", rows, name="rows"),
+    Route.get("/gone", gone, name="gone"),
+    Route.post("/shaped", shaped, name="shaped"),
+    Route.post("/required", required, name="required"),
+    Route.redirect("/old", "/d/rows", name="old"),
+    Route.permanent_redirect("/older", "/d/rows", name="older"),
+    Route.post("/probe", probe, name="probe"),
+    Route.get("/pulled", pulled, name="pulled"),
+], name="d")
+
+@pytest.mark.anyio
+class TestDsl:
+
+    async def test_payload_router_and_streaming_responses ( self ) -> None:
+
+        app    = http.build("Dsl", "0.0.1", [dsl])
+        router = http.router(app)
+
+        assert router.url("d.echo", key=7, page=2) == "/d/echo/7?page=2" and http.url("d.rows") == "/d/rows"
+        assert router.params("d.echo") == ["key"] and router.has("d.gone") and not http.has("nowhere")
+        assert router.methods("/d/rows") == ["GET"] and len(router.by_prefix("/d")) == 10
+        assert router.names()[0] == "d.echo"
+        assert router.describe()[0]["name"] == "d.echo" and router.find("d.old").methods == ("GET",)
+        things = Route.resource("/things", items, except_=("destroy",))
+
+        assert things.names() == ["things.index", "things.store", "things.show"]
+        assert Route.get("/x", items.index).tagged("a", "b").tags == ("a", "b") and dsl.find("d.rows") is not None
+        assert "/d/rows" in dsl.paths() and Response.problem(Code.CONFLICT, "dup").status_code == 409
+        assert Response.no_content().status_code == 204 and Response.json({ "a": 1 }, 202).status_code == 202
+        assert Response.with_headers(Response.ok(), x_custom="1").headers["x-custom"] == "1"
+        assert Response.text("hi").media_type == "text/plain"
+        assert Response.raw(b"x").media_type == "application/octet-stream"
+
+        with pytest.raises(Fault): router.url("d.echo")
+        with pytest.raises(Fault): router.url("nowhere")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://dsl") as client:
+
+            sent = await client.post(
+                "/d/echo/9", params={ "n": "5", "tags[]": ["a", "b"] },
+                json={ "name": " Ann ", "flag": "yes", "empty": "", "meta": { "deep": 1 } },
+                headers={ "Authorization": "Bearer tok", "X-Forwarded-For": "10.0.0.7" },
+            )
+            data = sent.json()["data"]
+
+            assert data["name"] == "Ann" and data["n"] == 5 and data["flag"] is True and data["tags"] == ["a", "b"]
+            assert data["has"] and not data["filled"] and data["bearer"] == "tok" and data["json"] and data["wants"]
+            assert data["route"] == "d.echo" and data["ip"] == "10.0.0.7" and data["only"] == { "name": " Ann " }
+            assert data["nested"] == 1 and data["all"]["key"] == "9" and data["missing"]
+            assert data["without"] == ["empty", "flag", "meta"]
+
+            formed  = await client.post("/d/shaped", data={ "name": "Bo", "age": "3" })
+            broken  = await client.post("/d/echo/1", content=b"{bad", headers={ "content-type": "application/json" })
+            lacking = await client.post("/d/required", json={})
+            invalid = await client.post("/d/shaped", json={ "name": "Bo", "age": "x" })
+            events  = await client.get("/d/events")
+            lines   = await client.get("/d/rows")
+            moved   = await client.get("/d/gone")
+            old     = await client.get("/d/old")
+
+            assert formed.json()["data"] == { "name": "Bo", "age": 3 }
+            assert (broken.status_code, broken.json()["reason"]) == (400, "json")
+            assert (lacking.status_code, list(lacking.json()["errors"])) == (422, ["name"])
+            assert (invalid.status_code, list(invalid.json()["errors"])) == (422, ["age"])
+            assert events.headers["content-type"].startswith("text/event-stream")
+            assert events.headers["cache-control"] == "no-cache"
+            assert events.text == 'event: tick\nid: 1\ndata: {"n":1}\n\nevent: tick\ndata: two\n\ndata: three\n\n'
+            assert lines.text == '{"a":1}\n{"b":2}\n' and lines.headers["content-type"] == "application/x-ndjson"
+            assert (moved.status_code, moved.headers["location"]) == (308, "/v2/items")
+            assert (old.status_code, old.headers["location"]) == (307, "/d/rows")
+
+            older  = await client.get("/d/older")
+            probed = await client.post(
+                "/d/probe", params={ "day": "2026-01-02", "name": "ann", "empty": "" },
+                headers={ "User-Agent": "unit/1", "X-Forwarded-For": "10.0.0.1, 10.0.0.2" },
+            )
+            pulled = await client.get("/d/pulled")
+            facts  = probed.json()["data"]
+
+            assert (older.status_code, older.headers["location"]) == (308, "/d/rows")
+            assert facts["agent"] == "unit/1" and facts["ips"][:2] == ["10.0.0.1", "10.0.0.2"]
+            assert facts["is"] and facts["route"] and facts["day"].startswith("2026-01-02") and facts["merged"] == 1
+            assert facts["has"] == "ANN" and facts["filled"] == "blank" and facts["file"] is False
+            assert probed.cookies["seen"] == "1" and pulled.content == b"abc"
+            assert pulled.headers["content-disposition"] == 'attachment; filename="dump.bin"'
+
+        hosted = http.build("Hosts", "0.0.1", [hosts])
+
+        assert hosted.state.router.names() == ["h.home", "h.t.x", "h.fallback"]
+
+        async with AsyncClient(transport=ASGITransport(app=hosted), base_url="http://acme.api.test") as client:
+
+            home    = await client.get("/h/home")
+            nowhere = await client.get("/h/anything/here")
+            foreign = await client.get("/h/t/x")
+
+            assert home.json()["data"] == { "tenant": "acme" }
+            assert (nowhere.status_code, nowhere.json()["reason"]) == (404, "anything/here")
+            assert (foreign.status_code, foreign.json()["reason"]) == (404, "domain")
+
+        async with AsyncClient(transport=ASGITransport(app=hosted), base_url="http://www.api.test") as client:
+
+            assert (await client.get("/h/t/x")).status_code == 200
+            assert (await client.get("/h/home")).json()["data"] == { "tenant": "www" }
+
+        async with AsyncClient(transport=ASGITransport(app=hosted), base_url="http://nope.test") as client:
+
+            assert (await client.get("/h/home")).json()["reason"] == "domain"

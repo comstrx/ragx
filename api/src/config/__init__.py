@@ -6,6 +6,7 @@ from .cache import CacheConfig
 from .database import DatabaseConfig
 from .docs import DocsConfig
 from .event import EventConfig
+from .llm import LlmConfig
 from .log import LogConfig
 from .mail import MailConfig
 from .queue import QueueConfig
@@ -15,5 +16,6 @@ from .storage import StorageConfig
 
 __all__ = [
     "AppConfig", "AssetsConfig", "AuthConfig", "BroadcastConfig", "CacheConfig", "DatabaseConfig", "DocsConfig",
-    "EventConfig", "LogConfig", "MailConfig", "QueueConfig", "ScheduleConfig", "SocketConfig", "StorageConfig",
+    "EventConfig", "LlmConfig", "LogConfig", "MailConfig", "QueueConfig", "ScheduleConfig", "SocketConfig",
+    "StorageConfig",
 ]

@@ -2,7 +2,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 from typing import Any, ClassVar
 
-from core.exceptions import Code, Fault
+from core.error import Code, Fault
 
 KINDS = ("belongs_to", "has_one", "has_many", "belongs_to_many", "morph_many", "morph_to")
 

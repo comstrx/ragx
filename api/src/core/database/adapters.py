@@ -2,7 +2,7 @@ from collections.abc import Mapping
 from typing import Any, Protocol
 from urllib.parse import quote
 
-from core.exceptions import Code, Fault
+from core.error import Code, Fault
 
 class Adapter(Protocol):
 

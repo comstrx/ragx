@@ -2,13 +2,37 @@ from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, Self
 
+from fastapi import Request
+from starlette.responses import RedirectResponse
+from core.error import Code, Fault
+import re
+
 type Handler = Callable[..., Awaitable[Any]]
 type Guard = Callable[..., Any]
 
 CONVERTERS = ("int", "float", "uuid", "path", "str")
+PARAM      = re.compile(r"\{(\w+)\}")
+ALL        = ("GET", "POST", "PUT", "PATCH", "DELETE")
+
+def host_guard ( pattern: str ) -> Guard:
+
+    escaped = re.escape(pattern).replace(r"\{", "{").replace(r"\}", "}")
+    regex   = re.compile("^" + PARAM.sub(lambda found: f"(?P<{found.group(1)}>[^.]+)", escaped) + "$")
+
+    async def domain ( request: Request ) -> None:
+
+        found = regex.match(request.url.hostname or "")
+
+        if found is None: raise Fault(Code.NOT_FOUND, reason="domain")
+
+        request.state.domain = found.groupdict()
+
+    domain.__name__ = f"domain_{pattern.replace('.', '_')}"
+
+    return domain
 ACTIONS    = (
     ("index", "GET", ""), ("store", "POST", ""), ("show", "GET", "/{key}"),
-    ("update", "PUT", "/{key}"), ("destroy", "DELETE", "/{key}"),
+    ("update", "PUT", "/{key}"), ("patch", "PATCH", "/{key}"), ("destroy", "DELETE", "/{key}"),
 )
 
 @dataclass(frozen=True, slots=True)
@@ -61,20 +85,49 @@ class Route:
         return cls.match(("DELETE",), path, handler, name, tags)
 
     @classmethod
+    def options ( cls, path: str, handler: Handler, name: str | None = None, tags: Sequence[str] = () ) -> Self:
+        return cls.match(("OPTIONS",), path, handler, name, tags)
+
+    @classmethod
+    def head ( cls, path: str, handler: Handler, name: str | None = None, tags: Sequence[str] = () ) -> Self:
+        return cls.match(("HEAD",), path, handler, name, tags)
+
+    @classmethod
     def any ( cls, path: str, handler: Handler, name: str | None = None, tags: Sequence[str] = () ) -> Self:
-        return cls.match(("GET", "POST", "PUT", "PATCH", "DELETE"), path, handler, name, tags)
+        return cls.match(ALL, path, handler, name, tags)
+
+    @classmethod
+    def permanent_redirect ( cls, path: str, target: str, name: str | None = None ) -> Self:
+        return cls.redirect(path, target, 308, name)
+
+    @classmethod
+    def fallback ( cls, handler: Handler, name: str = "fallback" ) -> Self:
+        return cls.match(ALL, "/{fallback}", handler, name).constrained(fallback="path")
+
+    @classmethod
+    def redirect ( cls, path: str, target: str, status: int = 307, name: str | None = None ) -> Self:
+
+        async def send () -> RedirectResponse:
+            return RedirectResponse(target, status_code=status)
+
+        return cls.match(("GET",), path, send, name)
 
     @staticmethod
     def group (
         prefix: str, routes: Sequence[Route | Group], tags: Sequence[str] = (), middleware: Sequence[Guard] = (),
-        throttle: str | None = None, name: str | None = None,
+        throttle: str | None = None, name: str | None = None, domain: str | None = None,
     ) -> Group:
-        return Group(prefix, tuple(routes), tuple(tags), tuple(middleware), throttle, name)
+
+        guards = (host_guard(domain), *middleware) if domain else tuple(middleware)
+
+        return Group(prefix, tuple(routes), tuple(tags), guards, throttle, name)
 
     @staticmethod
-    def resource ( prefix: str, controller: object, only: Sequence[str] = (), name: str | None = None ) -> Group:
+    def resource (
+        prefix: str, controller: object, only: Sequence[str] = (), except_: Sequence[str] = (), name: str | None = None,
+    ) -> Group:
 
-        wanted = set(only) if only else { action for action, _, _ in ACTIONS }
+        wanted = (set(only) if only else { action for action, _, _ in ACTIONS }) - set(except_)
         routes = [
             Route.match((method,), path, getattr(controller, action), name=action)
             for action, method, path in ACTIONS
@@ -85,6 +138,12 @@ class Route:
 
     def guarded ( self, *guards: Guard ) -> Self:
         return replace(self, middleware=(*self.middleware, *guards))
+
+    def tagged ( self, *tags: str ) -> Self:
+        return replace(self, tags=(*self.tags, *tags))
+
+    def domain ( self, pattern: str ) -> Self:
+        return replace(self, middleware=(host_guard(pattern), *self.middleware))
 
     def limited ( self, rate: str ) -> Self:
         return replace(self, throttle=rate)
@@ -147,3 +206,9 @@ class Group:
 
     def names ( self ) -> list[str]:
         return [bound.name for bound in self.walk() if bound.name]
+
+    def find ( self, name: str ) -> Bound | None:
+        return next((bound for bound in self.walk() if bound.name == name), None)
+
+    def paths ( self ) -> list[str]:
+        return [bound.path for bound in self.walk()]

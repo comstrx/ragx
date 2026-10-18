@@ -1,79 +1,19 @@
 from collections.abc import AsyncIterator, Mapping, Sequence
-from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path, PurePosixPath
-from typing import Protocol
+from pathlib import Path
 
 from core.date import date
-from core.exceptions import Code, Fault
+from core.error import Code, Fault
+from core.fs import fs
+from core.net import Client, net
 from core.rand import rand
 from core.string import string
-import mimetypes
+from .disk import Disk, Stored, Uploaded
 
 type Content = bytes | str
 
-PATTERN  = "{Y}/{m}/{d}"
-FALLBACK = "application/octet-stream"
-KILO     = 1024
-
-@dataclass(frozen=True, slots=True)
-class Stored:
-
-    disk : str
-    path : str
-    size : int
-    mime : str
-    url  : str | None = None
-    name : str | None = None
-
-    def dump ( self ) -> dict[str, object]:
-
-        return {
-            "disk": self.disk, "path": self.path, "size": self.size, "mime": self.mime, "url": self.url,
-            "name": self.name,
-        }
-
-class Disk(Protocol):
-
-    @property
-    def name ( self ) -> str: ...
-
-    async def put ( self, path: str, data: bytes, mime: str ) -> int: ...
-
-    async def get ( self, path: str ) -> bytes: ...
-
-    async def stream ( self, path: str ) -> AsyncIterator[bytes]: ...
-
-    async def exists ( self, path: str ) -> bool: ...
-
-    async def size ( self, path: str ) -> int: ...
-
-    async def delete ( self, path: str ) -> bool: ...
-
-    async def copy ( self, source: str, target: str ) -> None: ...
-
-    async def move ( self, source: str, target: str ) -> None: ...
-
-    async def list ( self, prefix: str = "" ) -> list[str]: ...
-
-    def url ( self, path: str ) -> str | None: ...
-
-    async def temporary_url ( self, path: str, seconds: int ) -> str | None: ...
-
-    def local ( self, path: str ) -> Path | None: ...
-
-class Uploaded(Protocol):
-
-    @property
-    def filename ( self ) -> str | None: ...
-
-    @property
-    def content_type ( self ) -> str | None: ...
-
-    @property
-    def size ( self ) -> int | None: ...
-
-    async def read ( self, size: int = -1 ) -> bytes: ...
+PATTERN = "{Y}/{m}/{d}"
+KILO    = 1024
 
 class Storage:
 
@@ -98,8 +38,13 @@ class Storage:
         self._allowed = tuple(allowed)
         self._blocked = tuple(item.lower().lstrip(".") for item in blocked)
 
+        for name, disk in self._disks.items(): fs.drivers.register(f"storage.{name}", disk)
+
     def register ( self, name: str, disk: Disk ) -> None:
+
         self._disks[name] = disk
+
+        fs.drivers.register(f"storage.{name}", disk)
 
     def names ( self ) -> list[str]:
         return sorted(self._disks)
@@ -117,7 +62,7 @@ class Storage:
 
     def clean ( self, path: str ) -> str:
 
-        parts = [part for part in PurePosixPath(path.replace("\\", "/")).parts if part not in ("", "/", ".")]
+        parts = fs.segments(path)
 
         if not parts or ".." in parts: raise Fault(Code.BAD_REQUEST, reason="storage.path")
 
@@ -125,8 +70,8 @@ class Storage:
 
     def dated ( self, folder: str = "", pattern: str | None = None, moment: datetime | None = None ) -> str:
 
-        now    = date.utc(moment or date.now())
-        stamp  = (pattern or self._pattern).format(
+        now   = date.utc(moment or date.now())
+        stamp = (pattern or self._pattern).format(
             Y=f"{now.year:04d}", m=f"{now.month:02d}", d=f"{now.day:02d}", H=f"{now.hour:02d}", M=f"{now.minute:02d}",
             y=f"{now.year % 100:02d}", j=f"{now.timetuple().tm_yday:03d}", W=f"{now.isocalendar().week:02d}",
         )
@@ -141,13 +86,10 @@ class Storage:
         return f"{stem}.{extension}" if extension else stem
 
     def extension ( self, original: str | None ) -> str:
-        return Path(original or "").suffix.lstrip(".").lower()
+        return fs.extension(original or "")
 
     def mime ( self, path: str, declared: str | None = None ) -> str:
-
-        guessed, _ = mimetypes.guess_type(path)
-
-        return (declared or guessed or FALLBACK).split(";")[0].strip().lower()
+        return fs.mime(path, declared)
 
     async def put ( self, path: str, data: Content, disk: str | None = None, mime: str | None = None ) -> Stored:
 
@@ -176,19 +118,46 @@ class Storage:
         kinds = tuple(allowed) or self._allowed
         cap   = limit or self._limit
 
-        if self.extension(label) in self._blocked:
-
-            refused = f"Files of type .{self.extension(label)} are not accepted"
-
-            raise Fault(Code.VALIDATION, errors={ "file": [refused] })
-        if len(data) == 0: raise Fault(Code.VALIDATION, errors={ "file": ["The file is empty"] })
-        if len(data) > cap: raise Fault(Code.VALIDATION, errors={ "file": [f"The file exceeds {cap // KILO} KB"] })
-        if kinds and not self.accepts(kind, kinds):
-            raise Fault(Code.VALIDATION, errors={ "file": [f"Expected one of: {', '.join(kinds)}"] })
+        self.refuse(label, data, kind, kinds, cap)
 
         place = self.clean(folder) if pattern == "" else self.dated(folder, pattern)
 
         return await self.put(f"{place}/{label}", data, disk, kind)
+
+    async def fetch (
+        self, url: str, folder: str = "downloads", *, disk: str | None = None, name: str | None = None,
+        keep: bool = False, limit: int | None = None, client: Client | None = None, pattern: str | None = None,
+    ) -> Stored:
+
+        source = client or net
+        cap    = limit or self._limit
+        parts: list[bytes] = []
+        total  = 0
+
+        async for chunk in source.stream("GET", url):
+
+            total += len(chunk)
+
+            if total > cap: raise Fault(Code.VALIDATION, errors={ "file": [f"The file exceeds {cap // KILO} KB"] })
+
+            parts.append(chunk)
+
+        original = url.split("?", 1)[0].rstrip("/").rsplit("/", 1)[-1]
+        label    = name or self.name(original, keep)
+        place    = self.clean(folder) if pattern == "" else self.dated(folder, pattern)
+
+        return await self.put(f"{place}/{label}", b"".join(parts), disk, self.mime(label))
+
+    def refuse ( self, label: str, data: bytes, kind: str, kinds: Sequence[str], cap: int ) -> None:
+
+        extension = self.extension(label)
+
+        if extension in self._blocked:
+            raise Fault(Code.VALIDATION, errors={ "file": [f"Files of type .{extension} are not accepted"] })
+        if len(data) == 0: raise Fault(Code.VALIDATION, errors={ "file": ["The file is empty"] })
+        if len(data) > cap: raise Fault(Code.VALIDATION, errors={ "file": [f"The file exceeds {cap // KILO} KB"] })
+        if kinds and not self.accepts(kind, kinds):
+            raise Fault(Code.VALIDATION, errors={ "file": [f"Expected one of: {', '.join(kinds)}"] })
 
     def accepts ( self, kind: str, kinds: Sequence[str] ) -> bool:
         return any(kind == rule or (rule.endswith("/*") and kind.startswith(rule[:-1])) for rule in kinds)
@@ -205,6 +174,51 @@ class Storage:
     async def exists ( self, path: str, disk: str | None = None ) -> bool:
         return await self.disk(disk).exists(self.clean(path))
 
+    async def missing ( self, path: str, disk: str | None = None ) -> bool:
+        return not await self.exists(path, disk)
+
+    async def last_modified ( self, path: str, disk: str | None = None ) -> float:
+        return await self.disk(disk).modified(self.clean(path))
+
+    async def append ( self, path: str, data: Content, disk: str | None = None ) -> Stored:
+
+        raw   = data.encode() if isinstance(data, str) else data
+        known = await self.get(path, disk) if await self.exists(path, disk) else b""
+
+        return await self.put(path, known + raw, disk)
+
+    async def prepend ( self, path: str, data: Content, disk: str | None = None ) -> Stored:
+
+        raw   = data.encode() if isinstance(data, str) else data
+        known = await self.get(path, disk) if await self.exists(path, disk) else b""
+
+        return await self.put(path, raw + known, disk)
+
+    async def files ( self, prefix: str = "", disk: str | None = None ) -> list[str]:
+
+        root  = f"{self.clean(prefix)}/" if prefix else ""
+        found = await self.list(prefix, disk)
+
+        return [path for path in found if "/" not in path.removeprefix(root)]
+
+    async def directories ( self, prefix: str = "", disk: str | None = None ) -> list[str]:
+
+        root  = f"{self.clean(prefix)}/" if prefix else ""
+        found = await self.list(prefix, disk)
+        heads = { path.removeprefix(root).split("/", 1)[0] for path in found if "/" in path.removeprefix(root) }
+
+        return sorted(f"{root}{name}" for name in heads)
+
+    async def delete_directory ( self, prefix: str, disk: str | None = None ) -> int:
+
+        target  = self.disk(disk)
+        removed = 0
+
+        for path in await target.list(self.clean(prefix)):
+            if await target.delete(path): removed += 1
+
+        return removed
+
     async def size ( self, path: str, disk: str | None = None ) -> int:
         return await self.disk(disk).size(self.clean(path))
 
@@ -217,6 +231,12 @@ class Storage:
     async def move ( self, source: str, target: str, disk: str | None = None ) -> None:
         await self.disk(disk).move(self.clean(source), self.clean(target))
 
+    async def transfer ( self, path: str, source: str, target: str ) -> Stored:
+
+        data = await self.get(path, source)
+
+        return await self.put(path, data, target)
+
     async def list ( self, prefix: str = "", disk: str | None = None ) -> list[str]:
         return await self.disk(disk).list(self.clean(prefix) if prefix else "")
 
@@ -228,3 +248,10 @@ class Storage:
 
     def local ( self, path: str, disk: str | None = None ) -> Path | None:
         return self.disk(disk).local(self.clean(path))
+
+    def describe ( self ) -> dict[str, object]:
+
+        return {
+            "default": self._default, "disks": self.names(), "pattern": self._pattern, "limit": self._limit,
+            "allowed": list(self._allowed), "blocked": list(self._blocked),
+        }

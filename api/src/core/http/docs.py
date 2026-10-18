@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.openapi.utils import get_openapi
 from scalar_fastapi import get_scalar_api_reference
 from starlette.responses import HTMLResponse
-from core.exceptions import Code
+from core.error import Code
 
 class Documented(Protocol):
 

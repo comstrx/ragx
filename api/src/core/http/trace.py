@@ -1,7 +1,7 @@
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from core.context import context
-from core.exceptions import exceptions
+from core.exception import exception
 from core.log import log
 from .response import Response
 import re, time
@@ -51,7 +51,7 @@ class Trace:
 
             if status: raise
 
-            fault = exceptions.handle(exc, method=scope["method"], path=scope["path"])
+            fault = exception.handle(exc, method=scope["method"], path=scope["path"])
 
             await Response.fail(fault)(scope, receive, stamped)
 

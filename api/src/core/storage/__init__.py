@@ -1,6 +1,7 @@
-from .local import LocalDisk
-from .s3 import S3Disk, S3Options
-from .storage import Disk, Storage, Stored, Uploaded
+from core.fs import S3Options
+
+from .disk import Disk, LocalDisk, S3Disk, Stored, Uploaded
+from .storage import Storage
 
 storage = Storage()
 

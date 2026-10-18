@@ -1,6 +1,6 @@
 from pathlib import Path, PurePosixPath
 
-from core.exceptions import Code, Fault
+from core.error import Code, Fault
 from core.fs import fs
 import hashlib, mimetypes
 

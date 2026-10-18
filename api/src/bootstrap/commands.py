@@ -1,8 +1,12 @@
 from collections.abc import Sequence
 
 from core.broadcast import broadcast
+from core.cache import cache
 from core.config import config, env
 from core.database import database
+from core.event import events
+from core.http import http
+from core.llm import llm
 from core.log import log
 from core.json import json
 from core.queue import queue
@@ -11,7 +15,9 @@ from core.thread import thread
 from .app import Application
 from .serve import Serve
 
-HIDDEN = { "password", "secret", "keys", "s3_secret" }
+HIDDEN = {
+    "password", "secret", "keys", "s3_secret", "local_key", "openai_key", "anthropic_key", "gemini_key", "deepseek_key",
+}
 
 def masked ( url: str ) -> str:
 
@@ -98,16 +104,16 @@ class Commands:
 
         app   = application.create()
         facts = {
-            "routes"   : [
-                { "path": bound.path, "methods": list(bound.methods), "name": bound.name, "throttle": bound.throttle }
-                for bound in application.routing(application.settings()).walk()
-            ],
-            "channels" : broadcast.channels(),
-            "schedule" : schedule.status(),
-            "queues"   : list(application.queues_config().queues),
-            "handlers" : queue.names(),
-            "config"   : { name: redacted(config.get(name).model_dump(exclude=HIDDEN)) for name in config.names() },
-            "openapi"  : len(app.openapi().get("paths", {})),
+            "routes"    : http.router(app).describe(),
+            "channels"  : broadcast.channels(),
+            "schedule"  : schedule.status(),
+            "queues"    : list(application.queues_config().queues),
+            "handlers"  : queue.names(),
+            "events"    : events.describe(),
+            "cache"     : cache.describe(),
+            "llm"       : llm.describe(),
+            "config"    : { name: redacted(config.get(name).model_dump(exclude=HIDDEN)) for name in config.names() },
+            "openapi"   : len(app.openapi().get("paths", {})),
         }
 
         print(json.pretty(facts))

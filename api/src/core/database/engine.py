@@ -2,7 +2,7 @@ from collections.abc import AsyncGenerator, Callable, Mapping
 from contextlib import asynccontextmanager
 from typing import Any
 
-from core.exceptions import Code, Fault
+from core.error import Code, Fault
 from core.log import log
 from sqlalchemy import text
 from sqlalchemy.engine import Dialect

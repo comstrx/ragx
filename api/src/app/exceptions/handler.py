@@ -1,7 +1,8 @@
 from collections.abc import Mapping
 from typing import ClassVar
 
-from core.exceptions import Code, Fault, Handler
+from core.error import Code, Fault
+from core.exception import Handler
 
 type Mapped = Mapping[type[BaseException], Code]
 

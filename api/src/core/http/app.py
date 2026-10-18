@@ -12,6 +12,7 @@ from .facts import Facts, Known
 from .handler import Errors
 from .response import Response
 from .route import Group
+from .router import Router
 from .throttle import Throttle
 from .trace import Trace
 
@@ -46,6 +47,22 @@ class App(FastAPI):
 
 class Http:
 
+    def __init__ ( self ) -> None:
+
+        self._router = Router()
+
+    def router ( self, app: FastAPI | None = None ) -> Router:
+
+        found = getattr(app.state, "router", None) if app is not None else None
+
+        return found if isinstance(found, Router) else self._router
+
+    def url ( self, name: str, **params: object ) -> str:
+        return self._router.url(name, **params)
+
+    def has ( self, name: str ) -> bool:
+        return self._router.has(name)
+
     def build (
         self, title: str, version: str, groups: Sequence[Group],
         debug: bool = False, docs: Documented | None = None, facts: Known | None = None,
@@ -59,6 +76,9 @@ class Http:
 
         Facts.keep(app, facts or {})
         app.add_middleware(Trace)
+
+        self._router     = Router()
+        app.state.router = self._router
 
         if origins: self.share(app, origins)
         Errors().install(app)
@@ -83,6 +103,8 @@ class Http:
         app.mount(url, Static(folder, cache), name=name)
 
     def mount ( self, app: FastAPI, group: Group ) -> None:
+
+        self.router(app).register(group)
 
         for bound in group.walk():
 

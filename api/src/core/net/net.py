@@ -1,141 +1,97 @@
-from collections.abc import Mapping
-from dataclasses import dataclass, field
-from ipaddress import ip_address
-from typing import Any
-from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit
+from collections.abc import AsyncIterator, Mapping
+from pathlib import Path
 
-from core.exceptions import Code, Fault
-from core.json import json as codec
-import httpx
+from core.error import Fault
+from .client import Client, Files
+from .reply import Reply, Sse
+from .ip import Ip
+from .probe import Probe
+from .url import Url
 
 type Query = Mapping[str, object]
 type Headers = Mapping[str, str]
 
-SUCCESS = range(200, 300)
-JSON    = { "content-type": "application/json" }
+SERVER_ERROR = 500
 
-@dataclass(frozen=True, slots=True)
-class Reply:
-
-    status  : int
-    headers : dict[str, str]
-    body    : bytes
-    url     : str
-    ms      : float = field(default=0.0)
-
-    def ok ( self ) -> bool:
-        return self.status in SUCCESS
-
-    def text ( self ) -> str:
-        return self.body.decode(errors="replace")
-
-    def json ( self ) -> Any:
-
-        return codec.loads(self.body) if self.body else None
-
-class Net:
+class Net(Url, Ip, Probe):
 
     def __init__ ( self ) -> None:
 
-        self._client: httpx.AsyncClient | None = None
+        self._default = Client()
+        self._clients: dict[str, Client] = {}
+
+    def client (
+        self, name: str, base: str = "", headers: Headers | None = None, wait: float = 10.0, retries: int = 0,
+    ) -> Client:
+
+        found = self._clients.get(name)
+
+        if found is None: found = self._clients[name] = Client(base, headers, wait, retries)
+
+        return found
 
     def open ( self, wait: float = 10.0, headers: Headers | None = None, retries: int = 0 ) -> None:
-
-        if self._client is not None: return
-
-        transport    = httpx.AsyncHTTPTransport(retries=retries)
-        self._client = httpx.AsyncClient(
-            timeout=wait, headers=dict(headers or {}), transport=transport, follow_redirects=False,
-        )
+        self._default.open(wait, headers, retries)
 
     async def close ( self ) -> None:
 
-        if self._client is None: return
+        await self._default.close()
 
-        client, self._client = self._client, None
-
-        await client.aclose()
+        for client in self._clients.values(): await client.close()
 
     async def request (
         self, method: str, url: str, params: Query | None = None, json: object = None,
         data: Mapping[str, object] | None = None, headers: Headers | None = None, wait: float | None = None,
     ) -> Reply:
-
-        if self._client is None: self.open()
-        if self._client is None: raise Fault(Code.INTERNAL, reason="net")
-
-        content = codec.encode(json) if json is not None else None
-        sent    = { **JSON, **(headers or {}) } if content is not None else dict(headers or {})
-
-        try:
-
-            answer = await self._client.request(
-                method.upper(), url, params=self._query_(params), content=content, data=dict(data) if data else None,
-                headers=sent, timeout=wait if wait is not None else httpx.USE_CLIENT_DEFAULT,
-            )
-
-        except httpx.TimeoutException as error: raise Fault(Code.UNAVAILABLE, reason="timeout") from error
-        except httpx.HTTPError as error: raise Fault(Code.UNAVAILABLE, reason="network") from error
-
-        elapsed = round(answer.elapsed.total_seconds() * 1000, 2)
-
-        return Reply(answer.status_code, dict(answer.headers), answer.content, str(answer.url), elapsed)
+        return await self._default.request(method, url, params=params, json=json, data=data, headers=headers, wait=wait)
 
     async def get (
         self, url: str, params: Query | None = None, headers: Headers | None = None, wait: float | None = None,
     ) -> Reply:
-        return await self.request("GET", url, params=params, headers=headers, wait=wait)
+        return await self._default.get(url, params, headers, wait)
 
     async def post (
         self, url: str, json: object = None, headers: Headers | None = None, wait: float | None = None,
     ) -> Reply:
-        return await self.request("POST", url, json=json, headers=headers, wait=wait)
+        return await self._default.post(url, json, headers, wait)
 
     async def put (
         self, url: str, json: object = None, headers: Headers | None = None, wait: float | None = None,
     ) -> Reply:
-        return await self.request("PUT", url, json=json, headers=headers, wait=wait)
+        return await self._default.put(url, json, headers, wait)
 
     async def patch (
         self, url: str, json: object = None, headers: Headers | None = None, wait: float | None = None,
     ) -> Reply:
-        return await self.request("PATCH", url, json=json, headers=headers, wait=wait)
+        return await self._default.patch(url, json, headers, wait)
 
     async def delete ( self, url: str, headers: Headers | None = None, wait: float | None = None ) -> Reply:
-        return await self.request("DELETE", url, headers=headers, wait=wait)
+        return await self._default.delete(url, headers, wait)
 
-    def url ( self, base: str, *parts: str, **query: object ) -> str:
+    async def head ( self, url: str, headers: Headers | None = None, wait: float | None = None ) -> Reply:
+        return await self._default.head(url, headers, wait)
 
-        path = "/".join(part.strip("/") for part in parts if part)
-        full = urljoin(base.rstrip("/") + "/", path) if path else base
-        tail = self._query_(query)
+    def stream (
+        self, method: str, url: str, json: object = None, headers: Headers | None = None,
+    ) -> AsyncIterator[bytes]:
+        return self._default.stream(method, url, json, headers)
 
-        return f"{full}?{urlencode(tail)}" if tail else full
+    def sse ( self, method: str, url: str, json: object = None, headers: Headers | None = None ) -> AsyncIterator[Sse]:
+        return self._default.sse(method, url, json, headers)
 
-    def origin ( self, url: str ) -> str:
+    async def download ( self, url: str, target: Path, headers: Headers | None = None ) -> int:
+        return await self._default.download(url, target, headers)
 
-        parts = urlsplit(url)
+    async def upload ( self, url: str, files: Files, data: Mapping[str, object] | None = None ) -> Reply:
+        return await self._default.upload(url, files, data)
 
-        return f"{parts.scheme}://{parts.netloc}" if parts.scheme and parts.netloc else ""
+    async def reachable ( self, url: str, wait: float = 3.0 ) -> bool:
 
-    def host ( self, url: str ) -> str:
-        return urlsplit(url).hostname or ""
+        try: return (await self._default.head(url, wait=wait)).status < SERVER_ERROR
+        except Fault: return False
 
-    def query ( self, url: str ) -> dict[str, str]:
-        return dict(parse_qsl(urlsplit(url).query, keep_blank_values=True))
+    def bearer ( self, token: str ) -> dict[str, str]:
+        return { "authorization": f"Bearer {token}" }
 
-    def is_url ( self, text: str ) -> bool:
-
-        parts = urlsplit(text)
-
-        return parts.scheme in ("http", "https") and bool(parts.netloc)
-
-    def is_ip ( self, text: str ) -> bool:
-
-        try: ip_address(text)
-        except ValueError: return False
-
-        return True
-
-    def _query_ ( self, params: Query | None ) -> dict[str, str]:
-        return { key: str(value) for key, value in (params or {}).items() if value is not None }
+    def describe ( self ) -> dict[str, object]:
+        return { "default": self._default.describe(), "clients": sorted(self._clients) }

@@ -1,13 +1,16 @@
 from core.assets import assets
-from core.broadcast import broadcast
+from core.broadcast import (
+    Driver as BroadcastDriver, LocalDriver as LocalBroadcast, RedisDriver as RedisBroadcast, broadcast,
+)
 from core.cache import RedisStore, cache
 from core.config import config, env
 from core.crypto import crypto
 from core.database import database
 from core.event import Bus, LocalBus, RabbitBus, events
-from core.exceptions import exceptions
+from core.exception import exception
 from core.fs import Path
 from core.http import App, Group, Response, Route, Served, http
+from core.llm import ChatGpt, Claude, DeepSeek, Gemini, Local, llm
 from core.log import log
 from core.mail import LogTransport, MemoryTransport, SmtpTransport, Transport, mail
 from core.queue import Driver as QueueDriver, MemoryDriver, RabbitDriver, SyncDriver, queue
@@ -18,7 +21,7 @@ from core.token import JwtAdapter, token
 from core.view import view
 from config import (
     AppConfig, AssetsConfig, AuthConfig, BroadcastConfig, CacheConfig, DatabaseConfig, DocsConfig, EventConfig,
-    LogConfig, MailConfig, QueueConfig, ScheduleConfig, SocketConfig, StorageConfig,
+    LlmConfig, LogConfig, MailConfig, QueueConfig, ScheduleConfig, SocketConfig, StorageConfig,
 )
 from app import services
 from app.exceptions import ExceptionHandler
@@ -76,6 +79,9 @@ class Application:
     def eventing ( self ) -> EventConfig:
         return config.register("event", EventConfig)
 
+    def intelligence ( self ) -> LlmConfig:
+        return config.register("llm", LlmConfig)
+
     def boot ( self ) -> Boot:
 
         settings = self.settings()
@@ -129,7 +135,7 @@ class Application:
         caching = self.caching()
         secret  = auth.secret or self.ephemeral(settings)
 
-        exceptions.use(ExceptionHandler())
+        exception.use(ExceptionHandler())
         token.setup(JwtAdapter(secret, auth.algorithm, auth.issuer))
         crypto.setup(auth.keys or [crypto.key()])
         assets.setup(statics.path(self.root), statics.url, settings.url, statics.versioned)
@@ -144,9 +150,35 @@ class Application:
         services.auth.configure(auth.access_ttl, auth.refresh_ttl)
         socket.setup(Limits(live.connections, live.queue, live.frame, live.ping, live.drops))
 
-        if self.broadcasting().enabled: broadcast.setup(socket, services.auth.bearer)
+        if self.broadcasting().enabled: broadcast.setup(socket, services.auth.bearer, self.broadcaster())
+
+        self.models(self.intelligence())
 
         return len(timetable.tasks) + len(channels.channels)
+
+    def broadcaster ( self ) -> BroadcastDriver:
+
+        live = self.broadcasting()
+
+        return RedisBroadcast(socket, live.url, live.topic) if live.driver == "redis" else LocalBroadcast(socket)
+
+    def models ( self, brains: LlmConfig ) -> int:
+
+        wait, retries = brains.timeout, brains.retries
+
+        llm.setup(brains.driver, brains.session_ttl)
+        llm.register(Local(brains.local_url, brains.local_model, brains.local_key, wait, 0))
+
+        if brains.openai_key:
+            llm.register(ChatGpt(brains.openai_key, brains.openai_model, brains.openai_url, wait, retries))
+        if brains.anthropic_key:
+            llm.register(Claude(brains.anthropic_key, brains.anthropic_model, brains.anthropic_url, wait, retries))
+        if brains.gemini_key:
+            llm.register(Gemini(brains.gemini_key, brains.gemini_model, brains.gemini_url, wait, retries))
+        if brains.deepseek_key:
+            llm.register(DeepSeek(brains.deepseek_key, brains.deepseek_model, brains.deepseek_url, wait, retries))
+
+        return len(llm.names())
 
     def ephemeral ( self, settings: AppConfig ) -> str:
 

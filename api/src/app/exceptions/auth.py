@@ -1,4 +1,4 @@
-from core.exceptions import Code, Fault
+from core.error import Code, Fault
 
 class InvalidCredentials(Fault):
 

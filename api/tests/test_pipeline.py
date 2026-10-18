@@ -1,14 +1,19 @@
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any
 
+from starlette.websockets import WebSocketState
+from core.broadcast import RedisDriver
 from core.cache import Cache, RedisStore
 from core.date import UTC, DateTime
 from core.event import Event, Events, RabbitBus, events
-from core.exceptions import Fault
+from core.error import Fault
 from core.http import App
 from core.mail import MemoryTransport
 from core.queue import Job, MemoryDriver, Queue, Queued, RabbitDriver, SyncDriver, queue
 from core.rand import rand
 from core.schedule import Cron, Schedule
+from core.socket import Connection, Frame, Socket
 from app.enums import TokenKind
 from app.events import UserRegistered
 from app.jobs import PurgeTokens
@@ -60,6 +65,19 @@ class CountNow(Counting):
 
 def short ( job: Job ) -> str:
     return job.name.rsplit(".", 1)[-1]
+
+class Mute:
+
+    client_state = WebSocketState.CONNECTED
+
+    async def send_bytes ( self, data: bytes ) -> None:
+        return None
+
+    async def receive ( self ) -> Mapping[str, Any]:
+        return { "type": "websocket.disconnect", "code": 1000 }
+
+    async def close ( self, code: int = 1000, reason: str | None = None ) -> None:
+        return None
 
 @pytest.mark.anyio
 class TestPipeline:
@@ -288,6 +306,41 @@ class TestBrokers:
 
             await cache.clear()
             await store.close()
+
+    async def test_redis_fans_broadcasts_out_to_every_hub ( self ) -> None:
+
+        topic  = f"unit-{rand.hex(3)}"
+        left   = Socket()
+        right  = Socket()
+        first  = RedisDriver(left, REDIS, topic)
+        second = RedisDriver(right, REDIS, topic)
+        near   = left.attach(Connection("a", Mute()))
+        far    = right.attach(Connection("b", Mute()))
+
+        left.join(near, "news")
+        right.join(far, "news")
+
+        try:
+
+            await first.start()
+            await second.start()
+
+            assert first.publish("news", "headline", { "n": 1 }, None) == 1
+
+            for _ in range(100):
+
+                if far.outbox.qsize(): break
+
+                await asyncio.sleep(0.02)
+
+            assert Frame.decode(far.outbox.get_nowait()) == Frame("headline", "news", { "n": 1 })
+            assert near.outbox.qsize() == 1 and second.describe()["relayed"] == 1 and first.describe()["relayed"] == 0
+            assert first.origin() != second.origin() and second.describe()["listening"]
+
+        finally:
+
+            await first.stop()
+            await second.stop()
 
 class TestSchedule:
 

@@ -1,29 +1,15 @@
-from collections.abc import Sequence
-from typing import Annotated, Any
+from collections.abc import Mapping, Sequence
+from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, StringConstraints, TypeAdapter, ValidationError
-from core.exceptions import Code, Fault
+from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError, create_model
+from core.error import Code, Fault
+from .rulebook import Rulebook
+from .rules import Email, Phone, Url
 import functools
 
 type Errors = dict[str, list[str]]
-
-EMAIL = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
-PHONE = r"^\+[1-9]\d{6,14}$"
-NAME  = r"^[\w .'-]+$"
-SLUG  = r"^[a-z0-9]+(?:-[a-z0-9]+)*$"
-UUIDS = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-
-Email      = Annotated[
-    str, StringConstraints(strip_whitespace=True, to_lower=True, min_length=3, max_length=254, pattern=EMAIL),
-]
-Phone      = Annotated[str, StringConstraints(strip_whitespace=True, pattern=PHONE)]
-Password   = Annotated[str, StringConstraints(min_length=8, max_length=128)]
-Name       = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120, pattern=NAME)]
-Slug       = Annotated[
-    str, StringConstraints(strip_whitespace=True, to_lower=True, min_length=1, max_length=120, pattern=SLUG),
-]
-Identifier = Annotated[str, StringConstraints(strip_whitespace=True, pattern=UUIDS)]
+type Shape = Mapping[str, Any]
 
 @functools.cache
 def adapter ( kind: Any ) -> TypeAdapter[Any]:
@@ -31,15 +17,49 @@ def adapter ( kind: Any ) -> TypeAdapter[Any]:
 
 class Validate:
 
+    def __init__ ( self ) -> None:
+
+        self.rules = Rulebook()
+
+    def make (
+        self, data: Mapping[str, Any], rules: Mapping[str, str | list[str]], messages: Mapping[str, str] | None = None,
+    ) -> Errors:
+        return self.rules.check(data, rules, messages)
+
+    def validated (
+        self, data: Mapping[str, Any], rules: Mapping[str, str | list[str]], messages: Mapping[str, str] | None = None,
+    ) -> dict[str, Any]:
+        return self.rules.validate(data, rules, messages)
+
+    def rule ( self, name: str, check: Any ) -> None:
+        self.rules.extend(name, check)
+
     def check ( self, kind: Any, value: object, field: str = "value" ) -> Any:
 
         try: return adapter(kind).validate_python(value)
+        except ValidationError as error: raise self.fault(error, field) from error
+
+    def check_json ( self, kind: Any, text: str | bytes, field: str = "value" ) -> Any:
+
+        try: return adapter(kind).validate_json(text)
         except ValidationError as error: raise self.fault(error, field) from error
 
     def model[M: BaseModel] ( self, model: type[M], data: object ) -> M:
 
         try: return model.model_validate(data)
         except ValidationError as error: raise self.fault(error) from error
+
+    def schema ( self, title: str = "Shape", /, **fields: Any ) -> type[BaseModel]:
+
+        definitions: dict[str, Any] = {
+            key: (kind if isinstance(kind, tuple) else (kind, ...)) for key, kind in fields.items()
+        }
+        config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+        return create_model(title, __config__=config, **definitions)
+
+    def shape ( self, data: object, **fields: Any ) -> dict[str, Any]:
+        return self.model(self.schema(**fields), data).model_dump()
 
     def errors ( self, error: ValidationError, field: str | None = None ) -> Errors:
 
@@ -64,11 +84,21 @@ class Validate:
 
         return True
 
+    def failures ( self, kind: Any, value: object, field: str = "value" ) -> Errors:
+
+        try: adapter(kind).validate_python(value)
+        except ValidationError as error: return self.errors(error, field)
+
+        return {}
+
     def is_email ( self, value: object ) -> bool:
         return self.passes(Email, value)
 
     def is_phone ( self, value: object ) -> bool:
         return self.passes(Phone, value)
+
+    def is_url ( self, value: object ) -> bool:
+        return self.passes(Url, value)
 
     def is_uuid ( self, value: object ) -> bool:
 
@@ -84,3 +114,21 @@ class Validate:
         if value in choices: return value
 
         raise Fault(Code.VALIDATION, errors={ field: [f"Choose one of: {', '.join(map(str, choices))}"] })
+
+    def required ( self, data: Mapping[str, object], *names: str ) -> None:
+
+        missing = { name: ["This field is required"] for name in names if data.get(name) in (None, "", [], {}) }
+
+        if missing: raise Fault(Code.VALIDATION, errors=missing)
+
+    def refuse ( self, field: str, message: str ) -> Fault:
+        return Fault(Code.VALIDATION, errors={ field: [message] })
+
+    def merge ( self, *groups: Errors ) -> Errors:
+
+        merged: Errors = {}
+
+        for group in groups:
+            for field, messages in group.items(): merged.setdefault(field, []).extend(messages)
+
+        return merged

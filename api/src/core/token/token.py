@@ -1,34 +1,10 @@
-from collections.abc import Mapping
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from typing import Protocol
+from datetime import timedelta
 
-from core.crypto import crypto
+from core.crypto import ApiKey, crypto
 from core.date import date
-from core.exceptions import Code, Fault
+from core.error import Code, Fault
 from core.rand import rand
-
-@dataclass(frozen=True, slots=True)
-class Claims:
-
-    subject : str
-    kind    : str
-    id      : str
-    issued  : datetime
-    expires : datetime
-    extra   : Mapping[str, object] = field(default_factory=dict)
-
-    def remaining ( self ) -> float:
-        return max((self.expires - date.now()).total_seconds(), 0.0)
-
-    def alive ( self ) -> bool:
-        return self.expires > date.now()
-
-class Adapter(Protocol):
-
-    def issue ( self, claims: Claims ) -> str: ...
-
-    def verify ( self, text: str ) -> Claims: ...
+from .claims import Adapter, Claims
 
 class Token:
 
@@ -42,6 +18,12 @@ class Token:
     def ready ( self ) -> bool:
         return self._adapter is not None
 
+    def engine ( self ) -> Adapter:
+
+        if self._adapter is None: raise Fault(Code.INTERNAL, reason="token")
+
+        return self._adapter
+
     def issue ( self, subject: str, kind: str = "access", ttl: int = 900, **extra: object ) -> tuple[str, Claims]:
 
         if ttl <= 0: raise ValueError(ttl)
@@ -49,16 +31,31 @@ class Token:
         now    = date.now()
         claims = Claims(subject, kind, str(rand.uuid()), now, now + timedelta(seconds=ttl), dict(extra))
 
-        return self._engine_().issue(claims), claims
+        return self.engine().issue(claims), claims
+
+    def pair (
+        self, subject: str, access_ttl: int = 900, refresh_ttl: int = 2_592_000, **extra: object,
+    ) -> dict[str, object]:
+
+        access, access_claims   = self.issue(subject, "access", access_ttl, **extra)
+        refresh, refresh_claims = self.issue(subject, "refresh", refresh_ttl, **extra)
+
+        return {
+            "access": access, "refresh": refresh, "access_expires": date.iso(access_claims.expires),
+            "refresh_expires": date.iso(refresh_claims.expires), "refresh_id": refresh_claims.id,
+        }
 
     def verify ( self, text: str, kind: str | None = None ) -> Claims:
 
-        claims = self._engine_().verify(text.strip())
+        claims = self.engine().verify(text.strip())
 
         if kind is not None and claims.kind != kind: raise Fault(Code.UNAUTHORIZED, reason="token.kind")
         if not claims.alive(): raise Fault(Code.UNAUTHORIZED, reason="token.expired")
 
         return claims
+
+    def peek ( self, text: str ) -> Claims:
+        return self.engine().peek(text.strip())
 
     def fingerprint ( self, text: str ) -> str:
         return crypto.digest(text.strip())
@@ -71,8 +68,17 @@ class Token:
 
         return text.strip()
 
-    def _engine_ ( self ) -> Adapter:
+    def maybe_bearer ( self, header: str | None ) -> str | None:
 
-        if self._adapter is None: raise Fault(Code.INTERNAL, reason="token")
+        scheme, _, text = (header or "").strip().partition(" ")
 
-        return self._adapter
+        return text.strip() if scheme.lower() == "bearer" and text.strip() else None
+
+    def api_key ( self, prefix: str = "rk" ) -> ApiKey:
+        return crypto.pair(prefix)
+
+    def api_key_matches ( self, secret: str, fingerprint: str ) -> bool:
+        return crypto.matches(secret, fingerprint)
+
+    def api_key_split ( self, header: str ) -> tuple[str, str]:
+        return crypto.split(header)

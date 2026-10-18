@@ -3,12 +3,12 @@ from uuid import UUID
 
 from core.database import Blueprint, Migrator, Query, Schema, Seeds, database, sql
 from core.date import date
-from core.exceptions import Code, Fault
+from core.error import Code, Fault
 from core.http import App
 from core.rand import rand
-from core.value import value
+from core.parse import parse
 from app.enums import Role as Roles, Table, TokenKind
-from app.models import Token, User
+from app.models import Role, Token, User
 from app.repositories import roles, tokens, users
 from app.resources import user as resource
 from database.seeders import seeders
@@ -260,7 +260,7 @@ class TestOrm:
 
             assert set(dumped) == { "id", "name", "email", "created_at", "roles" }
             assert dumped["id"] == str(alice.id) and str(dumped["created_at"]).endswith("Z")
-            assert sorted(map(str, value.list(dumped["roles"]))) == ["admin", "client"]
+            assert sorted(map(str, parse.list(dumped["roles"]))) == ["admin", "client"]
 
             with pytest.raises(Fault) as missing: await users.one(rand.uuid())
 
@@ -306,3 +306,100 @@ class TestOrm:
         world = await users.find_by_email("world@ragx.test", "roles")
 
         assert world is not None and world.role_names() == [Roles.CLIENT.value]
+
+    async def test_query_dsl_aggregates_upserts_cursors_and_renders_sql ( self, app: App, tmp_path: Path ) -> None:
+
+        tag   = rand.hex(4)
+        base  = users.query().where_like("email", f"%-{tag}@q.test")
+        names: list[str] = []
+        mail  = { "name": f"A {tag}", "email": f"a-{tag}@q.test", "password": None }
+        other = { "name": f"B {tag}", "email": f"b-{tag}@q.test", "password": None }
+
+        assert await users.query().insert([mail, other]) == 2 and await users.query().insert([]) == 0
+
+        try:
+
+            ids = await base.order_by("name").pluck("id")
+
+            assert await base.count() == 2 and await base.max("name") == f"B {tag}"
+            assert await base.min("name") == f"A {tag}"
+            assert await base.order_by("name").value("name") == f"A {tag}"
+            assert await base.where("name", "zzz").value("name") is None
+            by_mail = { mail["email"]: mail["name"], other["email"]: other["name"] }
+
+            assert await base.pluck("name", key="email") == by_mail
+            assert await base.where_either(("name", f"A {tag}"), ("name", "like", f"B %{tag}")).count() == 2
+            assert (await base.where_not("name", f"A {tag}").sole()).name == f"B {tag}"
+            assert await base.where_in("name", [f"A {tag}"]).missing() is False
+            assert await base.where_not_in("name", [f"A {tag}", f"B {tag}"]).missing()
+            assert await base.where_date("created_at", date.now().date()).count() == 2
+            soon = [date.add(date.now(), days=n) for n in (1, 2)]
+
+            assert await base.where_not_between("created_at", *soon).count() == 2
+            assert await base.where_column("created_at", "<=", "updated_at").count() == 2
+            assert await base.when(True, lambda q: q.where("name", f"A {tag}")).count() == 1
+            assert await base.unless(True, lambda q: q.where("name", "zzz")).count() == 2
+            assert await base.take(1).skip(1).order_by("name").pluck("name") == [f"B {tag}"]
+            assert await base.for_page(2, 1).order_by("name").pluck("name") == [f"B {tag}"]
+            assert "DISTINCT" in base.distinct().to_sql() and "FOR UPDATE" in base.lock_for_update().to_sql()
+            assert "random()" in base.in_random_order().to_sql() and "FOR SHARE" in base.shared_lock().to_sql()
+            assert base.dump()["filters"] == 1 and base.clone().state() == base.state() and base.model() is User
+            assert "name" in base.columns() and base.reorder("name", "desc").state().orders == (("name", "desc"),)
+            assert [user.name async for user in base.order_by("name").cursor(1)] == [f"A {tag}", f"B {tag}"]
+            assert await base.each(lambda user: names.append(user.name), 1) == 2
+            assert sorted(names) == [f"A {tag}", f"B {tag}"]
+            assert len(await users.query().find_many(ids)) == 2 and await users.query().find_many([]) == []
+            assert await base.touch() == 2 and base.with_("roles").without("roles").state().loads == ()
+            assert await base.order_by_desc("name").value("name") == f"B {tag}"
+            assert await base.latest("name").value("name") == f"B {tag}"
+
+            with pytest.raises(Fault) as many: await base.sole()
+            with pytest.raises(ValueError): base.where("name", "nope", 1, 2)
+            with pytest.raises(ValueError): base.where("name", "~~", 1)
+            with pytest.raises(ValueError): base.order_by("name", "sideways")
+
+            assert many.value.code == Code.CONFLICT
+            assert await users.query().destroy(*ids) == 2 and await base.count() == 0
+            assert await base.only_trashed().count() == 2
+            assert await base.with_trashed().restore() == 2 and await base.count() == 2
+            assert await users.query().destroy() == 0
+
+            label = f"role-{tag}"
+            saved = await roles.query().upsert([{ "name": label, "label": "First" }], conflict=["name"])
+            fresh = [{ "name": label, "label": "Second" }]
+            again = await roles.query().upsert(fresh, conflict=["name"], update=["label"])
+            role  = await roles.query().where("name", label).first_or_fail()
+
+            assert saved == 1 and again == 1 and role.label == "Second" and isinstance(role, Role)
+            assert await roles.query().where("name", label).force_delete() == 1
+
+        finally:
+
+            assert await base.with_trashed().force_delete() == 2
+
+        ledger = f"scratch_ledger_{tag}"
+        own    = Migrator(database, tmp_path / "own", ledger)
+
+        (tmp_path / "own").mkdir()
+        (tmp_path / "own" / "0001_create_things.py").write_text(
+            MIGRATION.format(table=scratch("things"), parent=Table.USERS),
+        )
+
+        try:
+
+            assert own.table == ledger and await own.apply() == ["0001_create_things"] and await own.apply() == []
+            assert await own.fresh() == ["0001_create_things"] and (await own.status())["batch"] == 1
+            assert await own.reset() == ["0001_create_things"]
+            assert (await own.status())["pending"] == ["0001_create_things"]
+            assert await own.reset() == []
+
+        finally:
+
+            async with database.transaction() as session: await Schema(session).drop(ledger)
+
+        migrator = Migrator(database, tmp_path / "made")
+        made     = migrator.make("create widgets")
+
+        assert made.name == "0001_create_widgets.py" and 'schema.create("widgets"' in made.read_text()
+        assert migrator.next_number() == 2 and callable(migrator.load(made).up)
+        assert migrator.make("add color to widgets", table="widgets").name == "0002_add_color_to_widgets.py"

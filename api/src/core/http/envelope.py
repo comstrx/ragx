@@ -1,7 +1,7 @@
 from collections.abc import Mapping
 
 from core.context import context
-from core.exceptions import Code, Fault
+from core.error import Code, Fault
 
 type Payload = dict[str, object]
 

@@ -1,8 +1,11 @@
 from pathlib import Path
 
-from httpx import AsyncClient
-from core.exceptions import Code, Fault
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
+from starlette.responses import Response
+from core.error import Code, Fault
 from core.http import App
+from core.net import Client
 from core.rand import rand
 from core.storage import LocalDisk, Storage, storage
 from config import StorageConfig
@@ -10,6 +13,14 @@ import pytest, re
 
 PNG  = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 UUID = 36
+far  = FastAPI()
+
+@far.get("/pics/{name}")
+async def picture ( name: str ) -> Response:
+    return Response(PNG * (40 if name == "huge.png" else 1), media_type="image/png")
+
+def remote () -> Client:
+    return Client("http://far.test", transport=ASGITransport(app=far))
 
 class Upload:
 
@@ -58,6 +69,32 @@ class TestStorage:
 
         assert (put.disk, put.path, put.size, put.mime) == ("public", "docs/readme.txt", 5, "text/plain")
         assert put.url == "/static/docs/readme.txt" and put.name == "readme.txt"
+
+        fetched = await store.fetch("http://far.test/pics/logo.png?v=1", "remote", name="logo.png", client=remote())
+        dated   = await store.fetch("http://far.test/pics/logo.png", "remote", keep=True, client=remote(), pattern="")
+
+        assert (fetched.mime, fetched.size, fetched.disk) == ("image/png", len(PNG), "public")
+        assert re.fullmatch(r"remote/\d{4}/\d{2}/logo\.png", fetched.path) and await store.exists(fetched.path)
+        assert dated.path == "remote/logo.png" and await store.get(dated.path) == PNG
+
+        with pytest.raises(Fault) as oversize:
+            await store.fetch("http://far.test/pics/huge.png", "remote", client=remote(), limit=len(PNG))
+
+        assert oversize.value.code == Code.VALIDATION
+
+        await store.put("logs/a/one.txt", "1")
+        await store.put("logs/b/two.txt", "2")
+        await store.put("logs/root.txt", "r")
+
+        assert await store.files("logs") == ["logs/root.txt"]
+        assert await store.directories("logs") == ["logs/a", "logs/b"]
+        assert await store.missing("logs/none.txt") and not await store.missing("logs/root.txt")
+        assert (await store.append("logs/root.txt", "+")).size == 2
+        assert (await store.prepend("logs/root.txt", "<")).size == 3 and await store.text("logs/root.txt") == "<r+"
+        assert await store.last_modified("logs/root.txt") > 0 and await store.delete_directory("logs/a") == 1
+        assert await store.directories("logs") == ["logs/b"] and "docs" in await store.directories()
+        assert await store.append("fresh/new.txt", "n") and await store.text("fresh/new.txt") == "n"
+
         assert await store.text("docs/readme.txt") == "hello" and await store.exists("docs/readme.txt")
         assert await store.size("docs/readme.txt") == 5
         assert store.local("docs/readme.txt") == tmp_path / "public" / "docs" / "readme.txt"

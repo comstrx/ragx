@@ -1,4 +1,4 @@
-from core.exceptions import Code, Fault
+from core.error import Code, Fault
 from sqlalchemy.exc import DBAPIError, InterfaceError, OperationalError, SQLAlchemyError, TimeoutError as PoolTimeout
 import asyncio
 

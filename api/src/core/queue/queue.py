@@ -1,81 +1,23 @@
-from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass, field, replace
-from typing import Any, Protocol, Self
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from typing import Any
 
 from core.date import date
-from core.exceptions import Code, Fault
+from core.error import Code, Fault
 from core.json import json
 from core.log import log
 from core.rand import rand
-import asyncio, functools, inspect
+from .driver import Driver
+from .flow import Flow, Step
+from .graveyard import Graveyard
+from .job import BACKOFF, DEFAULT, TRIES, Failed, Job
+from .task import Task
+from .unique import Unique
+from .worker import Workers
+import inspect
 
 type Handler = Callable[..., Any]
-type Failure = Callable[["Job", BaseException], Awaitable[None] | None]
-
-DEFAULT = "default"
-TRIES   = 3
-BACKOFF = 1.0
-PULL    = 0.5
-
-@dataclass(frozen=True, slots=True)
-class Job:
-
-    id        : str
-    name      : str
-    args      : tuple[Any, ...] = ()
-    kwargs    : dict[str, Any] = field(default_factory=dict)
-    queue     : str = DEFAULT
-    tries     : int = TRIES
-    backoff   : float = BACKOFF
-    attempts  : int = 0
-    available : float = 0.0
-    receipt   : Any = field(default=None, compare=False, repr=False)
-
-    def again ( self, delay: float ) -> Self:
-        return replace(self, attempts=self.attempts + 1, available=date.stamp() + delay, receipt=None)
-
-    def exhausted ( self ) -> bool:
-        return self.attempts + 1 >= self.tries
-
-    def dump ( self ) -> dict[str, Any]:
-
-        return {
-            "id": self.id, "name": self.name, "args": list(self.args), "kwargs": self.kwargs, "queue": self.queue,
-            "tries": self.tries, "backoff": self.backoff, "attempts": self.attempts, "available": self.available,
-        }
-
-    @classmethod
-    def load ( cls, data: Mapping[str, Any], receipt: Any = None ) -> Job:
-
-        return cls(
-            str(data["id"]), str(data["name"]), tuple(data.get("args", ())), dict(data.get("kwargs", {})),
-            str(data.get("queue", DEFAULT)), int(data.get("tries", TRIES)), float(data.get("backoff", BACKOFF)),
-            int(data.get("attempts", 0)), float(data.get("available", 0.0)), receipt,
-        )
-
-class Driver(Protocol):
-
-    @property
-    def name ( self ) -> str: ...
-
-    async def push ( self, job: Job ) -> None: ...
-
-    async def pull ( self, queue: str, wait: float ) -> Job | None: ...
-
-    async def size ( self, queue: str ) -> int: ...
-
-    async def clear ( self, queue: str ) -> int: ...
-
-    async def ack ( self, job: Job ) -> None: ...
-
-    async def close ( self ) -> None: ...
-
-class Queued:
-
-    queue   : str = DEFAULT
-    delay   : float = 0.0
-    tries   : int = TRIES
-    backoff : float = BACKOFF
+type Failure = Callable[[Job, BaseException], Awaitable[None] | None]
+type Success = Callable[[Job], Awaitable[None] | None]
 
 class Queue:
 
@@ -83,21 +25,24 @@ class Queue:
 
         self._driver: Driver | None = None
         self._handlers: dict[str, Handler] = {}
-        self._workers: list[asyncio.Task[None]] = []
         self._queues: tuple[str, ...] = (DEFAULT,)
         self._tries   = TRIES
         self._backoff = BACKOFF
         self._failed: Failure | None = None
-        self._stopping = asyncio.Event()
+        self._succeeded: Success | None = None
+        self._graveyard = Graveyard()
+        self._workers   = Workers(self.pull, self.perform)
+        self._flow      = Flow(self)
+        self._unique    = Unique()
         self._processed = 0
         self._failures  = 0
 
     def setup (
-        self, driver: Driver, queues: tuple[str, ...] = (DEFAULT,), tries: int = TRIES, backoff: float = BACKOFF,
+        self, driver: Driver, queues: Sequence[str] = (DEFAULT,), tries: int = TRIES, backoff: float = BACKOFF,
     ) -> None:
 
         self._driver  = driver
-        self._queues  = queues or (DEFAULT,)
+        self._queues  = tuple(queues) or (DEFAULT,)
         self._tries   = tries
         self._backoff = backoff
 
@@ -113,8 +58,14 @@ class Queue:
     def inline ( self ) -> bool:
         return self._driver is None or self._driver.name == "sync"
 
+    def queues ( self ) -> tuple[str, ...]:
+        return self._queues
+
     def on_failure ( self, handler: Failure ) -> None:
         self._failed = handler
+
+    def on_success ( self, handler: Success ) -> None:
+        self._succeeded = handler
 
     def register ( self, name: str, handler: Handler ) -> str:
 
@@ -148,13 +99,14 @@ class Queue:
     async def enqueue (
         self, handler: Handler | str, args: tuple[Any, ...] = (), kwargs: Mapping[str, Any] | None = None,
         queue: str | None = None, delay: float = 0.0, tries: int | None = None, backoff: float | None = None,
+        unique: str | None = None,
     ) -> Job:
 
         name = handler if isinstance(handler, str) else self.register(self.name_of(handler), handler)
         job  = Job(
             str(rand.uuid()), name, tuple(json.loads(json.encode(args))), json.loads(json.encode(dict(kwargs or {}))),
             queue or self._queues[0], tries or self._tries, backoff if backoff is not None else self._backoff,
-            0, date.stamp() + max(delay, 0.0),
+            0, date.stamp() + max(delay, 0.0), unique,
         )
 
         self.handler(name)
@@ -163,6 +115,27 @@ class Queue:
         else: await self.driver().push(job)
 
         return job
+
+    async def push_unique (
+        self, key: str, handler: Handler | str, *args: Any, unique_for: float = 60.0, queue: str | None = None,
+        delay: float = 0.0, **kwargs: Any,
+    ) -> Job | None:
+        return await self._unique.push(self, key, handler, args, kwargs, unique_for, queue, delay)
+
+    async def bulk ( self, handler: Handler | str, items: Sequence[tuple[Any, ...]], queue: str | None = None ) -> int:
+
+        for args in items: await self.enqueue(handler, tuple(args), queue=queue)
+
+        return len(items)
+
+    async def chain ( self, steps: Sequence[Step], queue: str | None = None, delay: float = 0.0 ) -> Job:
+        return await self._flow.chain(steps, queue, delay)
+
+    async def batch ( self, steps: Sequence[Step], queue: str | None = None, delay: float = 0.0 ) -> list[Job]:
+        return await self._flow.batch(steps, queue, delay)
+
+    async def pull ( self, queue: str, wait: float ) -> Job | None:
+        return await self.driver().pull(queue, wait)
 
     async def perform ( self, job: Job ) -> bool:
 
@@ -185,6 +158,8 @@ class Queue:
                 await self.bury(job, error)
                 await self.settle(job)
 
+                if job.unique: await self._unique.release(job.unique)
+
                 return False
 
             retry = job.again(job.backoff * (2 ** job.attempts))
@@ -199,6 +174,9 @@ class Queue:
         self._processed += 1
 
         await self.settle(job)
+        await self.celebrate(job)
+
+        if job.unique: await self._unique.release(job.unique)
 
         return True
 
@@ -208,46 +186,62 @@ class Queue:
 
     async def bury ( self, job: Job, error: BaseException ) -> None:
 
+        self._graveyard.add(job, error)
+
         if self._failed is None: return
 
         outcome = self._failed(job, error)
 
         if inspect.isawaitable(outcome): await outcome
 
-    def start ( self, workers: int = 1 ) -> None:
+    async def celebrate ( self, job: Job ) -> None:
 
-        if self.inline() or self._workers or workers < 1: return
+        if self._succeeded is None: return
 
-        self._stopping.clear()
+        outcome = self._succeeded(job)
 
-        for queue in self._queues:
-            for index in range(workers):
-                self._workers.append(asyncio.create_task(self.work(queue), name=f"queue:{queue}:{index}"))
+        if inspect.isawaitable(outcome): await outcome
 
-        log.info("queue.started", driver=self.driver().name, queues=list(self._queues), workers=len(self._workers))
+    def failed ( self, limit: int = 50 ) -> list[Failed]:
+        return self._graveyard.failed(limit)
 
-    async def work ( self, queue: str ) -> None:
+    async def retry_failed ( self, job_id: str | None = None ) -> int:
 
-        while not self._stopping.is_set():
+        chosen = self._graveyard.take(job_id)
 
-            job = await self.driver().pull(queue, PULL)
+        for failed in chosen: await self.driver().push(failed.job.fresh())
 
-            if job is not None: await self.perform(job)
+        return len(chosen)
 
-    async def stop ( self, wait: float = 5.0 ) -> None:
+    def flush_failed ( self ) -> int:
+        return self._graveyard.flush()
 
-        if not self._workers: return
+    def start ( self, workers: int = 1 ) -> int:
 
-        self._stopping.set()
+        if self.inline(): return 0
 
-        try:
-            async with asyncio.timeout(wait): await asyncio.gather(*self._workers, return_exceptions=True)
-        except TimeoutError:
-            for worker in self._workers: worker.cancel()
+        started = self._workers.start(self._queues, workers)
 
-        self._workers.clear()
+        if started: log.info("queue.started", driver=self.driver().name, queues=list(self._queues), workers=started)
 
-        log.info("queue.stopped", processed=self._processed, failures=self._failures)
+        return started
+
+    async def stop ( self, wait: float = 5.0 ) -> int:
+
+        stopped = await self._workers.stop(wait)
+
+        if stopped: log.info("queue.stopped", processed=self._processed, failures=self._failures)
+
+        return stopped
+
+    def pause ( self ) -> bool:
+        return self._workers.pause()
+
+    def resume ( self ) -> bool:
+        return self._workers.resume()
+
+    def paused ( self ) -> bool:
+        return self._workers.paused()
 
     async def close ( self ) -> None:
 
@@ -278,27 +272,25 @@ class Queue:
     async def size ( self, queue: str | None = None ) -> int:
         return await self.driver().size(queue or self._queues[0])
 
+    async def sizes ( self ) -> dict[str, int]:
+        return { name: await self.driver().size(name) for name in self._queues }
+
     async def clear ( self, queue: str | None = None ) -> int:
         return await self.driver().clear(queue or self._queues[0])
 
+    async def clear_all ( self ) -> int:
+        return sum([await self.driver().clear(name) for name in self._queues])
+
     def stats ( self ) -> Mapping[str, int]:
-        return { "processed": self._processed, "failures": self._failures, "workers": len(self._workers) }
 
-class Task[**P, T]:
+        return {
+            "processed": self._processed, "failures": self._failures, "workers": self._workers.alive(),
+            "buried": len(self._graveyard), "skipped": self._unique.skipped,
+        }
 
-    def __init__ ( self, owner: Queue, fn: Callable[P, T] ) -> None:
+    def describe ( self ) -> dict[str, object]:
 
-        self._owner = owner
-        self._fn    = fn
-        self.name   = owner.register(owner.name_of(fn), fn)
-
-        functools.update_wrapper(self, fn)
-
-    def __call__ ( self, *args: P.args, **kwargs: P.kwargs ) -> T:
-        return self._fn(*args, **kwargs)
-
-    async def later ( self, *args: P.args, **kwargs: P.kwargs ) -> Job:
-        return await self._owner.enqueue(self.name, args, kwargs)
-
-    async def after ( self, delay: float, *args: P.args, **kwargs: P.kwargs ) -> Job:
-        return await self._owner.enqueue(self.name, args, kwargs, delay=delay)
+        return {
+            "driver": self._driver.name if self._driver else None, "queues": list(self._queues),
+            "handlers": len(self._handlers), **self.stats(), **self._workers.describe(),
+        }

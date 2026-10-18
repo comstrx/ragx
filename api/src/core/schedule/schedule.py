@@ -1,178 +1,13 @@
-from collections.abc import Awaitable, Callable
-from datetime import datetime, tzinfo
-from typing import Any, Self
-from zoneinfo import ZoneInfo
+from datetime import datetime
+from typing import Any
 
 from core.date import date
-from core.exceptions import Code, Fault
+from core.error import Code, Fault
 from core.log import log
-from core.queue import queue
-from .cron import Cron
-import asyncio, inspect
+from .task import Action, Task
+import asyncio
 
-type Action = Callable[[], Awaitable[Any] | Any]
-
-MINUTE = 60.0
-HOUR   = 3600.0
-DAY    = 86400.0
-TICK   = 1.0
-WEEK   = ("sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday")
-
-class Task:
-
-    def __init__ ( self, action: Action, name: str ) -> None:
-
-        self.name     = name
-        self.action   = action
-        self.cron: Cron | None = None
-        self.interval: float | None = None
-        self.exclusive = False
-        self.zone: tzinfo = ZoneInfo("UTC")
-        self.via_queue = False
-        self.running   = False
-        self.runs      = 0
-        self.failures  = 0
-        self.started: datetime | None = None
-        self.finished: datetime | None = None
-
-    def named ( self, name: str ) -> Self:
-
-        self.name = name
-
-        return self
-
-    def at ( self, expression: str ) -> Self:
-
-        self.cron     = Cron(expression)
-        self.interval = None
-
-        return self
-
-    def every ( self, seconds: float ) -> Self:
-
-        if seconds <= 0: raise Fault(Code.INTERNAL, reason="schedule.interval")
-
-        self.interval = float(seconds)
-        self.cron     = None
-
-        return self
-
-    def every_minute ( self ) -> Self:
-        return self.at("* * * * *")
-
-    def every_minutes ( self, count: int ) -> Self:
-        return self.at(f"*/{count} * * * *")
-
-    def hourly ( self, minute: int = 0 ) -> Self:
-        return self.at(f"{minute} * * * *")
-
-    def daily ( self ) -> Self:
-        return self.at("0 0 * * *")
-
-    def daily_at ( self, clock: str ) -> Self:
-
-        hour, minute = self.clock(clock)
-
-        return self.at(f"{minute} {hour} * * *")
-
-    def weekly_on ( self, day: str | int, clock: str = "00:00" ) -> Self:
-
-        hour, minute = self.clock(clock)
-        index        = WEEK.index(day.lower()) if isinstance(day, str) else day
-
-        return self.at(f"{minute} {hour} * * {index}")
-
-    def monthly_on ( self, day: int, clock: str = "00:00" ) -> Self:
-
-        hour, minute = self.clock(clock)
-
-        return self.at(f"{minute} {hour} {day} * *")
-
-    def clock ( self, text: str ) -> tuple[int, int]:
-
-        hour, _, minute = text.partition(":")
-
-        return int(hour), int(minute or 0)
-
-    def timezone ( self, name: str ) -> Self:
-
-        self.zone = ZoneInfo(name)
-
-        return self
-
-    def without_overlapping ( self ) -> Self:
-
-        self.exclusive = True
-
-        return self
-
-    def queued ( self ) -> Self:
-
-        self.via_queue = True
-
-        return self
-
-    def due ( self, now: datetime ) -> bool:
-
-        if self.exclusive and self.running: return False
-        if self.interval is not None:
-            return self.started is None or (now - self.started).total_seconds() >= self.interval
-
-        return self.cron is not None and self.due_cron(self.cron, now.astimezone(self.zone))
-
-    def due_cron ( self, cron: Cron, local: datetime ) -> bool:
-
-        if not cron.matches(local): return False
-        if self.started is None: return True
-
-        last = self.started.astimezone(self.zone).replace(second=0, microsecond=0)
-
-        return last != local.replace(second=0, microsecond=0)
-
-    async def run ( self ) -> bool:
-
-        self.running = True
-        self.started = date.now()
-
-        try:
-
-            if self.via_queue and not queue.inline(): await queue.push(self.action)
-            else:
-
-                result = self.action()
-
-                if inspect.isawaitable(result): await result
-
-        except Exception:
-
-            self.failures += 1
-
-            log.exception("schedule.failed", task=self.name)
-
-            return False
-
-        finally:
-
-            self.running  = False
-            self.finished = date.now()
-
-        self.runs += 1
-
-        return True
-
-    def dump ( self ) -> dict[str, Any]:
-
-        return {
-            "name"     : self.name,
-            "cron"     : self.cron.expression if self.cron else None,
-            "every"    : self.interval,
-            "zone"     : str(self.zone),
-            "runs"     : self.runs,
-            "failures" : self.failures,
-            "running"  : self.running,
-            "started"  : date.iso(self.started) if self.started else None,
-            "finished" : date.iso(self.finished) if self.finished else None,
-        }
+TICK = 1.0
 
 class Schedule:
 
@@ -181,6 +16,7 @@ class Schedule:
         self._tasks: list[Task] = []
         self._ticker: asyncio.Task[None] | None = None
         self._stopping = asyncio.Event()
+        self._ticks    = 0
 
     def call ( self, action: Action, name: str | None = None ) -> Task:
 
@@ -200,6 +36,9 @@ class Schedule:
     def tasks ( self ) -> list[Task]:
         return list(self._tasks)
 
+    def names ( self ) -> list[str]:
+        return [task.name for task in self._tasks]
+
     def find ( self, name: str ) -> Task:
 
         found = next((task for task in self._tasks if task.name == name), None)
@@ -208,8 +47,35 @@ class Schedule:
 
         return found
 
+    def has ( self, name: str ) -> bool:
+        return any(task.name == name for task in self._tasks)
+
+    def forget ( self, name: str ) -> bool:
+
+        before = len(self._tasks)
+
+        self._tasks = [task for task in self._tasks if task.name != name]
+
+        return len(self._tasks) < before
+
     def clear ( self ) -> None:
         self._tasks.clear()
+
+    def pause ( self, name: str | None = None ) -> int:
+
+        chosen = [self.find(name)] if name else self._tasks
+
+        for task in chosen: task.pause()
+
+        return len(chosen)
+
+    def resume ( self, name: str | None = None ) -> int:
+
+        chosen = [self.find(name)] if name else self._tasks
+
+        for task in chosen: task.resume()
+
+        return len(chosen)
 
     def due ( self, now: datetime | None = None ) -> list[Task]:
 
@@ -221,9 +87,22 @@ class Schedule:
 
         ready = self.due(now)
 
-        if ready: await asyncio.gather(*(task.run() for task in ready))
+        if ready: await asyncio.gather(*(task.run() for task in ready), return_exceptions=True)
+
+        self._ticks += 1
 
         return [task.name for task in ready]
+
+    async def run ( self, name: str ) -> bool:
+        return await self.find(name).execute()
+
+    def upcoming ( self, count: int = 10, now: datetime | None = None ) -> list[dict[str, Any]]:
+
+        moment = now or date.now()
+        slots  = [(task.next_run(moment), task.name) for task in self._tasks if not task.paused]
+        known  = sorted((when, name) for when, name in slots if when is not None)
+
+        return [{ "at": date.iso(when), "task": name } for when, name in known[:count]]
 
     def start ( self, tick: float = TICK ) -> None:
 
@@ -254,7 +133,17 @@ class Schedule:
 
         self._ticker = None
 
-        log.info("schedule.stopped")
+        log.info("schedule.stopped", ticks=self._ticks)
+
+    def running ( self ) -> bool:
+        return self._ticker is not None and not self._ticker.done()
 
     def status ( self ) -> list[dict[str, Any]]:
         return [task.dump() for task in self._tasks]
+
+    def describe ( self ) -> dict[str, Any]:
+
+        return {
+            "running": self.running(), "tasks": len(self._tasks), "paused": sum(task.paused for task in self._tasks),
+            "ticks": self._ticks, "upcoming": self.upcoming(3),
+        }

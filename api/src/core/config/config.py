@@ -2,6 +2,8 @@ from collections.abc import Mapping
 from typing import Any
 
 from pydantic import BaseModel
+from core.log import masked
+from core.parse import parse
 from .settings import Settings
 
 type Overrides = dict[str, object]
@@ -72,6 +74,36 @@ class Config:
 
     def remove ( self, key: str ) -> bool:
         return self._overrides.pop(key, MISSING) is not MISSING
+
+    def integer ( self, key: str, default: int = 0 ) -> int:
+        return parse.integer(self.get(key, default), default)
+
+    def number ( self, key: str, default: float = 0.0 ) -> float:
+        return parse.float(self.get(key, default), default)
+
+    def flag ( self, key: str, default: bool = False ) -> bool:
+
+        found = self.get(key, None)
+
+        return default if found is None else parse.bool(found)
+
+    def text ( self, key: str, default: str = "" ) -> str:
+
+        found = self.get(key, None)
+
+        return default if found is None else parse.text(found)
+
+    def items ( self, key: str ) -> list[Any]:
+        return parse.list(self.get(key, None))
+
+    def duration ( self, key: str, default: float = 0.0 ) -> float:
+        return parse.duration(self.get(key, default), default)
+
+    def redacted ( self ) -> dict[str, Any]:
+
+        snapshot: dict[str, Any] = masked(self.all())
+
+        return snapshot
 
     def all ( self ) -> dict[str, Any]:
 

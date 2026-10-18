@@ -1,86 +1,41 @@
-from collections.abc import Sequence
+from pathlib import Path
 
-from argon2 import PasswordHasher
-from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
-from cryptography.fernet import Fernet, InvalidToken, MultiFernet
-from core.exceptions import Code, Fault
-import hashlib, hmac
+from core.error import Fault
+from core.fs import fs
+from .cipher import Cipher
+from .digest import Digest
+from .keys import Keys
+from .password import Password
 
-HASHES = ("sha256", "sha512", "blake2b")
-
-class Crypto:
+class Crypto(Cipher, Digest, Keys):
 
     def __init__ ( self ) -> None:
 
-        self._hasher = PasswordHasher()
-        self._cipher: MultiFernet | None = None
+        super().__init__()
 
-    def setup ( self, keys: Sequence[str] ) -> None:
-
-        if not keys: raise Fault(Code.INTERNAL, reason="crypto.keys")
-
-        self._cipher = MultiFernet([Fernet(key.encode()) for key in keys])
-
-    def ready ( self ) -> bool:
-        return self._cipher is not None
-
-    def key ( self ) -> str:
-        return Fernet.generate_key().decode()
+        self.password = Password()
 
     def hash ( self, secret: str ) -> str:
-        return self._hasher.hash(secret)
+        return self.password.hash(secret)
 
     def verify ( self, secret: str, hashed: str ) -> bool:
-
-        try: return self._hasher.verify(hashed, secret)
-        except (VerifyMismatchError, VerificationError, InvalidHashError): return False
+        return self.password.verify(secret, hashed)
 
     def stale ( self, hashed: str ) -> bool:
+        return self.password.stale(hashed)
 
-        try: return self._hasher.check_needs_rehash(hashed)
-        except InvalidHashError: return True
+    async def seal_file ( self, source: Path | str, target: Path | str | None = None ) -> Path:
 
-    def seal ( self, data: str | bytes ) -> str:
+        sealed = self.seal(await fs.read_bytes(source))
 
-        if self._cipher is None: raise Fault(Code.INTERNAL, reason="crypto")
+        return await fs.write_text(target or f"{source}.sealed", sealed)
 
-        return self._cipher.encrypt(data.encode() if isinstance(data, str) else data).decode()
+    async def open_file ( self, source: Path | str, target: Path | str, ttl: int | None = None ) -> Path:
+        return await fs.write_bytes(target, self.open(await fs.read_text(source), ttl))
 
-    def open ( self, token: str, ttl: int | None = None ) -> bytes:
+    def is_sealed ( self, token: str ) -> bool:
 
-        if self._cipher is None: raise Fault(Code.INTERNAL, reason="crypto")
+        try: self.open(token)
+        except Fault: return False
 
-        try: return self._cipher.decrypt(token.encode(), ttl=ttl)
-        except InvalidToken as error: raise Fault(Code.BAD_REQUEST, reason="cipher") from error
-
-    def open_text ( self, token: str, ttl: int | None = None ) -> str:
-        return self.open(token, ttl).decode()
-
-    def rotate ( self, token: str ) -> str:
-
-        if self._cipher is None: raise Fault(Code.INTERNAL, reason="crypto")
-
-        try: return self._cipher.rotate(token.encode()).decode()
-        except InvalidToken as error: raise Fault(Code.BAD_REQUEST, reason="cipher") from error
-
-    def digest ( self, data: str | bytes, algorithm: str = "sha256" ) -> str:
-
-        if algorithm not in HASHES: raise ValueError(algorithm)
-
-        return hashlib.new(algorithm, data.encode() if isinstance(data, str) else data).hexdigest()
-
-    def sign ( self, data: str | bytes, key: str | bytes, algorithm: str = "sha256" ) -> str:
-
-        if algorithm not in HASHES: raise ValueError(algorithm)
-
-        raw = data.encode() if isinstance(data, str) else data
-        pin = key.encode() if isinstance(key, str) else key
-
-        return hmac.new(pin, raw, algorithm).hexdigest()
-
-    def compare ( self, left: str | bytes, right: str | bytes ) -> bool:
-
-        a = left.encode() if isinstance(left, str) else left
-        b = right.encode() if isinstance(right, str) else right
-
-        return hmac.compare_digest(a, b)
+        return True

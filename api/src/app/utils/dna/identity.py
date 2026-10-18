@@ -1,4 +1,4 @@
-from core.exceptions import Code, Fault
+from core.error import Code, Fault
 from core.rand import Uuid, rand
 
 class Identity:

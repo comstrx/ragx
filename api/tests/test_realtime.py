@@ -6,7 +6,7 @@ from starlette.testclient import TestClient, WebSocketTestSession
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 from core.broadcast import Broadcast
 from core.event import Event, events
-from core.exceptions import Code, Fault
+from core.error import Code, Fault
 from core.http import Request, Response, Route, http
 from core.socket import Connection, Frame, Limits, Socket
 import asyncio, pytest

@@ -2,7 +2,7 @@ from collections.abc import Awaitable, Callable
 
 from fastapi import Request
 from core.cache import cache
-from core.exceptions import Code, Fault
+from core.error import Code, Fault
 import re
 
 type Keyed = Callable[[Request], str]

@@ -1,5 +1,5 @@
 from core.config import config
-from core.exceptions import Fault
+from core.error import Fault
 from core.queue import Queued
 from app.events import UserRegistered
 from app.mails import WelcomeMail

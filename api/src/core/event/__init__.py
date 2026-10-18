@@ -1,5 +1,7 @@
-from .bus import Bus, Envelope, LocalBus, RabbitBus
-from .event import Event, Events, Listener
+from .bus import Bus, Envelope, LocalBus
+from .event import Event, Listener
+from .events import Events
+from .rabbit import RabbitBus
 
 events = Events()
 

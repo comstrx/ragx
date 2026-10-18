@@ -3,13 +3,30 @@ from pathlib import Path
 from typing import Protocol, TypedDict
 
 from core.date import date
-from core.exceptions import Code, Fault
+from core.error import Code, Fault
 from core.log import log
 import sqlalchemy as sa
 from .engine import Database, Session
-from .schema import Blueprint, Schema
+from .blueprint import Blueprint
+from .schema import Schema
 
-LOCK = 7_201_441
+LOCK     = 7_201_441
+TEMPLATE = """from core.database import Blueprint, Schema
+
+class Migration:
+
+    async def up ( self, schema: Schema ) -> None:
+
+        def define ( table: Blueprint ) -> None:
+
+            table.id()
+            table.timestamps()
+
+        await schema.create("{table}", define)
+
+    async def down ( self, schema: Schema ) -> None:
+        await schema.drop("{table}")
+"""
 
 class Status(TypedDict):
 
@@ -25,16 +42,33 @@ class Migration(Protocol):
 
 class Migrator:
 
-    table = "schema_migrations"
+    def __init__ ( self, database: Database, folder: Path, table: str = "schema_migrations" ) -> None:
 
-    def __init__ ( self, database: Database, folder: Path ) -> None:
-
+        self.table     = table
         self._database = database
         self._folder   = folder
-        self._ledger   = sa.table(self.table, sa.column("name"), sa.column("batch"), sa.column("applied_at"))
+        self._ledger   = sa.table(table, sa.column("name"), sa.column("batch"), sa.column("applied_at"))
 
     def files ( self ) -> list[Path]:
         return sorted(path for path in self._folder.glob("*.py") if path.is_file() and not path.name.startswith("_"))
+
+    def next_number ( self ) -> int:
+
+        numbers = [int(path.stem.split("_", 1)[0]) for path in self.files() if path.stem.split("_", 1)[0].isdigit()]
+
+        return max(numbers, default=0) + 1
+
+    def make ( self, name: str, table: str | None = None ) -> Path:
+
+        slug   = "".join(char if char.isalnum() else "_" for char in name.strip().lower()).strip("_")
+        target = self._folder / f"{self.next_number():04d}_{slug}.py"
+
+        if target.exists(): raise Fault(Code.CONFLICT, reason=target.name)
+
+        self._folder.mkdir(parents=True, exist_ok=True)
+        target.write_text(TEMPLATE.format(table=table or slug.removeprefix("create_")))
+
+        return target
 
     def load ( self, path: Path ) -> Migration:
 
@@ -139,6 +173,12 @@ class Migrator:
         done = await self.applied()
 
         return await self.rollback(len(set(done.values()))) if done else []
+
+    async def fresh ( self ) -> list[str]:
+
+        await self.reset()
+
+        return await self.apply()
 
     async def status ( self ) -> Status:
 

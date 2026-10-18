@@ -1,7 +1,18 @@
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
+from zoneinfo import available_timezones
+
+from core.error import Fault
+from .duration import Duration
+from .format import Formatter
+from .moment import Moment, zone_of
+from .period import Period
 import time
 
 class Date:
+
+    def __init__ ( self ) -> None:
+
+        self._format = Formatter()
 
     def now ( self ) -> datetime:
         return datetime.now(UTC)
@@ -19,7 +30,7 @@ class Date:
         return moment.replace(tzinfo=UTC) if moment.tzinfo is None else moment.astimezone(UTC)
 
     def parse ( self, text: str ) -> datetime:
-        return self.utc(datetime.fromisoformat(text))
+        return Moment.parse(text).utc().at
 
     def since ( self, moment: datetime ) -> float:
         return (self.now() - self.utc(moment)).total_seconds()
@@ -43,3 +54,55 @@ class Date:
 
     def from_stamp ( self, stamp: float ) -> datetime:
         return datetime.fromtimestamp(stamp, UTC)
+
+    def moment ( self, value: object = None, zone: str | tzinfo | None = None ) -> Moment:
+        return Moment.wrap(value, zone)
+
+    def today ( self, zone: str | tzinfo | None = None ) -> Moment:
+        return Moment.today(zone)
+
+    def tomorrow ( self, zone: str | tzinfo | None = None ) -> Moment:
+        return Moment.tomorrow(zone)
+
+    def yesterday ( self, zone: str | tzinfo | None = None ) -> Moment:
+        return Moment.yesterday(zone)
+
+    def duration ( self, value: object = 0.0, **units: float ) -> Duration:
+        return Duration.of(**units) if units else Duration.parse(value)
+
+    def period ( self, start: object, end: object ) -> Period:
+        return Period.of(start, end)
+
+    def zone ( self, name: str | tzinfo | None ) -> tzinfo:
+        return zone_of(name)
+
+    def format ( self, moment: datetime | Moment, pattern: str = "YYYY-MM-DD HH:mm:ss" ) -> str:
+        return self._format.format(moment.at if isinstance(moment, Moment) else moment, pattern)
+
+    def human ( self, moment: datetime | Moment, short: bool = False ) -> str:
+        return Moment.wrap(moment).human(short=short)
+
+    def span ( self, seconds: float, short: bool = False ) -> str:
+        return self._format.span(seconds, short)
+
+    def age ( self, birth: datetime | Moment, today: datetime | Moment | None = None ) -> int:
+        return Moment.wrap(birth).age(Moment.wrap(today) if today is not None else None)
+
+    def is_leap ( self, year: int ) -> bool:
+        return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+
+    def days_in ( self, year: int, month: int ) -> int:
+        return Moment.of(year, month).days_in_month()
+
+    def business_days ( self, start: datetime | Moment, end: datetime | Moment ) -> int:
+        return Moment.wrap(start).business_days_until(Moment.wrap(end))
+
+    def zones ( self ) -> list[str]:
+        return sorted(available_timezones())
+
+    def is_valid ( self, text: str ) -> bool:
+
+        try: Moment.parse(text)
+        except (Fault, ValueError): return False
+
+        return True

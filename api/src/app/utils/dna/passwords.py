@@ -1,5 +1,5 @@
 from core.crypto import crypto
-from core.exceptions import Code, Fault
+from core.error import Code, Fault
 from core.thread import thread
 
 WEAK = ("password", "12345678", "qwerty123", "letmein1")

@@ -1,12 +1,14 @@
+from collections.abc import Iterable
 from typing import Any
 
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
-from core.exceptions import Code, Fault
+from core.error import Code, Fault
 from core.json import json
 
-BATCH = 500
-MILLI = 1000
+BATCH   = 500
+MILLI   = 1000
+RELEASE = 'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end'
 
 class RedisStore:
 
@@ -20,6 +22,9 @@ class RedisStore:
     def key ( self, key: str ) -> str:
         return f"{self._prefix}:{key}"
 
+    def client ( self ) -> Redis:
+        return self._client
+
     async def get ( self, key: str ) -> object | None:
 
         raw = await self.guard(self._client.get(self.key(key)))
@@ -27,10 +32,13 @@ class RedisStore:
         return json.loads(raw) if raw else None
 
     async def set ( self, key: str, value: object, ttl: float | None = None ) -> None:
+        await self.guard(self._client.set(self.key(key), json.encode(value), px=self.millis(ttl)))
 
-        expiry = int(ttl * MILLI) if ttl else None
+    async def add ( self, key: str, value: object, ttl: float | None = None ) -> bool:
 
-        await self.guard(self._client.set(self.key(key), json.encode(value), px=expiry))
+        stored = await self.guard(self._client.set(self.key(key), json.encode(value), px=self.millis(ttl), nx=True))
+
+        return bool(stored)
 
     async def delete ( self, key: str ) -> bool:
         return bool(await self.guard(self._client.delete(self.key(key))))
@@ -52,6 +60,25 @@ class RedisStore:
         left = int(await self.guard(self._client.pttl(self.key(key))))
 
         return left / MILLI if left >= 0 else None
+
+    async def touch ( self, key: str, ttl: float ) -> bool:
+        return bool(await self.guard(self._client.pexpire(self.key(key), int(ttl * MILLI))))
+
+    async def many ( self, keys: Iterable[str] ) -> dict[str, object | None]:
+
+        wanted = list(keys)
+
+        if not wanted: return {}
+
+        found = await self.guard(self._client.mget([self.key(key) for key in wanted]))
+
+        return { key: json.loads(raw) if raw else None for key, raw in zip(wanted, found, strict=True) }
+
+    async def release ( self, key: str, owner: str ) -> bool:
+
+        freed = await self.guard(self._client.eval(RELEASE, 1, self.key(key), json.encode(owner)))
+
+        return bool(freed)
 
     async def clear ( self ) -> None:
 
@@ -76,6 +103,9 @@ class RedisStore:
 
     async def close ( self ) -> None:
         await self._client.aclose()
+
+    def millis ( self, ttl: float | None ) -> int | None:
+        return int(ttl * MILLI) if ttl else None
 
     async def guard ( self, call: Any ) -> Any:
 

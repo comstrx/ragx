@@ -114,6 +114,9 @@ test_the_edge_follows_the_certificate_state () {
     assert_fails "no tls default server renders without tls" test -f "${dir}/nginx/conf.d/10-tls.conf"
     assert_fails "no renewal timer renders without tls" test -f "${dir}/systemd/probe-production-renew.timer"
     assert_contains "$(cat "${dir}/api.env")" "APP_URL='http://api.probe.test'" "the api origin follows the scheme"
+    assert_contains "$(cat "${dir}/api.env")" "LLM_DRIVER='local'" "the api gets its model provider knob"
+    assert_contains "$(cat "${dir}/api.env")" "LLM_OPENAI_KEY=''" "an absent provider key renders empty, never missing"
+    assert_contains "$(cat "${dir}/api.env")" "BROADCAST_TOPIC='probe'" "the broadcast topic is the project"
     assert_contains "$(cat "${dir}/nginx/proxy.inc")" "X-Forwarded-Port 80;" "the forwarded port is the public one"
 
     rm -rf "${file}" "${build}"

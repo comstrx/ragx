@@ -15,6 +15,7 @@ ALLOWED    = {
     "bootstrap" : set(PARTS),
 }
 MAIN       = 'if __name__ == "__main__":'
+LONGEST    = 300
 STDLIB     = frozenset({
     "datetime", "uuid", "pathlib", "decimal", "json", "orjson", "asyncio", "os", "re", "hashlib", "base64", "secrets",
     "random", "time",
@@ -126,6 +127,20 @@ class TestLaws:
                 )
 
         assert offenses == []
+
+    def test_core_files_stay_flat_and_short ( self ) -> None:
+
+        long = [
+            f"{path.relative_to(ROOT)} has {count} lines"
+            for path in python_files("src/core")
+            if (count := len(path.read_text().split("\n"))) > LONGEST + 1
+        ]
+        deep = [
+            str(path.relative_to(ROOT)) for path in python_files("src/core") if len(path.relative_to(SOURCE).parts) > 3
+        ]
+
+        assert long == []
+        assert deep == []
 
     def test_parts_import_in_one_direction_and_core_domains_form_a_dag ( self ) -> None:
 

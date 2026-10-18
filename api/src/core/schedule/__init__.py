@@ -1,5 +1,6 @@
 from .cron import Cron
-from .schedule import Schedule, Task
+from .schedule import Schedule
+from .task import Task
 
 schedule = Schedule()
 

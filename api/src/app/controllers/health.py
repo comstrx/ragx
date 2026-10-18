@@ -1,4 +1,4 @@
-from core.exceptions import Code, Fault
+from core.error import Code, Fault
 from core.http import Facts, Request, Response
 from app.services import HealthService
 from app.utils.bases import BaseController

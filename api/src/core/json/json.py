@@ -1,9 +1,11 @@
-from collections.abc import Mapping
+from collections.abc import Iterator
 from decimal import Decimal
 from enum import Enum
 from typing import Any
 
-from core.exceptions import Code, Fault
+from core.error import Code, Fault
+from .patch import Patch
+from .walk import Walk
 import orjson
 
 type JsonValue = dict[str, Any] | list[Any] | str | int | float | bool | None
@@ -12,7 +14,7 @@ type Text = str | bytes | bytearray | memoryview
 OPENERS = ("{", "[", '"', b"{", b"[", b'"')
 MISSING = object()
 
-class Json:
+class Json(Walk, Patch):
 
     def dumps ( self, value: object, pretty: bool = False, sort: bool = False, lenient: bool = False ) -> str:
         return self.encode(value, pretty, sort, lenient).decode()
@@ -27,6 +29,9 @@ class Json:
 
     def pretty ( self, value: object ) -> str:
         return self.dumps(value, pretty=True)
+
+    def canonical ( self, value: object ) -> bytes:
+        return self.encode(value, sort=True, lenient=True)
 
     def loads ( self, text: Text ) -> Any:
 
@@ -55,31 +60,19 @@ class Json:
 
         return copied
 
-    def flatten ( self, value: Mapping[str, Any], separator: str = ".", prefix: str = "" ) -> dict[str, Any]:
+    def plain ( self, value: object ) -> Any:
+        return orjson.loads(self.encode(value, lenient=True))
 
-        flat: dict[str, Any] = {}
+    def lines ( self, text: Text ) -> Iterator[Any]:
 
-        for key, item in value.items():
+        raw = bytes(text).decode() if isinstance(text, bytes | bytearray | memoryview) else text
 
-            path = f"{prefix}{separator}{key}" if prefix else str(key)
+        for line in raw.splitlines():
 
-            if isinstance(item, Mapping): flat.update(self.flatten(item, separator, path))
-            else: flat[path] = item
+            if line.strip(): yield self.loads(line)
 
-        return flat
-
-    def dig ( self, value: object, path: str, default: object = None, separator: str = "." ) -> Any:
-
-        current: object = value
-
-        for part in path.split(separator):
-
-            if isinstance(current, Mapping) and part in current: current = current[part]
-            elif isinstance(current, list) and part.lstrip("-").isdigit() and -len(current) <= int(part) < len(current):
-                current = current[int(part)]
-            else: return default
-
-        return current
+    def jsonl ( self, values: Iterator[object] | list[object] ) -> bytes:
+        return b"\n".join(self.encode(value) for value in values) + b"\n"
 
     def fallback ( self, value: object ) -> object:
 

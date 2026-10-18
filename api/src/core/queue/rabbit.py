@@ -4,9 +4,9 @@ from aio_pika import DeliveryMode, ExchangeType, Message, connect_robust
 from aio_pika.abc import AbstractChannel, AbstractExchange, AbstractQueue, AbstractRobustConnection
 from aio_pika.exceptions import AMQPError
 from core.date import date
-from core.exceptions import Code, Fault
+from core.error import Code, Fault
 from core.json import json
-from .queue import Job
+from .job import Job
 
 JSON = "application/json"
 

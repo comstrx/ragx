@@ -1,7 +1,7 @@
 from collections.abc import Mapping
 from typing import Any, ClassVar, Self
 
-from core.exceptions import Code, Fault
+from core.error import Code, Fault
 from core.mail import Attachment, Message, mail
 from core.queue import Queued, queue
 from core.string import string

@@ -4,7 +4,8 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException
-from core.exceptions import Fault, Faults, exceptions
+from core.error import Fault, Faults
+from core.exception import exception
 from .response import Response
 
 faults = Faults()
@@ -19,7 +20,7 @@ class Errors:
         app.add_exception_handler(Exception, self.fault)
 
     async def fault ( self, request: Request, exc: Exception ) -> Response:
-        return Response.fail(exceptions.handle(exc, method=request.method, path=request.url.path))
+        return Response.fail(exception.handle(exc, method=request.method, path=request.url.path))
 
     async def validation ( self, _: Request, exc: Exception ) -> Response:
 
