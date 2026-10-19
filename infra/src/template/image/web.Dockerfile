@@ -13,6 +13,7 @@ ENV NEXT_PUBLIC_SPEC=${SPEC} SPEC_API_URL=${API_URL} NODE_ENV=production NEXT_TE
 RUN bun run build
 RUN bun -e 'import {stage} from "./tools/serve.ts"; import {readFileSync} from "node:fs"; const m=JSON.parse(readFileSync("node_modules/.cache/spec/production/meta.json","utf8")); if(m.output==="standalone") stage(".next/out","public");'
 FROM ${NODE_IMAGE}
+RUN apk upgrade --no-cache
 COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
 WORKDIR /app
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 HOSTNAME=0.0.0.0 PORT=3000 HOME=/tmp

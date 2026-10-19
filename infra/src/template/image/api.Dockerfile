@@ -8,6 +8,7 @@ COPY api/pyproject.toml api/uv.lock ./
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
 RUN uv sync --locked --no-dev --no-install-project
 FROM ${PYTHON_IMAGE}
+RUN python -m pip uninstall --yes --no-input pip
 ENV PATH=/app/.venv/bin:$PATH PYTHONPATH=/app/src PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 HOME=/tmp
 WORKDIR /app
 COPY --from=dependencies /build/.venv /app/.venv

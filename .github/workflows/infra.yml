@@ -97,7 +97,7 @@ jobs:
       - name: Scan image
         env:
           NAME: ${{ matrix.name }}
-        run: trivy image --config .trivy.yml --exit-code 1 "ragx/${NAME}:ci"
+        run: trivy image --config .trivy.yml --scanners vuln,secret,misconfig --exit-code 1 "ragx/${NAME}:ci"
 
   publish:
     name: publish ${{ matrix.name }}
@@ -141,7 +141,7 @@ jobs:
       - name: Scan image
         env:
           NAME: ${{ matrix.name }}
-        run: trivy image --config .trivy.yml --exit-code 1 "ragx/${NAME}:ci"
+        run: trivy image --config .trivy.yml --scanners vuln,secret,misconfig --exit-code 1 "ragx/${NAME}:ci"
       - name: Publish immutable references
         env:
           NAME: ${{ matrix.name }}
