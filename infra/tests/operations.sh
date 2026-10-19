@@ -72,3 +72,81 @@ test-operations-guards () {
     expect-error 'Image outside docker.io/org' native-registry-push ghcr.io/org/shop-api:1
 
 }
+test-operations-cloudflare () {
+
+    local log="${TMPDIR}/cloudflare.log" output=""
+
+    mkdir -p "${TMPDIR}/bin"
+    printf '%s\n' '#!/usr/bin/env bash' 'method=GET url="" out="" body=""' 'cat > "${TMPDIR}/cloudflare.config"' \
+        'while (( $# > 0 )); do case "$1" in --request) method="$2" ;; --url) url="$2" ;; --output) out="$2" ;; --data-binary) body="${2#@}" ;; esac; shift; done' \
+        'printf "%s %s %s\n" "${method}" "${url}" "$( [[ -n "${body}" ]] && cat "${body}" )" >> "${TMPDIR}/cloudflare.log"' \
+        'if [[ "${method}" == GET && -f "${TMPDIR}/cloudflare.existing" ]]; then printf "{\"success\":true,\"result\":[{\"id\":\"%s\"}]}" "$(cat "${TMPDIR}/cloudflare.existing")" > "${out}"' \
+        'else printf "{\"success\":true,\"result\":[]}" > "${out}"; fi' > "${TMPDIR}/bin/curl"
+    chmod 700 "${TMPDIR}/bin/curl"
+    PATH="${TMPDIR}/bin:${PATH}"
+
+    cfg-set CLOUDFLARE_TOKEN 'cf-sentinel-token'
+    cfg-set CLOUDFLARE_ZONE "$(printf 'a%.0s' {1..32})"
+
+    cloudflare-upsert api.shop.test 203.0.113.7 false
+    output="$(fs-read "${log}")"
+    expect-contains "${output}" 'GET https://api.cloudflare.com/client/v4/zones/'
+    expect-contains "${output}" '/dns_records?name=api.shop.test&type=A'
+    expect-contains "${output}" 'POST https://api.cloudflare.com/client/v4/zones/'
+    expect-contains "${output}" '{"type":"A","name":"api.shop.test","content":"203.0.113.7","ttl":300,"proxied":false}'
+    expect-equal "$(fs-read "${TMPDIR}/cloudflare.config")" 'header = "Authorization: Bearer cf-sentinel-token"'
+    expect-absent "${output}" cf-sentinel-token
+
+    : > "${log}"
+    printf '%s' "$(printf 'b%.0s' {1..32})" > "${TMPDIR}/cloudflare.existing"
+    cloudflare-upsert api.shop.test 2001:db8::7 true
+    output="$(fs-read "${log}")"
+    expect-contains "${output}" "PUT https://api.cloudflare.com/client/v4/zones/$(printf 'a%.0s' {1..32})/dns_records/$(printf 'b%.0s' {1..32})"
+    expect-contains "${output}" '"type":"AAAA"'
+    expect-contains "${output}" '"proxied":true'
+
+    printf 'not-an-id' > "${TMPDIR}/cloudflare.existing"
+    expect-error 'Unexpected Cloudflare record identifier' cloudflare-upsert api.shop.test 203.0.113.7 false
+    expect-error 'Invalid DNS address' cloudflare-upsert api.shop.test 'bad;address' false
+    cfg-set CLOUDFLARE_ZONE short
+    expect-error 'CLOUDFLARE_ZONE must be a zone identifier' cloudflare-upsert api.shop.test 203.0.113.7 false
+
+}
+test-operations-certbot () {
+
+    local log="${TMPDIR}/certbot.log" text=""
+
+    docker-oneshot () {
+
+        printf '%s\n' "$@" >> "${TMPDIR}/certbot.log"
+        [[ ! -f "${CONFIG[STATE_ROOT]}/cloudflare.ini" ]] || cp "${CONFIG[STATE_ROOT]}/cloudflare.ini" "${TMPDIR}/certbot.ini"
+
+    }
+
+    fixture-release
+    mkdir -p "${CONFIG[STATE_ROOT]}"
+    cfg-set TLS_EMAIL ops@shop.test
+
+    tls-issue api.shop.test shop.test
+    text="$(fs-read "${log}")"
+    expect-contains "${text}" $'certonly\n--non-interactive\n--agree-tos'
+    expect-contains "${text}" $'-d\napi.shop.test\n-d\nshop.test'
+    expect-contains "${text}" $'--standalone\n--http-01-port\n8080'
+    expect-contains "${text}" $'--network\nshop-staging-apps\n--network-alias\nacme'
+    expect-contains "${text}" '/acme/live/site/fullchain.pem /acme/live/site/privkey.pem > /tls/site.pem.new'
+
+    : > "${log}"
+    cfg-set TLS_CHALLENGE dns
+    cfg-set CLOUDFLARE_TOKEN cf_dns_token-01
+    tls-issue api.shop.test
+    text="$(fs-read "${log}")"
+    expect-contains "${text}" $'--dns-cloudflare\n--dns-cloudflare-credentials\n/run/cloudflare.ini'
+    expect-equal "$(fs-read "${TMPDIR}/certbot.ini")" 'dns_cloudflare_api_token = cf_dns_token-01'
+    expect-fail test -e "${CONFIG[STATE_ROOT]}/cloudflare.ini"
+    expect-absent "${text}" cf_dns_token-01
+
+    cfg-set CLOUDFLARE_TOKEN 'bad token'
+    expect-error 'CLOUDFLARE_TOKEN has an unexpected format' tls-issue api.shop.test
+    expect-error 'Invalid certificate host' tls-issue 'bad host'
+
+}
