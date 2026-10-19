@@ -129,7 +129,8 @@
   },
   "unverified": [
     "Docker Hub private push and pull: no Docker Hub credentials were supplied; the driver differs from GHCR only in host and Portainer type, both covered by offline tests",
-    "public UDP 443 through a cloud firewall, Let's Encrypt issuance, Cloudflare API, S3 backup upload: they need public DNS, a cloud firewall rule or provider accounts"
+    "public UDP 443 through a cloud firewall and Let's Encrypt issuance: they need a public domain and an open cloud firewall; the HTTP-01 route and the certbot arguments are verified",
+    "the live Cloudflare API: no account token; the create, update, IPv6 and proxied request flows are pinned by offline tests"
   ],
   "private_git_and_registry": {
     "where": "GitHub Actions run 39214929789 in the private repository comstrx/infra-lab-gitops, Ubuntu 24.04 runner with Docker 28.0.4 and Compose 2.38.2; the job-scoped GITHUB_TOKEN reached the tool only through REGISTRY_TOKEN and GITOPS_TOKEN in the environment",
@@ -156,5 +157,57 @@
     ],
     "audit": "no token in release files, edge, data, desired state or Git history; registry config, API key and api.env at mode 600"
   },
-  "macos": "GitHub Actions macos-latest: the release bundle ran plan, installed the launchd timer (state active, run interval 3600 s), and removed it"
+  "macos": "GitHub Actions macos-latest: the release bundle ran plan, installed the launchd timer (state active, run interval 3600 s), and removed it",
+  "wan": {
+    "where": "GitHub Actions run 39219122915, Ubuntu 24.04 runner, client container on the apps network with tc netem on its egress, 1000 requests per round, 16 parallel, curl 8.23.0 (ngtcp2 1.22.1, nghttp3 1.15.0, GnuTLS 3.8.13)",
+    "rounds": [
+      {
+        "network": "delay 1ms",
+        "h2_rps": [901.7, 936.3],
+        "h3_rps": [948.8, 988.1],
+        "h2_p50_ms": [12.2, 13.7],
+        "h3_p50_ms": [11.6, 13.0],
+        "h2_p99_ms": [78.6, 46.1],
+        "h3_p99_ms": [80.7, 52.0],
+        "h2_edge_cpu_ms": [163, 181],
+        "h3_edge_cpu_ms": [177, 176]
+      },
+      {
+        "network": "delay 40ms",
+        "h2_rps": [350.9, 340.7],
+        "h3_rps": [335.3, 348.9],
+        "h2_p50_ms": [42.2, 42.9],
+        "h3_p50_ms": [43.0, 42.4],
+        "h2_p99_ms": [164.4, 164.0],
+        "h3_p99_ms": [111.6, 140.9],
+        "h2_edge_cpu_ms": [185, 227],
+        "h3_edge_cpu_ms": [252, 216]
+      },
+      {
+        "network": "delay 40ms loss 1%",
+        "h2_rps": [252.3, 229.6],
+        "h3_rps": [330.3, 338.9],
+        "h2_p50_ms": [48.9, 53.1],
+        "h3_p50_ms": [43.3, 43.2],
+        "h2_p99_ms": [163.2, 375.6],
+        "h3_p99_ms": [126.1, 109.4],
+        "h2_edge_cpu_ms": [182, 185],
+        "h3_edge_cpu_ms": [234, 213]
+      },
+      {
+        "network": "delay 40ms loss 3%",
+        "h2_rps": [200.5, 198.6],
+        "h3_rps": [331.6, 335.5],
+        "h2_p50_ms": [81.2, 82.0],
+        "h3_p50_ms": [43.3, 43.1],
+        "h2_p99_ms": [173.4, 172.9],
+        "h3_p99_ms": [102.6, 102.3],
+        "h2_edge_cpu_ms": [184, 171],
+        "h3_edge_cpu_ms": [231, 206]
+      }
+    ],
+    "reading": "Without loss the protocols tie. Under loss HTTP/3 keeps its throughput and median while HTTP/2 suffers TCP head-of-line blocking: about 1.3x throughput at 1% loss and 1.7x at 3%, at roughly 15-25% more edge CPU."
+  },
+  "backup_s3": "GitHub Actions run 39218228393: SeaweedFS S3 gateway with enforced credentials (a wrong secret is refused); backup with BACKUP_DRIVER=s3 uploaded the dump and its checksum through the aws CLI, and the downloaded copy matched the local backup",
+  "acme_route": "GitHub Actions run 39218228393: a server with network alias acme on the apps network served /.well-known/acme-challenge/ over plain HTTP through the edge while every other path answered 308 to HTTPS"
 }
