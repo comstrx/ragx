@@ -38,15 +38,19 @@ class Probe:
         return True
 
     def is_bool ( self, value: object ) -> bool:
+
         return isinstance(value, bool) or (isinstance(value, str) and value.strip().lower() in TRUTHS)
 
     def is_json ( self, value: object ) -> bool:
+
         return json.valid(value)
 
     def is_mapping ( self, value: object ) -> bool:
+
         return isinstance(value, Mapping)
 
     def is_listish ( self, value: object ) -> bool:
+
         return isinstance(value, list | tuple | set | frozenset)
 
     def is_uuid ( self, value: object ) -> bool:
@@ -59,6 +63,7 @@ class Probe:
         return True
 
     def is_hex ( self, value: object ) -> bool:
+
         return isinstance(value, str) and HEX.match(value) is not None
 
     def is_positive ( self, value: object ) -> bool:
@@ -74,6 +79,7 @@ class Probe:
         return Decimal(str(value).strip()) < 0
 
     def is_blank ( self, value: object ) -> bool:
+
         return value is None or (isinstance(value, str) and value.strip() == "")
 
     def kind ( self, value: object ) -> str:

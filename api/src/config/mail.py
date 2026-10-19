@@ -1,23 +1,17 @@
-from typing import Literal
+from typing import ClassVar, Literal
 
-from pydantic import Field
-from pydantic_settings import SettingsConfigDict
-from core.config import Settings
+from core.config import Settings, field
 
-type Driver = Literal["smtp", "log", "memory"]
+type Driver = Literal["log", "mailgun"]
 
-class MailConfig(Settings):
+class MailConfig(Settings, env_prefix="MAIL_"):
 
-    model_config = SettingsConfigDict(env_prefix="MAIL_")
+    hidden: ClassVar[tuple[str, ...]] = ("mailgun_key",)
 
-    driver   : Driver = "log"
-    host     : str    = "127.0.0.1"
-    port     : int    = Field(default=587, ge=1, le=65535)
-    username : str | None = None
-    password : str | None = None
-    tls      : bool   = True
-    ssl      : bool   = False
-    verify   : bool   = True
-    timeout  : float  = Field(default=10.0, gt=0, le=120)
-    sender   : str    = "hello@ragx.test"
-    name     : str    = "RagX"
+    driver         : Driver = "log"
+    sender         : str    = "hello@ragx.test"
+    name           : str    = "RagX"
+    timeout        : float  = field(20.0, gt=0, le=120)
+    mailgun_key    : str    = ""
+    mailgun_domain : str    = ""
+    mailgun_region : str    = "us"

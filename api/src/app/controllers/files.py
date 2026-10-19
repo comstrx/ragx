@@ -1,27 +1,28 @@
 from typing import Annotated
 
-from core.http import Depends, File, Response, Streamed, Upload
+from core.http import Inject, Response, Upload
 from app.middlewares import authenticate
 from app.models import User
 from app.services import FilesService
-from app.utils.bases import BaseController
+from app.utils.cycle import Controller
 
-type Actor = Annotated[User, Depends(authenticate)]
-type Sent = Annotated[Upload, File()]
+type Actor = Annotated[User, Inject(authenticate)]
 
-class FilesController(BaseController):
+class FilesController(Controller):
 
     def __init__ ( self, service: FilesService ) -> None:
 
         self._service = service
 
-    async def store ( self, file: Sent, user: Actor ) -> Response:
+    async def store ( self, file: Upload, user: Actor ) -> Response:
+
         return self.created(await self._service.publish(file, user))
 
-    async def keep ( self, file: Sent, user: Actor ) -> Response:
+    async def keep ( self, file: Upload, user: Actor ) -> Response:
+
         return self.created(await self._service.keep(file, user))
 
-    async def show ( self, path: str, user: Actor ) -> Streamed:
+    async def show ( self, path: str, user: Actor ) -> Response:
 
         chunks, mime = await self._service.open(path, user)
 

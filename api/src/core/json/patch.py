@@ -8,11 +8,14 @@ type Operation = Mapping[str, Any]
 
 SECRET = ("password", "secret", "token", "key", "authorization", "cookie", "credential")
 MASK   = "***"
+MISSING = object()
 
 def unescape ( part: str ) -> str:
+
     return part.replace("~1", "/").replace("~0", "~")
 
 def escape ( part: str ) -> str:
+
     return part.replace("~", "~0").replace("/", "~1")
 
 def tokens ( pointer: str ) -> list[str]:
@@ -26,16 +29,16 @@ def step ( node: Any, part: str ) -> Any:
 
     if isinstance(node, Mapping):
 
-        if part not in node: raise Fault(Code.NOT_FOUND, reason=f"pointer.{part}")
+        if part not in node: raise Fault(Code.NOT_FOUND, reason="json.pointer")
 
         return node[part]
 
     if isinstance(node, list):
 
         try: return node[int(part)]
-        except (ValueError, IndexError) as error: raise Fault(Code.NOT_FOUND, reason=f"pointer.{part}") from error
+        except (ValueError, IndexError) as error: raise Fault(Code.NOT_FOUND, reason="json.pointer") from error
 
-    raise Fault(Code.NOT_FOUND, reason=f"pointer.{part}")
+    raise Fault(Code.NOT_FOUND, reason="json.pointer")
 
 class Patch:
 
@@ -58,6 +61,7 @@ class Patch:
         return True
 
     def pointer_of ( self, *parts: str | int ) -> str:
+
         return "".join(f"/{escape(str(part))}" for part in parts)
 
     def apply ( self, value: Any, operations: Iterable[Operation] ) -> Any:
@@ -77,7 +81,7 @@ class Patch:
             case "add": return self.place(document, path, operation.get("value"), insert=True)
             case "replace":
 
-                if not self.has_pointer(document, path): raise Fault(Code.NOT_FOUND, reason=f"patch.{path}")
+                if not self.has_pointer(document, path): raise Fault(Code.NOT_FOUND, reason="json.patch.path")
 
                 return self.place(document, path, operation.get("value"), insert=False)
 
@@ -97,11 +101,11 @@ class Patch:
             case "test":
 
                 if self.pointer(document, path, MISSING) != operation.get("value"):
-                    raise Fault(Code.CONFLICT, reason=f"patch.{path}")
+                    raise Fault(Code.CONFLICT, reason="json.patch.test")
 
                 return document
 
-            case _: raise Fault(Code.BAD_REQUEST, reason=f"patch.{kind or 'op'}")
+            case _: raise Fault(Code.BAD_REQUEST, reason="json.patch.op")
 
     def place ( self, document: Any, path: str, value: Any, insert: bool ) -> Any:
 
@@ -123,7 +127,7 @@ class Patch:
             else: parent[index] = value
 
         elif isinstance(parent, dict): parent[last] = value
-        else: raise Fault(Code.BAD_REQUEST, reason=f"patch.{path}")
+        else: raise Fault(Code.BAD_REQUEST, reason="json.patch.path")
 
         return document
 
@@ -141,7 +145,7 @@ class Patch:
 
         if isinstance(parent, list): parent.pop(int(last))
         elif isinstance(parent, dict) and last in parent: del parent[last]
-        else: raise Fault(Code.NOT_FOUND, reason=f"patch.{path}")
+        else: raise Fault(Code.NOT_FOUND, reason="json.patch.path")
 
         return document
 
@@ -165,10 +169,38 @@ class Patch:
 
         return [{ "op": "replace", "path": prefix or "", "value": after }]
 
+    def merge_patch ( self, target: Any, patch: Any ) -> Any:
+
+        if not isinstance(patch, Mapping): return copy.deepcopy(patch)
+
+        merged = dict(target) if isinstance(target, Mapping) else {}
+
+        for key, value in patch.items():
+
+            if value is None: merged.pop(key, None)
+            else: merged[key] = self.merge_patch(merged.get(key), value)
+
+        return merged
+
+    def merge_patch_of ( self, before: Any, after: Any ) -> Any:
+
+        if not (isinstance(before, Mapping) and isinstance(after, Mapping)): return copy.deepcopy(after)
+
+        patch: dict[str, Any] = { str(key): None for key in before if key not in after }
+
+        for key, value in after.items():
+
+            if key not in before: patch[str(key)] = copy.deepcopy(value)
+            elif before[key] != value: patch[str(key)] = self.merge_patch_of(before[key], value)
+
+        return patch
+
     def checksum ( self, value: Any, size: int = 16 ) -> str:
+
         return hashlib.blake2b(orjson.dumps(value, option=orjson.OPT_SORT_KEYS), digest_size=size).hexdigest()
 
     def same ( self, left: Any, right: Any ) -> bool:
+
         return self.checksum(left) == self.checksum(right)
 
     def redact ( self, value: Any, keys: Sequence[str] = SECRET, mask: str = MASK ) -> Any:
@@ -184,6 +216,5 @@ class Patch:
         return value
 
     def size ( self, value: Any ) -> int:
-        return len(orjson.dumps(value))
 
-MISSING = object()
+        return len(orjson.dumps(value))

@@ -2,7 +2,7 @@ from pathlib import Path, PurePosixPath
 
 from core.error import Code, Fault
 from core.fs import fs
-import hashlib, mimetypes
+import builtins, hashlib, mimetypes
 
 STAMP    = 10
 FALLBACK = "application/octet-stream"
@@ -26,6 +26,7 @@ class Assets:
         self._stamps    = {}
 
     def ready ( self ) -> bool:
+
         return self._folder is not None
 
     def folder ( self ) -> Path:
@@ -35,6 +36,7 @@ class Assets:
         return self._folder
 
     def prefix ( self ) -> str:
+
         return self._prefix
 
     def clean ( self, path: str ) -> str:
@@ -55,6 +57,7 @@ class Assets:
         return target
 
     def exists ( self, path: str ) -> bool:
+
         return self.path(path).is_file()
 
     def stamp ( self, path: str ) -> str | None:
@@ -88,14 +91,15 @@ class Assets:
 
         target = self.path(path)
 
-        if not target.is_file(): raise Fault(Code.NOT_FOUND, reason=path)
+        if not target.is_file(): raise Fault(Code.NOT_FOUND, reason="assets.missing")
 
         return await fs.read_bytes(target)
 
     async def text ( self, path: str ) -> str:
+
         return (await self.read(path)).decode()
 
-    async def list ( self, prefix: str = "" ) -> list[str]:
+    async def list ( self, prefix: str = "" ) -> builtins.list[str]:
 
         base  = self.path(prefix) if prefix else self.folder()
         found = [entry async for entry in fs.walk(base) if entry.is_file() and not entry.name.startswith(".")]
@@ -103,4 +107,5 @@ class Assets:
         return sorted(entry.relative_to(self.folder()).as_posix() for entry in found)
 
     def forget ( self ) -> None:
+
         self._stamps.clear()

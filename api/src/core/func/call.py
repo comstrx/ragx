@@ -1,5 +1,6 @@
 from collections.abc import Awaitable, Callable
 from typing import Any
+
 import functools, importlib, inspect, pkgutil
 
 type Fn[**P, T] = Callable[P, T]
@@ -7,18 +8,19 @@ type Fn[**P, T] = Callable[P, T]
 class Call:
 
     def name ( self, fn: Callable[..., object] ) -> str:
+
         return f"{fn.__module__}.{getattr(fn, '__qualname__', type(fn).__name__)}"
 
     def short_name ( self, fn: Callable[..., object] ) -> str:
+
         return getattr(fn, "__qualname__", type(fn).__name__)
 
     def is_async ( self, fn: Callable[..., object] ) -> bool:
 
-        if inspect.iscoroutinefunction(fn): return True
-
-        return not inspect.isfunction(fn) and callable(fn) and inspect.iscoroutinefunction(type(fn).__call__)
+        return inspect.iscoroutinefunction(fn) or inspect.iscoroutinefunction(type(fn).__call__)
 
     def is_generator ( self, fn: Callable[..., object] ) -> bool:
+
         return inspect.isgeneratorfunction(fn) or inspect.isasyncgenfunction(fn)
 
     def arguments ( self, fn: Callable[..., object] ) -> dict[str, object]:
@@ -46,9 +48,11 @@ class Call:
         return name in parameters or any(p.kind is p.VAR_KEYWORD for p in parameters.values())
 
     def arity ( self, fn: Callable[..., object] ) -> int:
+
         return len(inspect.signature(fn).parameters)
 
     def returns ( self, fn: Callable[..., object] ) -> object:
+
         return inspect.signature(fn).return_annotation
 
     async def call ( self, fn: Callable[..., object], *args: object, **kwargs: object ) -> Any:
@@ -74,6 +78,7 @@ class Call:
         return run
 
     def compose[T] ( self, *steps: Callable[[T], T] ) -> Callable[[T], T]:
+
         return self.pipe(*reversed(steps))
 
     def pipe_async[T] ( self, *steps: Callable[[T], Awaitable[T] | T] ) -> Callable[[T], Awaitable[T]]:
@@ -96,24 +101,31 @@ class Call:
         return value
 
     def identity[T] ( self, value: T ) -> T:
+
         return value
 
     def constant[T] ( self, value: T ) -> Callable[..., T]:
+
         return lambda *_, **__: value
 
     def noop ( self, *_: object, **__: object ) -> None:
+
         return None
 
     def partial[T] ( self, fn: Callable[..., T], *args: object, **kwargs: object ) -> Callable[..., T]:
+
         return functools.partial(fn, *args, **kwargs)
 
     def flip[A, B, T] ( self, fn: Callable[[A, B], T] ) -> Callable[[B, A], T]:
+
         return lambda b, a: fn(a, b)
 
     def negate ( self, test: Callable[..., bool] ) -> Callable[..., bool]:
+
         return lambda *args, **kwargs: not test(*args, **kwargs)
 
     def apply_each[T] ( self, fns: list[Callable[[T], object]], value: T ) -> list[object]:
+
         return [fn(value) for fn in fns]
 
     def load ( self, target: str ) -> Any:
@@ -139,11 +151,13 @@ class Call:
         return found
 
     def juxt[T] ( self, *fns: Callable[[T], object] ) -> Callable[[T], list[object]]:
+
         return lambda value: [fn(value) for fn in fns]
 
     def unary[T, R] ( self, fn: Callable[..., R] ) -> Callable[[T], R]:
 
         def one ( value: T ) -> R:
+
             return fn(value)
 
         return one

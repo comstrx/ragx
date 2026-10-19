@@ -1,8 +1,9 @@
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
-from .base import Pathish
+from core.error import Code, Fault
 from .file import File
+from .path import Pathish
 
 PAIR = 2
 
@@ -13,16 +14,18 @@ class Editor:
         self._file = File()
 
     async def lines ( self, target: Pathish ) -> list[str]:
+
         return await self._file.read_lines(target)
 
     async def save ( self, target: Pathish, lines: list[str] ) -> Path:
+
         return await self._file.write_text(target, "\n".join(lines) + ("\n" if lines else ""))
 
     async def replace_line ( self, target: Pathish, number: int, text: str ) -> Path:
 
         lines = await self.lines(target)
 
-        if not 1 <= number <= len(lines): raise IndexError(number)
+        if not 1 <= number <= len(lines): raise Fault(Code.BAD_REQUEST, reason="fs.line")
 
         lines[number - 1] = text
 
@@ -91,6 +94,7 @@ class Editor:
         return text[head + len(start):tail] if head >= 0 and tail >= 0 else None
 
     async def map_lines ( self, target: Pathish, transform: Callable[[str], str] ) -> Path:
+
         return await self.save(target, [transform(line) for line in await self.lines(target)])
 
     async def ensure_line ( self, target: Pathish, text: str ) -> bool:
@@ -125,6 +129,7 @@ class Editor:
         return found
 
     def dict_to_env ( self, values: Mapping[str, object] ) -> str:
+
         return "".join(f"{key}={self.env_quote(str(value))}\n" for key, value in values.items())
 
     def env_quote ( self, value: str ) -> str:
@@ -134,6 +139,7 @@ class Editor:
         return "'" + value.replace("'", "'\\''") + "'"
 
     async def env_get ( self, target: Pathish, key: str, default: str | None = None ) -> str | None:
+
         return self.env_to_dict(await self._file.read_text(target)).get(key, default)
 
     async def env_set ( self, target: Pathish, key: str, value: object ) -> Path:
@@ -154,9 +160,11 @@ class Editor:
         return await self.save(target, lines)
 
     def key_of ( self, line: str ) -> str:
+
         return line.split("=", 1)[0].strip().removeprefix("export ").strip()
 
     async def env_delete ( self, target: Pathish, key: str ) -> int:
+
         return await self.delete_lines(target, lambda line: self.key_of(line) == key)
 
     async def env_merge ( self, target: Pathish, values: Mapping[str, object] ) -> Path:
@@ -166,4 +174,5 @@ class Editor:
         return Path(target)
 
     async def env_load ( self, target: Pathish ) -> dict[str, str]:
+
         return self.env_to_dict(await self._file.read_text(target))

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from core.log import log
-from .base import Pathish
+from .path import Pathish
 import asyncio, os
 
 type Snapshot = dict[str, tuple[float, int]]
@@ -17,6 +17,7 @@ class Change:
     path : Path
 
     def dump ( self ) -> dict[str, str]:
+
         return { "kind": self.kind, "path": str(self.path) }
 
 class Watch:
@@ -31,6 +32,7 @@ class Watch:
         self._last: Snapshot | None = None
 
     def stop ( self ) -> None:
+
         self._stopping.set()
 
     def snapshot ( self ) -> Snapshot:

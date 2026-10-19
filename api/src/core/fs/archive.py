@@ -4,7 +4,7 @@ from typing import Any
 
 from anyio import to_thread
 from core.error import Code, Fault
-from .base import Pathish
+from .path import Pathish
 import tarfile, zipfile
 
 TARS = (".tar", ".tgz", ".tar.gz", ".tar.bz2", ".tar.xz")
@@ -14,7 +14,7 @@ def within ( root: Path, member: str ) -> Path:
     target = (root / member).resolve()
 
     if target != root.resolve() and root.resolve() not in target.parents:
-        raise Fault(Code.BAD_REQUEST, reason=f"archive.{member}")
+        raise Fault(Code.BAD_REQUEST, reason="archive.member")
 
     return target
 
@@ -31,7 +31,7 @@ def gather ( sources: Sequence[Path] ) -> list[tuple[Path, str]]:
             found.extend((path, str(path.relative_to(source.parent))) for path in inner)
 
         elif source.is_file(): found.append((source, source.name))
-        else: raise Fault(Code.NOT_FOUND, reason=str(source))
+        else: raise Fault(Code.NOT_FOUND, reason="fs.missing")
 
     return found
 
@@ -145,4 +145,5 @@ class Archive:
             raise Fault(Code.BAD_REQUEST, reason="archive") from error
 
     def is_archive ( self, target: Pathish ) -> bool:
+
         return str(target).lower().endswith((".zip", *TARS))

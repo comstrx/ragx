@@ -1,22 +1,49 @@
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import ClassVar
+
 from core.cache import Cache
 from core.crypto import Crypto
+from core.database import Database, Model, Query
 from core.date import UTC, DateTime
 from core.event import Event, Events
-from core.http import Route, Router
+from core.http import Response, Route, Router
+from core.json import json
 from core.queue import MemoryDriver, Queue
-from core.rand import rand
+from core.rand import Uuid, rand
 from core.schedule import Cron
 from core.socket import Frame
 from core.string import string
 from core.token import JwtAdapter, Token
-from core.validate import Email, validate
+from core.validate import Email, Shape, field, validate
 from core.parse import parse
-from benches import Bench
-import asyncio
+from benches import Bench, Measured
+import asyncio, time
 
 class Ping(Event):
 
     pass
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Thing(Model):
+
+    table : ClassVar[str] = "things"
+
+    id      : Uuid
+    name    : str
+    price   : float
+    created : DateTime
+
+class Search(Shape):
+
+    term  : str = field(min_length=2, max_length=64)
+    page  : int = field(1, ge=1, le=1000)
+    limit : int = field(20, ge=1, le=100)
+    email : Email
+
+def build ( things: Query[Thing] ) -> Query[Thing]:
+
+    return things.where("name", "x").where_in("price", [1, 2]).latest("created").limit(20)
 
 class MicroBench(Bench):
 
@@ -37,6 +64,10 @@ class MicroBench(Bench):
         cron      = Cron("*/15 2 * * 1-5")
         moment    = DateTime(2026, 10, 16, 2, 20, tzinfo=UTC)
         frame     = Frame("headline", "news", { "n": 1 }).encode()
+        rows      = [{ "id": str(rand.uuid()), "name": f"item {index}", "price": index * 1.5 } for index in range(20)]
+        encoded   = json.encode({ "data": rows, "meta": { "page": 1, "total": 20 } })
+        asked     = { "term": "bench", "page": "3", "limit": "50", "email": "Bench@Example.com" }
+        things    = Query(Thing, Database())
 
         router.register(Route.group("/v1", [Route.get("/items/{key}", self.pipeline, name="show")], name="v1"))
 
@@ -49,6 +80,12 @@ class MicroBench(Bench):
             ("slug",         lambda: string.slug("Hello, World! Benchmarks Are Fun"),   20_000, 0.05),
             ("base64",       lambda: string.from_base64(string.to_base64(b"x" * 256)),  20_000, 0.02),
             ("email",        lambda: validate.check(Email, "Bench@Example.com"),         5_000, 0.10),
+            ("shape.of",     lambda: Search.of(asked),                                  20_000, 0.08),
+            ("json.encode",  lambda: json.encode({ "data": rows }),                     20_000, 0.05),
+            ("json.decode",  lambda: json.loads(encoded),                               20_000, 0.05),
+            ("envelope",     lambda: Response.ok(rows, meta={ "page": 1 }).body,        20_000, 0.10),
+            ("query.build",  lambda: build(things),                                     20_000, 0.10),
+            ("query.sql",    lambda: build(things).to_sql(),                             5_000, 3.00),
             ("route.url",    lambda: router.url("v1.show", key=7, page=2),              50_000, 0.02),
             ("cron.next",    lambda: cron.next(moment),                                 20_000, 0.10),
             ("frame.decode", lambda: Frame.decode(frame),                               50_000, 0.02),
@@ -59,9 +96,13 @@ class MicroBench(Bench):
             ("argon2.check", lambda: crypto.verify("bench-password-1", hashed),             20, 400.0),
         ):
 
-            latencies, elapsed = self.measure_sync(work, rounds)
+            self.settle(label, self.repeat(work, rounds, label.startswith("argon2")), p99)
 
-            self.report(label, latencies, elapsed, p99)
+    def repeat ( self, work: Callable[[], object], rounds: int, threaded: bool ) -> Callable[[], Measured]:
+
+        clock = time.process_time if threaded else time.thread_time
+
+        return lambda: self.measure_sync(work, rounds, clock)
 
     async def pipeline ( self ) -> None:
 
@@ -79,6 +120,7 @@ class MicroBench(Bench):
             await cache.get("k")
 
         async def noop ( value: int ) -> None:
+
             seen.append(value)
 
         async def roundtrip () -> None:
@@ -87,19 +129,12 @@ class MicroBench(Bench):
             await queue.drain()
 
         async def dispatch () -> None:
+
             await events.dispatch(Ping())
 
-        latencies, elapsed = await self.measure(roundtrip, 5000, 1)
-
-        self.report("queue.push+run", latencies, elapsed, 0.5)
-
-        latencies, elapsed = await self.measure(dispatch, 20000, 1)
-
-        self.report("event.dispatch", latencies, elapsed, 0.2)
-
-        latencies, elapsed = await self.measure(cached, 20000, 1)
-
-        self.report("cache.set+get", latencies, elapsed, 0.1)
+        await self.asettle("queue.push+run", lambda: self.measure(roundtrip, 5000, 1), 0.5)
+        await self.asettle("event.dispatch", lambda: self.measure(dispatch, 20000, 1), 0.2)
+        await self.asettle("cache.set+get", lambda: self.measure(cached, 20000, 1), 0.1)
 
 if __name__ == "__main__":
 

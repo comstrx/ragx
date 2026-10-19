@@ -1,11 +1,13 @@
+from typing import override
 from core.queue import Queued
 from app.repositories import tokens
-from app.utils.bases import BaseJob
+from app.utils.cycle import Job
 
-class PurgeTokens(BaseJob, Queued):
+class PurgeTokens(Job, Queued):
 
     queue = "maintenance"
 
+    @override
     async def handle ( self ) -> None:
 
         removed = await tokens.purge()

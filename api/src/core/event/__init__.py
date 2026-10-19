@@ -1,8 +1,6 @@
-from .bus import Bus, Envelope, LocalBus
-from .event import Event, Listener
+from .event import BrokerBus, Bus, Envelope, Event, Listener, LocalBus, RabbitBus
 from .events import Events
-from .rabbit import RabbitBus
 
 events = Events()
 
-__all__ = ["Bus", "Envelope", "Event", "Events", "Listener", "LocalBus", "RabbitBus", "events"]
+__all__ = ["BrokerBus", "Bus", "Envelope", "Event", "Events", "Listener", "LocalBus", "RabbitBus", "events"]

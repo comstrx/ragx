@@ -1,8 +1,5 @@
-from .cipher import Cipher
-from .crypto import Crypto
-from .digest import Digest
-from .keys import ApiKey, Keys
-from .password import Password
+from .cipher import ApiKey, Cipher, Keys
+from .crypto import Crypto, Digest, Password
 
 crypto = Crypto()
 

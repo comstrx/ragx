@@ -1,3 +1,4 @@
+from core.error import Code, Fault
 import math
 
 ONES   = (
@@ -66,7 +67,7 @@ class Words:
 
             value = values.get(char)
 
-            if value is None: raise ValueError(text)
+            if value is None: raise Fault(Code.BAD_REQUEST, reason="number.roman")
 
             after = values.get(upper[index + 1], 0) if index + 1 < len(upper) else 0
 
@@ -91,12 +92,15 @@ class Words:
         return True
 
     def factorial ( self, value: int ) -> int:
+
         return math.factorial(value)
 
     def digit_sum ( self, value: int ) -> int:
+
         return sum(int(digit) for digit in str(abs(value)))
 
     def digits ( self, value: int ) -> list[int]:
+
         return [int(digit) for digit in str(abs(value))]
 
     def is_power_of ( self, value: int, base: int ) -> bool:
@@ -116,17 +120,20 @@ class Words:
         return power
 
     def lerp ( self, start: float, end: float, amount: float ) -> float:
+
         return start + (end - start) * amount
 
     def normalize ( self, value: float, low: float, high: float ) -> float:
+
         return (value - low) / (high - low) if high != low else 0.0
 
     def map_range ( self, value: float, low: float, high: float, new_low: float, new_high: float ) -> float:
+
         return new_low + self.normalize(value, low, high) * (new_high - new_low)
 
     def to_base ( self, value: int, base: int ) -> str:
 
-        if not TWO <= base <= len(ALPHABET): raise ValueError(base)
+        if not TWO <= base <= len(ALPHABET): raise Fault(Code.BAD_REQUEST, reason="number.base")
         if value == 0: return "0"
 
         sign = "-" if value < 0 else ""
@@ -142,4 +149,5 @@ class Words:
         return sign + "".join(reversed(digits))
 
     def from_base ( self, text: str, base: int ) -> int:
+
         return int(text, base)

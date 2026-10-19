@@ -6,13 +6,12 @@ from core.date import date
 from core.error import Code, Fault
 from core.rand import rand
 from sqlalchemy.dialects.postgresql import insert as upsert
-import sqlalchemy as sa
-from .engine import Row, Session
 from .filters import Filters
-from .model import Model
-from .relations import Loader
-from .rows import Rows
+from .model import Model, Pivot
+from .relations import Loader, Rows
 from .scope import Values
+from .session import Row, Session
+import sqlalchemy as sa
 
 type Work = Callable[[Session], Awaitable[Any]]
 type Each[M] = Callable[[M], Awaitable[Any] | Any]
@@ -53,9 +52,11 @@ class Query[M: Model](Filters[M]):
         return found[0]
 
     async def find ( self, key: object ) -> M | None:
+
         return await self.where_key(key).first()
 
     async def find_or_fail ( self, key: object ) -> M:
+
         return await self.where_key(key).first_or_fail()
 
     async def find_many ( self, keys: Iterable[object] ) -> list[M]:
@@ -65,24 +66,31 @@ class Query[M: Model](Filters[M]):
         return await self.where_keys(wanted).get() if wanted else []
 
     async def count ( self ) -> int:
+
         return int(await self._aggregate_(sa.func.count()) or 0)
 
     async def exists ( self ) -> bool:
+
         return await self.limit(1).count() > 0
 
     async def missing ( self ) -> bool:
+
         return not await self.exists()
 
     async def sum ( self, column: str ) -> Any:
+
         return await self._aggregate_(sa.func.sum(self._table.c[column])) or 0
 
     async def avg ( self, column: str ) -> Any:
+
         return await self._aggregate_(sa.func.avg(self._table.c[column]))
 
     async def min ( self, column: str ) -> Any:
+
         return await self._aggregate_(sa.func.min(self._table.c[column]))
 
     async def max ( self, column: str ) -> Any:
+
         return await self._aggregate_(sa.func.max(self._table.c[column]))
 
     async def value ( self, column: str ) -> Any:
@@ -186,6 +194,7 @@ class Query[M: Model](Filters[M]):
         return int(await self._run_(lambda session: session.execute(statement)))
 
     async def touch ( self, column: str = "updated_at" ) -> int:
+
         return await self.update({ column: date.now() })
 
     async def first_or_create ( self, where: Values, values: Values | None = None ) -> M:
@@ -214,6 +223,7 @@ class Query[M: Model](Filters[M]):
         return int(await self._run_(lambda session: session.execute(statement)))
 
     async def decrement ( self, column: str, step: int = 1, extra: Values | None = None ) -> int:
+
         return await self.increment(column, -step, extra)
 
     async def delete ( self ) -> int:
@@ -225,6 +235,7 @@ class Query[M: Model](Filters[M]):
         return int(await self._run_(lambda session: session.execute(statement)))
 
     async def destroy ( self, *keys: object ) -> int:
+
         return await self.where_keys(keys).delete() if keys else 0
 
     async def force_delete ( self ) -> int:
@@ -240,6 +251,7 @@ class Query[M: Model](Filters[M]):
         return int(await self._run_(lambda session: session.execute(statement)))
 
     async def truncate ( self ) -> None:
+
         await self._run_(lambda session: session.truncate(self._model.table))
 
     def _stamp_ ( self, values: dict[str, object], creating: bool ) -> dict[str, object]:
@@ -272,7 +284,12 @@ class Query[M: Model](Filters[M]):
 
         return found
 
+    def pivot ( self, name: str ) -> Pivot:
+
+        return Pivot(self._model, name, self._run_)
+
     def _related_ ( self, model: type[Model] ) -> Query[Any]:
+
         return Query(model, self._database, self._session)
 
     async def _load_ ( self, found: list[M] ) -> None:

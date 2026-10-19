@@ -5,26 +5,29 @@ from core.broadcast import (
 from core.cache import RedisStore, cache
 from core.config import config, env
 from core.crypto import crypto
-from core.database import database
+from core.database import database, outbox
 from core.event import Bus, LocalBus, RabbitBus, events
+from core.error import Code, Fault
 from core.exception import exception
-from core.fs import Path
-from core.http import App, Group, Response, Route, Served, http
+from core.fs import Driver, LocalDriver, Path, S3Driver, S3Options
+from core.http import App, Group, Response, Route, http
 from core.llm import ChatGpt, Claude, DeepSeek, Gemini, Local, llm
 from core.log import log
-from core.mail import LogTransport, MemoryTransport, SmtpTransport, Transport, mail
+from core.mail import LogMailer, Mailer, Mailgun, mail
 from core.queue import Driver as QueueDriver, MemoryDriver, RabbitDriver, SyncDriver, queue
 from core.rand import rand
 from core.socket import Limits, socket
-from core.storage import Disk, LocalDisk, S3Disk, S3Options, storage
+from core.storage import storage
 from core.token import JwtAdapter, token
 from core.view import view
 from config import (
-    AppConfig, AssetsConfig, AuthConfig, BroadcastConfig, CacheConfig, DatabaseConfig, DocsConfig, EventConfig,
-    LlmConfig, LogConfig, MailConfig, QueueConfig, ScheduleConfig, SocketConfig, StorageConfig,
+    AppConfig, AuthConfig, BroadcastConfig, CacheConfig, DatabaseConfig, DocsConfig, EventConfig, LogConfig, MailConfig,
+    QueueConfig, StorageConfig,
 )
 from app import services
+from app.enums import Table
 from app.exceptions import ExceptionHandler
+from app.utils.dna import passwords
 from routes import api, channel as channels, events as subscriptions, schedule as timetable
 from .boot import Boot
 
@@ -38,57 +41,56 @@ class Application:
         env.load(self.root)
 
     def settings ( self ) -> AppConfig:
+
         return config.register("app", AppConfig)
 
     def logging ( self ) -> LogConfig:
+
         return config.register("log", LogConfig)
 
     def database ( self ) -> DatabaseConfig:
+
         return config.register("database", DatabaseConfig)
 
     def auth ( self ) -> AuthConfig:
+
         return config.register("auth", AuthConfig)
 
     def mailing ( self ) -> MailConfig:
+
         return config.register("mail", MailConfig)
 
     def docs ( self ) -> DocsConfig:
+
         return config.register("docs", DocsConfig)
 
     def files ( self ) -> StorageConfig:
+
         return config.register("storage", StorageConfig)
 
     def queues_config ( self ) -> QueueConfig:
+
         return config.register("queue", QueueConfig)
 
-    def scheduling ( self ) -> ScheduleConfig:
-        return config.register("schedule", ScheduleConfig)
-
-    def realtime ( self ) -> SocketConfig:
-        return config.register("socket", SocketConfig)
-
     def broadcasting ( self ) -> BroadcastConfig:
+
         return config.register("broadcast", BroadcastConfig)
 
-    def statics ( self ) -> AssetsConfig:
-        return config.register("assets", AssetsConfig)
-
     def caching ( self ) -> CacheConfig:
+
         return config.register("cache", CacheConfig)
 
     def eventing ( self ) -> EventConfig:
-        return config.register("event", EventConfig)
 
-    def intelligence ( self ) -> LlmConfig:
-        return config.register("llm", LlmConfig)
+        return config.register("event", EventConfig)
 
     def boot ( self ) -> Boot:
 
         settings = self.settings()
 
         return Boot(
-            self.source, database, self.database(), settings.name, self.queues_config(), self.scheduling(),
-            paths=("/health", f"{settings.prefix}/hello"),
+            self.source, database, self.database(), settings.name, self.queues_config(),
+            paths=("/health", f"{settings.prefix}/hello"), primers=(passwords.decoy,),
         )
 
     def create ( self ) -> App:
@@ -104,18 +106,22 @@ class Application:
 
         app = http.build(
             settings.name, settings.version, [self.routing(settings)], debug=settings.debug, docs=self.docs(),
-            facts=facts, origins=settings.origins, lifespan=self.boot().lifespan,
+            facts=facts, origins=settings.origins, lifespan=self.boot().lifespan, proxies=settings.proxies,
         )
 
-        http.serve(app, self.files().url, self.files().public_path(self.root), name="storage")
-        http.serve(app, self.statics().url, self.statics().path(self.root), name="assets", cache=self.statics().cache)
-        app.add_api_route("/robots.txt", self.robots, methods=["GET"], include_in_schema=False, name="robots")
+        app.serve(self.files().url, self.files().public_path(self.root), name="storage")
+        files = self.files()
+        live  = self.broadcasting()
 
-        if self.realtime().enabled: app.add_api_websocket_route(self.realtime().path, socket.endpoint, name="socket")
+        app.serve(files.assets_url, files.assets_path(self.root), name="assets", cache=files.assets_cache)
+        app.route(Route.get("/robots.txt", self.robots, name="robots").hide())
+
+        if live.socket: app.socket(live.path, socket.endpoint, name="socket")
 
         return app
 
-    async def robots ( self ) -> Served:
+    async def robots ( self ) -> Response:
+
         return Response.file(assets.path("robots.txt"), media="text/plain")
 
     def routing ( self, settings: AppConfig ) -> Group:
@@ -130,29 +136,32 @@ class Application:
         mailing = self.mailing()
         files   = self.files()
         jobs    = self.queues_config()
-        live    = self.realtime()
-        statics = self.statics()
+        live    = self.broadcasting()
         caching = self.caching()
         secret  = auth.secret or self.ephemeral(settings)
 
         exception.use(ExceptionHandler())
         token.setup(JwtAdapter(secret, auth.algorithm, auth.issuer))
         crypto.setup(auth.keys or [crypto.key()])
-        assets.setup(statics.path(self.root), statics.url, settings.url, statics.versioned)
+        assets.setup(files.assets_path(self.root), files.assets_url, settings.url, files.versioned)
         view.setup(self.source / "views", { "app": settings.name, "assets": assets.url })
-        mail.setup(self.transport(mailing), mailing.sender, mailing.name)
+        mail.setup(mailing.sender, mailing.name, self.mailer(mailing))
         storage.setup(self.disks(), files.disk, files.pattern, files.max_size, files.allowed, files.blocked)
         queue.setup(self.driver(jobs), tuple(jobs.queues), jobs.tries, jobs.backoff)
         events.setup(self.bus(settings))
+        outbox.setup(Table.OUTBOX)
+        queue.durable(outbox)
+        events.durable(outbox)
         events.subscribe(subscriptions.listeners)
 
         if caching.driver == "redis": cache.use(RedisStore(caching.url, caching.prefix))
         services.auth.configure(auth.access_ttl, auth.refresh_ttl)
-        socket.setup(Limits(live.connections, live.queue, live.frame, live.ping, live.drops))
+        socket.setup(Limits(live.connections, live.outbox, live.frame, live.ping, live.drops))
 
-        if self.broadcasting().enabled: broadcast.setup(socket, services.auth.bearer, self.broadcaster())
+        if live.enabled: broadcast.setup(socket, services.auth.bearer, self.broadcaster())
+        if live.enabled: broadcast.durable(outbox)
 
-        self.models(self.intelligence())
+        self.models()
 
         return len(timetable.tasks) + len(channels.channels)
 
@@ -162,29 +171,30 @@ class Application:
 
         return RedisBroadcast(socket, live.url, live.topic) if live.driver == "redis" else LocalBroadcast(socket)
 
-    def models ( self, brains: LlmConfig ) -> int:
+    def models ( self ) -> int:
 
-        wait, retries = brains.timeout, brains.retries
+        wait, retries = env.float("LLM_TIMEOUT", 60.0), env.int("LLM_RETRIES", 1)
+        keys          = { name: env.text(f"LLM_{name}_KEY") for name in ("OPENAI", "ANTHROPIC", "GEMINI", "DEEPSEEK") }
 
-        llm.setup(brains.driver, brains.session_ttl)
-        llm.register(Local(brains.local_url, brains.local_model, brains.local_key, wait, 0))
+        llm.setup(env.text("LLM_DRIVER", "local"), env.float("LLM_SESSION_TTL", 3600.0))
+        llm.register(Local(env.get("LLM_LOCAL_URL"), env.get("LLM_LOCAL_MODEL"), env.get("LLM_LOCAL_KEY"), wait))
 
-        if brains.openai_key:
-            llm.register(ChatGpt(brains.openai_key, brains.openai_model, brains.openai_url, wait, retries))
-        if brains.anthropic_key:
-            llm.register(Claude(brains.anthropic_key, brains.anthropic_model, brains.anthropic_url, wait, retries))
-        if brains.gemini_key:
-            llm.register(Gemini(brains.gemini_key, brains.gemini_model, brains.gemini_url, wait, retries))
-        if brains.deepseek_key:
-            llm.register(DeepSeek(brains.deepseek_key, brains.deepseek_model, brains.deepseek_url, wait, retries))
+        if keys["OPENAI"]: llm.register(ChatGpt(keys["OPENAI"], *self.llm("OPENAI"), wait, retries))
+        if keys["ANTHROPIC"]: llm.register(Claude(keys["ANTHROPIC"], *self.llm("ANTHROPIC"), wait, retries))
+        if keys["GEMINI"]: llm.register(Gemini(keys["GEMINI"], *self.llm("GEMINI"), wait, retries))
+        if keys["DEEPSEEK"]: llm.register(DeepSeek(keys["DEEPSEEK"], *self.llm("DEEPSEEK"), wait, retries))
 
         return len(llm.names())
+
+    def llm ( self, name: str ) -> tuple[str | None, str | None]:
+
+        return env.get(f"LLM_{name}_MODEL"), env.get(f"LLM_{name}_URL")
 
     def ephemeral ( self, settings: AppConfig ) -> str:
 
         missing = "AUTH_SECRET is required in production"
 
-        if settings.env.is_production(): raise RuntimeError(missing)
+        if settings.env.is_production(): raise Fault(Code.INTERNAL, missing, "auth.secret")
 
         log.warning("auth.ephemeral_secret", env=settings.env.value)
 
@@ -196,12 +206,12 @@ class Application:
 
         return self.files().logs_path(self.root) / logging.file if logging.file else None
 
-    def disks ( self ) -> dict[str, Disk]:
+    def disks ( self ) -> dict[str, Driver]:
 
         files = self.files()
-        disks: dict[str, Disk] = {
-            "public"  : LocalDisk("public", files.public_path(self.root), files.url),
-            "private" : LocalDisk("private", files.private_path(self.root)),
+        disks: dict[str, Driver] = {
+            "public"  : LocalDriver(files.public_path(self.root), files.url),
+            "private" : LocalDriver(files.private_path(self.root)),
         }
 
         if files.s3_bucket:
@@ -210,7 +220,7 @@ class Application:
                 files.s3_region, files.s3_endpoint, files.s3_key, files.s3_secret, files.s3_prefix, files.s3_path_style,
             )
 
-            disks["s3"] = S3Disk("s3", files.s3_bucket, options, files.s3_url or None)
+            disks["s3"] = S3Driver(files.s3_bucket, options, files.s3_url or None)
 
         return disks
 
@@ -230,12 +240,8 @@ class Application:
 
         return RabbitBus(eventing.url, eventing.exchange, inbox, eventing.prefetch)
 
-    def transport ( self, mailing: MailConfig ) -> Transport:
+    def mailer ( self, mailing: MailConfig ) -> Mailer:
 
-        if mailing.driver == "memory": return MemoryTransport()
-        if mailing.driver == "log": return LogTransport()
+        if mailing.driver != "mailgun": return LogMailer()
 
-        return SmtpTransport(
-            mailing.host, mailing.port, mailing.username, mailing.password,
-            tls=mailing.tls, ssl=mailing.ssl, timeout=mailing.timeout, verify=mailing.verify,
-        )
+        return Mailgun(mailing.mailgun_key, mailing.mailgun_domain, mailing.mailgun_region, wait=mailing.timeout)

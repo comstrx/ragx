@@ -1,11 +1,13 @@
 from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping, Sequence
 from typing import Any
 
+from core.error import Code, Fault
+
 class Collect:
 
     def chunk[T] ( self, items: Sequence[T], size: int ) -> list[list[T]]:
 
-        if size <= 0: raise ValueError(size)
+        if size <= 0: raise Fault(Code.BAD_REQUEST, reason="array.size")
 
         return [list(items[i : i + size]) for i in range(0, len(items), size)]
 
@@ -38,6 +40,7 @@ class Collect:
         return flat
 
     def compact[T] ( self, items: Iterable[T | None] ) -> list[T]:
+
         return [item for item in items if item is not None]
 
     def wrap ( self, value: object ) -> list[Any]:
@@ -49,6 +52,7 @@ class Collect:
         return [value]
 
     def pluck ( self, rows: Iterable[Mapping[str, object]], field: str ) -> list[object]:
+
         return [row[field] for row in rows if field in row]
 
     def group[T, K: Hashable] ( self, items: Iterable[T], key: Callable[[T], K] ) -> dict[K, list[T]]:
@@ -60,6 +64,7 @@ class Collect:
         return groups
 
     def index[T, K: Hashable] ( self, items: Iterable[T], key: Callable[[T], K] ) -> dict[K, T]:
+
         return {key(item): item for item in items}
 
     def count_by[T, K: Hashable] ( self, items: Iterable[T], key: Callable[[T], K] ) -> dict[K, int]:
@@ -71,9 +76,11 @@ class Collect:
         return counts
 
     def sum_by[T] ( self, items: Iterable[T], key: Callable[[T], float] ) -> float:
+
         return sum(key(item) for item in items)
 
     def sort_by[T] ( self, items: Iterable[T], key: Callable[[T], Any], reverse: bool = False ) -> list[T]:
+
         return sorted(items, key=key, reverse=reverse)
 
     def partition[T] ( self, items: Iterable[T], test: Callable[[T], bool] ) -> tuple[list[T], list[T]]:
@@ -86,27 +93,33 @@ class Collect:
         return passed, failed
 
     def first[T] ( self, items: Iterable[T], default: T | None = None ) -> T | None:
+
         return next(iter(items), default)
 
     def last[T] ( self, items: Sequence[T], default: T | None = None ) -> T | None:
+
         return items[-1] if items else default
 
     def find[T] ( self, items: Iterable[T], test: Callable[[T], bool], default: T | None = None ) -> T | None:
+
         return next((item for item in items if test(item)), default)
 
     def take[T] ( self, items: Sequence[T], count: int ) -> list[T]:
+
         return list(items[:count]) if count >= 0 else list(items[count:])
 
     def skip[T] ( self, items: Sequence[T], count: int ) -> list[T]:
+
         return list(items[count:])
 
     def windows[T] ( self, items: Sequence[T], size: int ) -> Iterator[Sequence[T]]:
 
-        if size <= 0: raise ValueError(size)
+        if size <= 0: raise Fault(Code.BAD_REQUEST, reason="array.size")
 
         for i in range(max(len(items) - size + 1, 0)): yield items[i : i + size]
 
     def pairs[T] ( self, items: Sequence[T] ) -> list[tuple[T, T]]:
+
         return [(items[i], items[i + 1]) for i in range(len(items) - 1)]
 
     def cross[T, U] ( self, left: Iterable[T], right: Iterable[U] ) -> list[tuple[T, U]]:
@@ -116,15 +129,19 @@ class Collect:
         return [(a, b) for a in left for b in rights]
 
     def zip_dicts ( self, keys: Sequence[str], rows: Iterable[Sequence[object]] ) -> list[dict[str, object]]:
+
         return [dict(zip(keys, row, strict=False)) for row in rows]
 
     def every[T] ( self, items: Iterable[T], test: Callable[[T], bool] ) -> bool:
+
         return all(test(item) for item in items)
 
     def some[T] ( self, items: Iterable[T], test: Callable[[T], bool] ) -> bool:
+
         return any(test(item) for item in items)
 
     def times[T] ( self, count: int, make: Callable[[int], T] ) -> list[T]:
+
         return [make(index) for index in range(max(count, 0))]
 
     def interleave[T] ( self, *groups: Sequence[T] ) -> list[T]:

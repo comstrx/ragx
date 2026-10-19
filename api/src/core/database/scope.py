@@ -2,10 +2,12 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any, Self
 
+from core.error import Code, Fault
 from sqlalchemy.sql import ColumnElement, TableClause
-import sqlalchemy as sa
-from .engine import Database, Session
+from .engine import Database
 from .model import Model
+from .session import Session
+import sqlalchemy as sa
 
 type Filter = Callable[[TableClause], ColumnElement[bool]]
 type Builder = Callable[[Any, Any], ColumnElement[bool]]
@@ -20,6 +22,7 @@ ORDERS  = ("asc", "desc")
 LOCKS   = ("update", "share")
 
 def plain ( value: object ) -> object:
+
     return sa.bindparam(None, value, type_=sa.types.NullType()) if isinstance(value, str) else value
 
 def listed ( value: object ) -> list[object]:
@@ -58,9 +61,10 @@ def clause ( column: str, operator: str, value: object ) -> Filter:
 
     builder = BUILDERS.get(operator.lower())
 
-    if builder is None: raise ValueError(operator)
+    if builder is None: raise Fault(Code.INTERNAL, reason="database.operator")
 
     def build ( table: TableClause ) -> ColumnElement[bool]:
+
         return builder(table.c[column], value)
 
     return build
@@ -72,7 +76,7 @@ def condition ( item: Condition ) -> Filter:
     if len(parts) == PAIR: return clause(str(parts[0]), "=", parts[1])
     if len(parts) == TRIPLE: return clause(str(parts[0]), str(parts[1]), parts[2])
 
-    raise ValueError(item)
+    raise Fault(Code.INTERNAL, reason="database.condition")
 
 @dataclass(frozen=True, slots=True)
 class State:
@@ -101,15 +105,19 @@ class Scope[M: Model]:
         self._table    = table_of(model)
 
     def model ( self ) -> type[M]:
+
         return self._model
 
     def state ( self ) -> State:
+
         return self._state
 
     def clone ( self ) -> Self:
+
         return self._fork_()
 
     def within ( self, session: Session ) -> Self:
+
         return type(self)(self._model, self._database, session, self._state)
 
     def tap ( self, refine: Refine ) -> Self:
@@ -126,6 +134,7 @@ class Scope[M: Model]:
         return self
 
     def unless ( self, condition: object, refine: Refine ) -> Self:
+
         return self.when(not condition, refine)
 
     def to_sql ( self ) -> str:
@@ -148,6 +157,7 @@ class Scope[M: Model]:
         }
 
     def _fork_ ( self, **changes: Any ) -> Self:
+
         return type(self)(self._model, self._database, self._session, replace(self._state, **changes))
 
     def _where_ ( self, trash: str | None = None ) -> list[ColumnElement[bool]]:

@@ -6,6 +6,8 @@ class Table(StrEnum):
     USERS     = "users"
     ROLE_USER = "role_user"
     TOKENS    = "tokens"
+    OUTBOX    = "outbox"
 
     def primary ( self ) -> str:
+
         return "id"

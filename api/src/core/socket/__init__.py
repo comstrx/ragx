@@ -1,5 +1,4 @@
-from .connection import Connection, Grant, Limits, Transport
-from .frame import Frame
+from .connection import Connection, Frame, Grant, Limits, Transport
 from .hub import Hub
 from .socket import Socket
 

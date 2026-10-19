@@ -1,0 +1,185 @@
+{
+  "_id": "66f8f7a920b9a62657865dad",
+  "id": "gpustack/bge-reranker-v2-m3-GGUF",
+  "private": false,
+  "pipeline_tag": "text-classification",
+  "library_name": "sentence-transformers",
+  "tags": [
+    "sentence-transformers",
+    "gguf",
+    "transformers",
+    "text-embeddings-inference",
+    "text-classification",
+    "multilingual",
+    "arxiv:2312.15503",
+    "arxiv:2402.03216",
+    "license:apache-2.0",
+    "endpoints_compatible",
+    "region:us",
+    "feature-extraction"
+  ],
+  "downloads": 20033,
+  "likes": 41,
+  "modelId": "gpustack/bge-reranker-v2-m3-GGUF",
+  "author": "gpustack",
+  "sha": "3093af03b1a635e67b084b1d8c03c5f5e020fd05",
+  "lastModified": "2024-09-29T07:18:36.000Z",
+  "gated": false,
+  "disabled": false,
+  "model-index": null,
+  "config": {},
+  "cardData": {
+    "license": "apache-2.0",
+    "pipeline_tag": "text-classification",
+    "tags": [
+      "transformers",
+      "sentence-transformers",
+      "text-embeddings-inference"
+    ],
+    "language": [
+      "multilingual"
+    ]
+  },
+  "transformersInfo": {
+    "auto_model": "AutoModel"
+  },
+  "gguf": {
+    "total": 567753729,
+    "architecture": "bert",
+    "context_length": 8192,
+    "causal": false,
+    "bos_token": "<s>",
+    "eos_token": "</s>",
+    "totalFileSize": 1159776896
+  },
+  "siblings": [
+    {
+      "rfilename": ".gitattributes",
+      "blobId": "f15b49c2e62c6e52121f7b498c0b245512d97955",
+      "size": 1562
+    },
+    {
+      "rfilename": "README.md",
+      "blobId": "6d1c88611f8b9ee77ed263e374f8d69a431c3bdd",
+      "size": 17562
+    },
+    {
+      "rfilename": "assets/BEIR-bge-en-v1.5.png",
+      "blobId": "04c10ca35a93a9e7addcb758eada3ed4bd523629",
+      "size": 56374
+    },
+    {
+      "rfilename": "assets/BEIR-e5-mistral.png",
+      "blobId": "236d46eb6277ad60230de001dfd6a40d045b448c",
+      "size": 40223
+    },
+    {
+      "rfilename": "assets/CMTEB-retrieval-bge-zh-v1.5.png",
+      "blobId": "b02707868af9da608747fad12cde2b116e4a6c86",
+      "size": 51484
+    },
+    {
+      "rfilename": "assets/llama-index.png",
+      "blobId": "3bac2b657173d245738405767e31a2c790cdc064",
+      "size": 106473
+    },
+    {
+      "rfilename": "assets/miracl-bge-m3.png",
+      "blobId": "f6e542add093ce645f67e09f0eb758c4e0c688ed",
+      "size": 52028
+    },
+    {
+      "rfilename": "bge-reranker-v2-m3-FP16.gguf",
+      "blobId": "45a289aa681a11786c006d3f98d6921db19605e7",
+      "size": 1159776896,
+      "lfs": {
+        "sha256": "5df93be121c09c43432102ad2b9569d369ccb85c209ca7583e8ccd28f0e41b88",
+        "size": 1159776896,
+        "pointerSize": 135
+      }
+    },
+    {
+      "rfilename": "bge-reranker-v2-m3-Q2_K.gguf",
+      "blobId": "ae5ace36d9e652c06d5afa412cf9239784619422",
+      "size": 366467488,
+      "lfs": {
+        "sha256": "f12135b80de836cbf94c1169dc8efda57c81040c1dfd9dedc20709d2e1725e39",
+        "size": 366467488,
+        "pointerSize": 134
+      }
+    },
+    {
+      "rfilename": "bge-reranker-v2-m3-Q3_K_M.gguf",
+      "blobId": "18e734e1624bef2b829bb80f0660bce57775f36f",
+      "size": 402749856,
+      "lfs": {
+        "sha256": "1b9a8990c7ebb14511aecbc9df90d1e956132be64d5ce62783431fa1abb339a3",
+        "size": 402749856,
+        "pointerSize": 134
+      }
+    },
+    {
+      "rfilename": "bge-reranker-v2-m3-Q4_0.gguf",
+      "blobId": "084a6e84bbd747b07c59e8e930c3db7137c7130c",
+      "size": 422156704,
+      "lfs": {
+        "sha256": "6d9e23b0765d4e250b697657ddaef1ca0b1fd7d150d910940eb35f673590e267",
+        "size": 422156704,
+        "pointerSize": 134
+      }
+    },
+    {
+      "rfilename": "bge-reranker-v2-m3-Q4_K_M.gguf",
+      "blobId": "1725213a52c96e9018dd907e65ab189c2dd5e02e",
+      "size": 438376864,
+      "lfs": {
+        "sha256": "e186a244ed455b4ab66ec64339ce7427a6ae13f5c0b5e544de96e50f0f8b3673",
+        "size": 438376864,
+        "pointerSize": 134
+      }
+    },
+    {
+      "rfilename": "bge-reranker-v2-m3-Q5_0.gguf",
+      "blobId": "0802df52db2148bbd6b507d24af0339c418ba3b7",
+      "size": 460036512,
+      "lfs": {
+        "sha256": "e232e93920b96cb144370deac915e00b8f2377ced7c40ee3ac7f6881a0f9f987",
+        "size": 460036512,
+        "pointerSize": 134
+      }
+    },
+    {
+      "rfilename": "bge-reranker-v2-m3-Q5_K_M.gguf",
+      "blobId": "0c8cde547b8c6fe93e09835e5e79ff7706e8dcec",
+      "size": 468392352,
+      "lfs": {
+        "sha256": "1a212007526c7083627eed92b39dd4472e90ff1374a03fb068733378220813ef",
+        "size": 468392352,
+        "pointerSize": 134
+      }
+    },
+    {
+      "rfilename": "bge-reranker-v2-m3-Q6_K.gguf",
+      "blobId": "046a131f6cc74e1eb691147b0cccb1c366d69882",
+      "size": 500283808,
+      "lfs": {
+        "sha256": "cc99d3e11bedd7f032e227f86217fc8bfc01dd7476ac4021742bcf8babc9a83d",
+        "size": 500283808,
+        "pointerSize": 134
+      }
+    },
+    {
+      "rfilename": "bge-reranker-v2-m3-Q8_0.gguf",
+      "blobId": "5c6430dabb2603bc663c83b43ace5900c19c0d82",
+      "size": 635676416,
+      "lfs": {
+        "sha256": "a43c7c9b11a4c1517e5bf95151960e1621d1b72f7a493364b01e386cf1aaa1d3",
+        "size": 635676416,
+        "pointerSize": 134
+      }
+    }
+  ],
+  "spaces": [],
+  "createdAt": "2024-09-29T06:46:01.000Z",
+  "usedStorage": 4853916896
+}

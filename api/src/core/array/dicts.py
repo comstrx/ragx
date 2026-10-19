@@ -1,5 +1,5 @@
-from collections.abc import Callable, Hashable, Iterable, Mapping
-from typing import Any
+from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
+from typing import Any, TypedDict
 
 MISSING = object()
 
@@ -22,6 +22,7 @@ class Dicts:
         return merged
 
     def pick ( self, data: Mapping[str, Any], *keys: str ) -> dict[str, Any]:
+
         return { key: data[key] for key in keys if key in data }
 
     def omit ( self, data: Mapping[str, Any], *keys: str ) -> dict[str, Any]:
@@ -31,9 +32,11 @@ class Dicts:
         return { key: item for key, item in data.items() if key not in dropped }
 
     def only ( self, data: Mapping[str, Any], keys: Iterable[str] ) -> dict[str, Any]:
+
         return self.pick(data, *keys)
 
     def except_ ( self, data: Mapping[str, Any], keys: Iterable[str] ) -> dict[str, Any]:
+
         return self.omit(data, *keys)
 
     def get ( self, data: Mapping[str, Any], path: str, default: Any = None ) -> Any:
@@ -50,6 +53,7 @@ class Dicts:
         return current
 
     def has ( self, data: Mapping[str, Any], path: str ) -> bool:
+
         return self.get(data, path, MISSING) is not MISSING
 
     def put ( self, data: dict[str, Any], path: str, value: object ) -> dict[str, Any]:
@@ -83,27 +87,35 @@ class Dicts:
         return False
 
     def defaults ( self, data: Mapping[str, Any], fallback: Mapping[str, Any] ) -> dict[str, Any]:
+
         return { **fallback, **data }
 
     def rename ( self, data: Mapping[str, Any], names: Mapping[str, str] ) -> dict[str, Any]:
+
         return { names.get(key, key): item for key, item in data.items() }
 
     def invert ( self, data: Mapping[Hashable, Hashable] ) -> dict[Hashable, Hashable]:
+
         return { item: key for key, item in data.items() }
 
     def map_values ( self, data: Mapping[str, Any], fn: Callable[[Any], Any] ) -> dict[str, Any]:
+
         return { key: fn(item) for key, item in data.items() }
 
     def map_keys ( self, data: Mapping[str, Any], fn: Callable[[str], str] ) -> dict[str, Any]:
+
         return { fn(key): item for key, item in data.items() }
 
     def filter_values ( self, data: Mapping[str, Any], test: Callable[[Any], bool] ) -> dict[str, Any]:
+
         return { key: item for key, item in data.items() if test(item) }
 
     def compact_dict ( self, data: Mapping[str, Any] ) -> dict[str, Any]:
+
         return { key: item for key, item in data.items() if item is not None }
 
     def sort_keys ( self, data: Mapping[str, Any] ) -> dict[str, Any]:
+
         return dict(sorted(data.items()))
 
     def walk ( self, data: Any, fn: Callable[[Any], Any] ) -> Any:
@@ -133,3 +145,91 @@ class Dicts:
         for path, item in flat.items(): self.put(nested, str(path), item)
 
         return nested
+
+class Sets:
+
+    def diff[T: Hashable] ( self, left: Iterable[T], right: Iterable[T] ) -> list[T]:
+
+        gone = set(right)
+
+        return [item for item in dict.fromkeys(left) if item not in gone]
+
+    def intersect[T: Hashable] ( self, left: Iterable[T], right: Iterable[T] ) -> list[T]:
+
+        kept = set(right)
+
+        return [item for item in dict.fromkeys(left) if item in kept]
+
+    def union[T: Hashable] ( self, *groups: Iterable[T] ) -> list[T]:
+
+        return list(dict.fromkeys(item for group in groups for item in group))
+
+    def symmetric[T: Hashable] ( self, left: Iterable[T], right: Iterable[T] ) -> list[T]:
+
+        a = list(dict.fromkeys(left))
+        b = list(dict.fromkeys(right))
+
+        return [*self.diff(a, b), *self.diff(b, a)]
+
+    def same[T: Hashable] ( self, left: Iterable[T], right: Iterable[T] ) -> bool:
+
+        return set(left) == set(right)
+
+    def contains_all[T: Hashable] ( self, items: Iterable[T], wanted: Iterable[T] ) -> bool:
+
+        return set(wanted) <= set(items)
+
+    def contains_any[T: Hashable] ( self, items: Iterable[T], wanted: Iterable[T] ) -> bool:
+
+        return bool(set(wanted) & set(items))
+
+    def added[T: Hashable] ( self, before: Iterable[T], after: Iterable[T] ) -> list[T]:
+
+        return self.diff(after, before)
+
+    def removed[T: Hashable] ( self, before: Iterable[T], after: Iterable[T] ) -> list[T]:
+
+        return self.diff(before, after)
+
+class Page(TypedDict):
+
+    page  : int
+    limit : int
+    total : int
+    pages : int
+
+class Pager:
+
+    def page ( self, total: int, page: int = 1, limit: int = 20 ) -> Page:
+
+        limit = max(limit, 1)
+        pages = max(-(-total // limit), 1)
+
+        return { "page": min(max(page, 1), pages), "limit": limit, "total": total, "pages": pages }
+
+    def slice[T] ( self, items: Sequence[T], page: int = 1, limit: int = 20 ) -> tuple[list[T], Page]:
+
+        meta  = self.page(len(items), page, limit)
+        start = (meta["page"] - 1) * meta["limit"]
+
+        return list(items[start : start + meta["limit"]]), meta
+
+    def offset ( self, page: int = 1, limit: int = 20 ) -> int:
+
+        return (max(page, 1) - 1) * max(limit, 1)
+
+    def has_next ( self, meta: Page ) -> bool:
+
+        return meta["page"] < meta["pages"]
+
+    def has_previous ( self, meta: Page ) -> bool:
+
+        return meta["page"] > 1
+
+    def bounds ( self, meta: Page ) -> tuple[int, int]:
+
+        if meta["total"] == 0: return 0, 0
+
+        start = (meta["page"] - 1) * meta["limit"] + 1
+
+        return start, min(start + meta["limit"] - 1, meta["total"])

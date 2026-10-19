@@ -1,15 +1,14 @@
-from typing import Annotated
-
-from core.http import Query, Response
+from core.http import Response
 from app.requests import HelloRequest
 from app.services import HelloService
-from app.utils.bases import BaseController
+from app.utils.cycle import Controller
 
-class HelloController(BaseController):
+class HelloController(Controller):
 
     def __init__ ( self, service: HelloService ) -> None:
 
         self._service = service
 
-    async def index ( self, query: Annotated[HelloRequest, Query()] ) -> Response:
+    async def index ( self, query: HelloRequest ) -> Response:
+
         return self.ok(await self._service.greet(query.name))

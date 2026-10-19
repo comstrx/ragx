@@ -1,7 +1,5 @@
-from .mail import Mail
-from .message import Attachment, Message
-from .transport import LogTransport, MemoryTransport, SmtpTransport, Transport
+from .mail import Attachment, LogMailer, Mail, Mailer, Mailgun, Message
 
 mail = Mail()
 
-__all__ = ["Attachment", "LogTransport", "Mail", "MemoryTransport", "Message", "SmtpTransport", "Transport", "mail"]
+__all__ = ["Attachment", "LogMailer", "Mail", "Mailer", "Mailgun", "Message", "mail"]

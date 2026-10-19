@@ -3,12 +3,14 @@ from dataclasses import dataclass, field
 from enum import Enum as Choices
 from typing import Any
 
-from sqlalchemy.dialects.postgresql import ARRAY, INET, INTERVAL, JSONB
+from core.error import Code, Fault
+from sqlalchemy.dialects.postgresql import ARRAY, INET, INTERVAL, JSONB, TSVECTOR
+from .column import Column, Embedded, Indexed
 import sqlalchemy as sa
-from .column import Column, Indexed
 
 KINDS   = ("uuid", "increments")
-METHODS = ("btree", "hash", "gin", "gist", "brin", "spgist")
+METHODS = ("btree", "hash", "gin", "gist", "brin", "spgist", "hnsw")
+METRICS = { "cosine": "vector_cosine_ops", "l2": "vector_l2_ops", "inner": "vector_ip_ops" }
 
 @dataclass(slots=True)
 class Blueprint:
@@ -36,63 +38,89 @@ class Blueprint:
 
     def id ( self, name: str = "id", kind: str = "uuid" ) -> Column:
 
-        if kind not in KINDS: raise ValueError(kind)
+        if kind not in KINDS: raise Fault(Code.INTERNAL, reason=f"database.index.{kind}")
         if kind == "uuid": return self.column(name, sa.Uuid(as_uuid=True)).key()
 
         return self.column(name, sa.BigInteger().with_variant(sa.Integer(), "sqlite")).key()
 
     def uuid ( self, name: str ) -> Column:
+
         return self.column(name, sa.Uuid(as_uuid=True))
 
     def string ( self, name: str, length: int = 255 ) -> Column:
+
         return self.column(name, sa.String(length))
 
     def char ( self, name: str, length: int = 36 ) -> Column:
+
         return self.column(name, sa.CHAR(length))
 
     def text ( self, name: str ) -> Column:
+
         return self.column(name, sa.Text())
 
     def binary ( self, name: str ) -> Column:
+
         return self.column(name, sa.LargeBinary())
 
     def integer ( self, name: str ) -> Column:
+
         return self.column(name, sa.Integer())
 
     def big_integer ( self, name: str ) -> Column:
+
         return self.column(name, sa.BigInteger())
 
     def small_integer ( self, name: str ) -> Column:
+
         return self.column(name, sa.SmallInteger())
 
     def boolean ( self, name: str ) -> Column:
+
         return self.column(name, sa.Boolean()).default(sa.false())
 
     def float ( self, name: str ) -> Column:
+
         return self.column(name, sa.Float())
 
     def decimal ( self, name: str, precision: int = 12, scale: int = 2 ) -> Column:
+
         return self.column(name, sa.Numeric(precision, scale))
 
     def json ( self, name: str ) -> Column:
+
         return self.column(name, sa.JSON().with_variant(JSONB(), "postgresql"))
 
     def array ( self, name: str, kind: Any = None ) -> Column:
+
         return self.column(name, ARRAY(kind or sa.String()))
 
+    def vector ( self, name: str, dimension: int ) -> Column:
+
+        return self.column(name, Embedded(dimension)).stored("main")
+
+    def tsvector ( self, name: str ) -> Column:
+
+        return self.column(name, TSVECTOR())
+
     def inet ( self, name: str ) -> Column:
+
         return self.column(name, INET())
 
     def interval ( self, name: str ) -> Column:
+
         return self.column(name, INTERVAL())
 
     def date ( self, name: str ) -> Column:
+
         return self.column(name, sa.Date())
 
     def time ( self, name: str ) -> Column:
+
         return self.column(name, sa.Time(timezone=True))
 
     def timestamp ( self, name: str ) -> Column:
+
         return self.column(name, sa.DateTime(timezone=True))
 
     def timestamps ( self ) -> None:
@@ -101,6 +129,7 @@ class Blueprint:
         self.timestamp("updated_at").default(sa.func.now())
 
     def soft_deletes ( self ) -> Column:
+
         return self.timestamp("deleted_at").nullable()
 
     def enum ( self, name: str, choices: Sequence[str] | type[Choices], kind: str | None = None ) -> Column:
@@ -134,7 +163,7 @@ class Blueprint:
         method: str | None = None, include: Sequence[str] = (),
     ) -> None:
 
-        if method is not None and method not in METHODS: raise ValueError(method)
+        if method is not None and method not in METHODS: raise Fault(Code.INTERNAL, reason=f"database.method.{method}")
 
         names = (columns,) if isinstance(columns, str) else tuple(columns)
 
@@ -144,12 +173,21 @@ class Blueprint:
         self, columns: Sequence[str] | str, name: str | None = None, where: str | None = None,
         include: Sequence[str] = (),
     ) -> None:
+
         self.index(columns, unique=True, name=name, where=where, include=include)
 
     def gin ( self, columns: Sequence[str] | str, name: str | None = None, where: str | None = None ) -> None:
+
         self.index(columns, name=name, where=where, method="gin")
 
+    def nearest ( self, column: str, metric: str = "cosine", name: str | None = None ) -> None:
+
+        if metric not in METRICS: raise Fault(Code.INTERNAL, reason=f"database.metric.{metric}")
+
+        self.index(f'("{column}") {METRICS[metric]}', name=name or f"{self.table}_{column}_nearest", method="hnsw")
+
     def brin ( self, columns: Sequence[str] | str, name: str | None = None ) -> None:
+
         self.index(columns, name=name, method="brin")
 
     def fulltext ( self, columns: Sequence[str] | str, name: str | None = None, language: str = "english" ) -> None:
@@ -167,9 +205,11 @@ class Blueprint:
         self.keys.append((names, name))
 
     def check ( self, expression: str, name: str | None = None ) -> None:
+
         self.checks.append((expression, name))
 
     def comment ( self, text: str ) -> None:
+
         self.note = text
 
     def drop_unique ( self, name: str ) -> None:
@@ -178,33 +218,43 @@ class Blueprint:
         self.unindex.append(name)
 
     def drop_check ( self, name: str ) -> None:
+
         self.released.append(name)
 
     def drop_primary ( self ) -> None:
+
         self.released.append(f"{self.table}_pkey")
 
     def drop_foreign ( self, column: str ) -> None:
+
         self.unforeign.append(column)
 
     def rename_index ( self, old: str, new: str ) -> None:
+
         self.reindexed.append((old, new))
 
     def drop_column ( self, *names: str ) -> None:
+
         self.dropped.extend(names)
 
     def drop_timestamps ( self ) -> None:
+
         self.drop_column("created_at", "updated_at")
 
     def drop_soft_deletes ( self ) -> None:
+
         self.drop_column("deleted_at")
 
     def drop_morphs ( self, name: str ) -> None:
+
         self.drop_column(f"{name}_type", f"{name}_id")
 
     def rename_column ( self, old: str, new: str ) -> None:
+
         self.renamed.append((old, new))
 
     def drop_index ( self, name: str ) -> None:
+
         self.unindex.append(name)
 
     def index_name ( self, index: Indexed ) -> str:

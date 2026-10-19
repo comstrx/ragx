@@ -24,6 +24,7 @@ class Frequency:
         return self
 
     def cron_expression ( self, expression: str ) -> Self:
+
         return self.at(expression)
 
     def every ( self, seconds: float ) -> Self:
@@ -36,30 +37,39 @@ class Frequency:
         return self
 
     def every_minute ( self ) -> Self:
+
         return self.at("* * * * *")
 
     def every_minutes ( self, count: int ) -> Self:
+
         return self.at(f"*/{count} * * * *")
 
     def every_five_minutes ( self ) -> Self:
+
         return self.every_minutes(5)
 
     def every_ten_minutes ( self ) -> Self:
+
         return self.every_minutes(10)
 
     def every_fifteen_minutes ( self ) -> Self:
+
         return self.every_minutes(15)
 
     def every_thirty_minutes ( self ) -> Self:
+
         return self.every_minutes(30)
 
     def hourly ( self, minute: int = 0 ) -> Self:
+
         return self.at(f"{minute} * * * *")
 
     def every_hours ( self, count: int, minute: int = 0 ) -> Self:
+
         return self.at(f"{minute} */{count} * * *")
 
     def daily ( self ) -> Self:
+
         return self.at("0 0 * * *")
 
     def daily_at ( self, clock: str ) -> Self:
@@ -69,9 +79,11 @@ class Frequency:
         return self.at(f"{minute} {hour} * * *")
 
     def twice_daily ( self, first: int = 1, second: int = 13 ) -> Self:
+
         return self.at(f"0 {first},{second} * * *")
 
     def weekly ( self ) -> Self:
+
         return self.at("0 0 * * 0")
 
     def weekly_on ( self, day: str | int, clock: str = "00:00" ) -> Self:
@@ -82,6 +94,7 @@ class Frequency:
         return self.at(f"{minute} {hour} * * {index}")
 
     def monthly ( self ) -> Self:
+
         return self.at("0 0 1 * *")
 
     def monthly_on ( self, day: int, clock: str = "00:00" ) -> Self:
@@ -91,18 +104,23 @@ class Frequency:
         return self.at(f"{minute} {hour} {day} * *")
 
     def quarterly ( self ) -> Self:
+
         return self.at("0 0 1 1,4,7,10 *")
 
     def yearly ( self ) -> Self:
+
         return self.at("0 0 1 1 *")
 
     def weekdays ( self ) -> Self:
+
         return self.days("1-5")
 
     def weekends ( self ) -> Self:
+
         return self.days("0,6")
 
     def on_days ( self, *names: str | int ) -> Self:
+
         return self.days(",".join(str((Calendar.weekday_index(name) + 1) % 7) for name in names))
 
     def days ( self, weekdays: str ) -> Self:

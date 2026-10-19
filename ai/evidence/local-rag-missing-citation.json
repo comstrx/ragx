@@ -1,0 +1,41 @@
+{
+  "elapsed_ms": 79585.95,
+  "cases": [
+    {
+      "question": "What is the refund period?",
+      "answer": "Customers can request a refund within 14 days of purchase.",
+      "citations": [],
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "model_evaluation": {
+        "score": 0.8,
+        "reasoning": "The provided source text explicitly states that customers can request a refund within 14 days of purchase. This is a direct factual claim regarding the refund period. While the other sources mention support hours and password reset instructions, they do not contain any information related to the refund period. Therefore, the factual support for the question 'What is the refund period?' is fully supported by the available data, resulting in a score of 0.8."
+      },
+      "generative_ranking": [
+        {
+          "index": 0,
+          "score": 0.9
+        },
+        {
+          "index": 1,
+          "score": 0.3
+        },
+        {
+          "index": 2,
+          "score": 0.2
+        }
+      ]
+    },
+    {
+      "question": "ما مدة استرجاع المبلغ؟",
+      "answer": "يتم استرجاع المبلغ خلال 14 أيام من تاريخ الشراء وفقاً للسياسة المتعلقة بالرجوع.",
+      "citations": [
+        "ecd46619e4a544bc8f1f53e5f6b05209896479f8b5d415ac7b96b3d190574be9"
+      ],
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0
+    }
+  ]
+}

@@ -1,8 +1,10 @@
 from dataclasses import dataclass
-from typing import Any, Self
+from typing import Any, Self, override
 
+from core.error import Code, Fault
 import sqlalchemy as sa
 
+STORAGE = ("plain", "external", "extended", "main")
 ACTIONS = {
     "cascade": "CASCADE", "restrict": "RESTRICT", "null": "SET NULL", "default": "SET DEFAULT", "none": "NO ACTION",
 }
@@ -20,6 +22,7 @@ class Column:
     note      : str | None = None
     computed  : str | None = None
     reference : tuple[str, str, str, str] | None = None
+    storage   : str | None = None
 
     def nullable ( self, value: bool = True ) -> Self:
 
@@ -63,11 +66,19 @@ class Column:
 
         return self
 
+    def stored ( self, mode: str ) -> Self:
+
+        if mode not in STORAGE: raise Fault(Code.INTERNAL, reason=f"database.storage.{mode}")
+
+        self.storage = mode
+
+        return self
+
     def references (
         self, table: str, column: str = "id", on_delete: str = "cascade", on_update: str = "none",
     ) -> Self:
 
-        if on_delete not in ACTIONS or on_update not in ACTIONS: raise ValueError((on_delete, on_update))
+        if on_delete not in ACTIONS or on_update not in ACTIONS: raise Fault(Code.INTERNAL, reason="database.action")
 
         self.reference = (table, column, ACTIONS[on_delete], ACTIONS[on_update])
 
@@ -94,6 +105,21 @@ class Column:
         if isinstance(value, int | float): return sa.text(str(value))
 
         return value
+
+class Embedded(sa.types.UserDefinedType[str]):
+
+    cache_ok: bool | None = True
+
+    def __init__ ( self, dimension: int ) -> None:
+
+        if dimension < 1: raise Fault(Code.INTERNAL, reason="database.vector.dimension")
+
+        self.dimension = dimension
+
+    @override
+    def get_col_spec ( self, **_: Any ) -> str:
+
+        return f"vector({self.dimension})"
 
 @dataclass(frozen=True, slots=True)
 class Indexed:

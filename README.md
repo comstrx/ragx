@@ -70,23 +70,27 @@ The [runbook](skill/infra.md#runbook) covers setup, first deployment and rollbac
 
 ## ⚡ Performance
 
-Measured on 2026-10-17 on a development machine, in process, not a benchmark of production hardware:
+Measured on 2026-10-19 on a development machine (8 cores, load average 0.5–1.0), in process with the `api/benches` suite, not a benchmark of production hardware:
 
-| Measurement                                                       | Result                           |
-| ----------------------------------------------------------------- | -------------------------------- |
-| api boot (pool + migrations + schema warm + two warm requests)    | 73 ms                            |
-| `GET /v1/hello` through PostgreSQL, 3000 requests, concurrency 16 | 640 rps, p50 20 ms, p99 37 ms    |
-| `GET /v1/auth/me` (JWT verify + user + roles), concurrency 8      | 280 rps, p50 24 ms               |
-| JWT issue / verify, in process                                    | 19,000 / 13,000 per second       |
-| WebSocket fan-out, one publish to 2,000 subscribed sockets        | 670,000 frames per second        |
-| Queue push + run, event dispatch, in process                      | 52,000 / 67,000 per second       |
-| web first-load JavaScript of the admin export                     | 216 KB over the wire with brotli |
+| Measurement                                                                       | Result                                 |
+| --------------------------------------------------------------------------------- | -------------------------------------- |
+| api boot in a warm process (`bench_boot`, 7 cycles: create · ready · shutdown)    | 6 ms · 35 ms median (34–45) · 4–11 ms  |
+| first burst of 8 concurrent requests right after boot                             | slowest 32 ms                          |
+| `GET /v1/hello` through PostgreSQL, 3000 requests, concurrency 16                 | 499 rps, p50 27 ms, p99 47 ms          |
+| `GET /v1/auth/me` (JWT verify + user + roles), 3000 requests, concurrency 8       | 242 rps, p50 30 ms, p99 47 ms          |
+| JWT issue / verify, in process                                                    | 18,200 / 11,700 per second             |
+| WebSocket fan-out, one publish to 2,000 subscribed sockets                        | 588,000 frames per second              |
+| Queue push + run, event dispatch, in process                                      | 18,600 / 33,900 per second             |
+| web first-load JavaScript of the admin export (2026-10-17)                        | 216 KB over the wire with brotli       |
+
+Queue and event figures dropped from the 2026-10-17 run (52,000 / 67,000) because every job now carries its request context, leaves only after the commit and crosses the broker as JSON, and every dispatch keeps its history; the budgets in `api/benches` hold. Run `uv run python -m benches.bench_<name>` in `api/` to reproduce.
 
 ---
 
 ## 🛡️ Security
 
 - Typed faults everywhere: database and framework errors are translated into the one envelope, and unexpected exceptions never leak their message.
+- The api trusts `X-Forwarded-For` only through the configured proxies, sends `Retry-After` with every `429`, rotates a refresh token at most once under a race, spends the same argon2 work for unknown and known emails, and never echoes a path or user input in a fault reason.
 - Security headers and a Content Security Policy on every web answer, derived from the compiled spec; CORS allows only the configured browser origins.
 - Supply chain: hash-pinned GitHub actions and container images, dependency review, gitleaks, trivy, syft and zizmor in the global workflow; Dependabot per ecosystem.
 - Secrets stay in ignored runtime files. Infra uses one env schema, parses values as data, redacts sensitive output and renders service env files with mode `0600`; distributable bundles contain safe defaults and templates only.

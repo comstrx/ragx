@@ -2,6 +2,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Self
 
+from core.error import Code, Fault
 from .duration import Duration
 from .moment import Moment
 
@@ -26,18 +27,21 @@ class Period:
 
     @classmethod
     def around ( cls, center: Moment, duration: Duration ) -> Self:
+
         return cls(center.shift(duration.scaled(-0.5)), center.shift(duration.scaled(0.5)))
 
     @classmethod
     def unit ( cls, moment: Moment, unit: str ) -> Self:
+
         return cls(moment.start_of(unit), moment.end_of(unit))
 
     def length ( self ) -> Duration:
+
         return self.start.diff(self.end)
 
     def each ( self, unit: str = "day", step: int = 1 ) -> Iterator[Moment]:
 
-        if unit not in STEPS or step < 1: raise ValueError(unit)
+        if unit not in STEPS or step < 1: raise Fault(Code.BAD_REQUEST, reason="date.unit")
 
         current = self.start
         shift   = { STEPS[unit]: step }
@@ -49,15 +53,19 @@ class Period:
             current = current.add(**shift)
 
     def count ( self, unit: str = "day", step: int = 1 ) -> int:
+
         return sum(1 for _ in self.each(unit, step))
 
     def days ( self ) -> list[Moment]:
+
         return list(self.each("day"))
 
     def contains ( self, moment: Moment, inclusive: bool = True ) -> bool:
+
         return moment.is_between(self.start, self.end, inclusive)
 
     def overlaps ( self, other: Period ) -> bool:
+
         return self.start <= other.end and other.start <= self.end
 
     def intersect ( self, other: Period ) -> Period | None:
@@ -67,11 +75,12 @@ class Period:
         return Period(max(self.start, other.start), min(self.end, other.end))
 
     def merge ( self, other: Period ) -> Period:
+
         return Period(min(self.start, other.start), max(self.end, other.end))
 
     def split ( self, count: int ) -> list[Period]:
 
-        if count < 1: raise ValueError(count)
+        if count < 1: raise Fault(Code.BAD_REQUEST, reason="date.split")
 
         piece  = self.length().scaled(1 / count)
         pieces: list[Period] = []
@@ -88,16 +97,21 @@ class Period:
         return pieces
 
     def shift ( self, duration: Duration ) -> Period:
+
         return Period(self.start.shift(duration), self.end.shift(duration))
 
     def is_empty ( self ) -> bool:
+
         return self.start.at == self.end.at
 
     def dump ( self ) -> dict[str, str]:
+
         return { "start": self.start.iso(), "end": self.end.iso() }
 
     def __iter__ ( self ) -> Iterator[Moment]:
+
         return self.each("day")
 
     def __contains__ ( self, moment: object ) -> bool:
+
         return isinstance(moment, Moment) and self.contains(moment)

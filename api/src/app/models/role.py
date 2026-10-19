@@ -23,4 +23,5 @@ class Role(Model):
     deleted_at : DateTime | None = None
 
     def is_admin ( self ) -> bool:
+
         return self.name == "admin"

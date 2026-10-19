@@ -1,7 +1,5 @@
-from pydantic import Field
+from core.validate import Shape, field
 
-from app.utils.bases import BaseRequest
+class HelloRequest(Shape):
 
-class HelloRequest(BaseRequest):
-
-    name: str = Field(default="World", min_length=1, max_length=32, pattern=r"^[\w .'-]+$")
+    name: str = field("World", min_length=1, max_length=32, pattern=r"^[\w .'-]+$")

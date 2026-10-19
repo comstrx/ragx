@@ -15,4 +15,5 @@ class Migration:
         await schema.create(Table.ROLE_USER, define)
 
     async def down ( self, schema: Schema ) -> None:
+
         await schema.drop(Table.ROLE_USER)

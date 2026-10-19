@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from typing import Protocol, TypedDict
@@ -5,10 +6,11 @@ from typing import Protocol, TypedDict
 from core.date import date
 from core.error import Code, Fault
 from core.log import log
-import sqlalchemy as sa
-from .engine import Database, Session
 from .blueprint import Blueprint
+from .engine import Database
 from .schema import Schema
+from .session import Session
+import sqlalchemy as sa
 
 LOCK     = 7_201_441
 TEMPLATE = """from core.database import Blueprint, Schema
@@ -50,6 +52,7 @@ class Migrator:
         self._ledger   = sa.table(table, sa.column("name"), sa.column("batch"), sa.column("applied_at"))
 
     def files ( self ) -> list[Path]:
+
         return sorted(path for path in self._folder.glob("*.py") if path.is_file() and not path.name.startswith("_"))
 
     def next_number ( self ) -> int:
@@ -196,3 +199,37 @@ class Migrator:
             table.timestamp("applied_at").default(sa.func.now())
 
         await Schema(session).create(self.table, define)
+
+class Seeder(Protocol):
+
+    name: str
+
+    async def run ( self, database: Database ) -> None: ...
+
+class Seeds:
+
+    def __init__ ( self, database: Database, seeders: Sequence[Seeder] ) -> None:
+
+        self._database = database
+        self._seeders  = tuple(seeders)
+
+    def names ( self ) -> list[str]:
+
+        return [seeder.name for seeder in self._seeders]
+
+    async def run ( self, only: Sequence[str] = () ) -> list[str]:
+
+        done: list[str] = []
+
+        for seeder in self._seeders:
+
+            if only and seeder.name not in only: continue
+
+            started = date.tick()
+
+            await seeder.run(self._database)
+
+            done.append(seeder.name)
+            log.info("database.seeded", seeder=seeder.name, ms=date.elapsed(started))
+
+        return done

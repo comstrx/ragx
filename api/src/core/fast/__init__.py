@@ -1,6 +1,5 @@
-from .fast import Fast
+from .fast import Fast, Sliding, Verdict, Window
 from .lru import Lru
-from .rate import Sliding, Verdict, Window
 from .ttl import Ttl
 
 fast = Fast()

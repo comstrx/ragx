@@ -1,11 +1,31 @@
 from collections.abc import Sequence
 from typing import Any, Protocol
 
+from core.error import Code
 from fastapi import FastAPI, Request
 from fastapi.openapi.utils import get_openapi
 from scalar_fastapi import get_scalar_api_reference
 from starlette.responses import HTMLResponse
-from core.error import Code
+
+FAILURES = (
+    Code.BAD_REQUEST, Code.UNAUTHORIZED, Code.FORBIDDEN, Code.NOT_FOUND, Code.CONFLICT, Code.VALIDATION,
+    Code.TOO_MANY_REQUESTS, Code.INTERNAL, Code.UNAVAILABLE,
+)
+STRINGS  = { "type": "array", "items": { "type": "string" } }
+ENVELOPE = {
+    "type"       : "object",
+    "required"   : ["data", "message", "errors", "code", "reason", "meta"],
+    "properties" : {
+        "data"    : { "nullable": True },
+        "message" : { "type": "string", "nullable": True },
+        "errors"  : { "type": "object", "nullable": True, "additionalProperties": STRINGS },
+        "code"    : { "type": "string", "enum": [code.value for code in Code] },
+        "reason"  : { "type": "string", "nullable": True },
+        "meta"    : { "type": "object", "properties": { "request_id": { "type": "string", "nullable": True } } },
+    },
+}
+METHODS = ("get", "post", "put", "patch", "delete", "options", "head", "trace")
+FAILURE = { "application/json": { "schema": { "$ref": "#/components/schemas/Envelope" } } }
 
 class Documented(Protocol):
 
@@ -56,26 +76,6 @@ class Documented(Protocol):
 
     @property
     def hide ( self ) -> Sequence[str]: ...
-
-FAILURES = (
-    Code.BAD_REQUEST, Code.UNAUTHORIZED, Code.FORBIDDEN, Code.NOT_FOUND, Code.CONFLICT, Code.VALIDATION,
-    Code.TOO_MANY_REQUESTS, Code.INTERNAL, Code.UNAVAILABLE,
-)
-STRINGS  = { "type": "array", "items": { "type": "string" } }
-ENVELOPE = {
-    "type"       : "object",
-    "required"   : ["data", "message", "errors", "code", "reason", "meta"],
-    "properties" : {
-        "data"    : { "nullable": True },
-        "message" : { "type": "string", "nullable": True },
-        "errors"  : { "type": "object", "nullable": True, "additionalProperties": STRINGS },
-        "code"    : { "type": "string", "enum": [code.value for code in Code] },
-        "reason"  : { "type": "string", "nullable": True },
-        "meta"    : { "type": "object", "properties": { "request_id": { "type": "string", "nullable": True } } },
-    },
-}
-METHODS = ("get", "post", "put", "patch", "delete", "options", "head", "trace")
-FAILURE = { "application/json": { "schema": { "$ref": "#/components/schemas/Envelope" } } }
 
 class Docs:
 

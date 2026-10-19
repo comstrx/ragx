@@ -3,9 +3,75 @@ from pathlib import Path
 from typing import Any
 
 from anyio import Path as AsyncPath, to_thread
-from .base import Pathish
-from .kind import Kind
-import shutil
+from .path import Pathish
+import mimetypes, shutil
+
+ARCHIVES    = frozenset({"zip", "tar", "gz", "tgz", "bz2", "xz", "7z", "rar", "zst"})
+DOCUMENTS   = frozenset({
+    "pdf", "doc", "docx", "odt", "rtf", "xls", "xlsx", "ods", "csv", "ppt", "pptx", "odp", "epub",
+})
+EXECUTABLES = frozenset({"exe", "dll", "so", "dylib", "bin", "msi", "bat", "cmd", "sh", "bash", "com", "app", "jar"})
+CODE        = frozenset({
+    "py", "js", "ts", "tsx", "jsx", "rs", "go", "rb", "php", "java", "c", "h", "cpp", "cs", "swift",
+})
+KINDS       = ("image", "audio", "video", "archive", "document", "text", "code", "executable", "font", "other")
+
+class Kind:
+
+    def kind ( self, target: Pathish, declared: str | None = None ) -> str:
+
+        extension = Path(target).suffix.lstrip(".").lower()
+        guessed   = (declared or mimetypes.guess_type(str(target))[0] or "").split(";")[0].strip().lower()
+        family    = guessed.split("/")[0]
+
+        if extension in ARCHIVES: return "archive"
+        if extension in EXECUTABLES: return "executable"
+        if extension in CODE: return "code"
+        if extension in DOCUMENTS: return "document"
+        if family in ("image", "audio", "video", "font"): return family
+        if family == "text" or guessed in ("application/json", "application/xml", "application/x-yaml"): return "text"
+
+        return "other"
+
+    def is_image ( self, target: Pathish ) -> bool:
+
+        return self.kind(target) == "image"
+
+    def is_audio ( self, target: Pathish ) -> bool:
+
+        return self.kind(target) == "audio"
+
+    def is_video ( self, target: Pathish ) -> bool:
+
+        return self.kind(target) == "video"
+
+    def is_archive ( self, target: Pathish ) -> bool:
+
+        return self.kind(target) == "archive"
+
+    def is_document ( self, target: Pathish ) -> bool:
+
+        return self.kind(target) == "document"
+
+    def is_text ( self, target: Pathish ) -> bool:
+
+        return self.kind(target) in ("text", "code")
+
+    def is_code ( self, target: Pathish ) -> bool:
+
+        return self.kind(target) == "code"
+
+    def is_executable ( self, target: Pathish ) -> bool:
+
+        return self.kind(target) == "executable"
+
+    def is_media ( self, target: Pathish ) -> bool:
+
+        return self.kind(target) in ("image", "audio", "video")
+
+    def kinds ( self ) -> tuple[str, ...]:
+
+        return KINDS
 
 kinds = Kind()
 
@@ -38,39 +104,47 @@ class Scan:
         return { name: sorted(paths) for name, paths in groups.items() if paths }
 
     async def of_kind ( self, folder: Pathish, kind: str, recursive: bool = True ) -> list[Path]:
+
         return (await self.categorize(folder, recursive)).get(kind, [])
 
     async def images ( self, folder: Pathish, recursive: bool = True ) -> list[Path]:
+
         return await self.of_kind(folder, "image", recursive)
 
     async def videos ( self, folder: Pathish, recursive: bool = True ) -> list[Path]:
+
         return await self.of_kind(folder, "video", recursive)
 
     async def audios ( self, folder: Pathish, recursive: bool = True ) -> list[Path]:
+
         return await self.of_kind(folder, "audio", recursive)
 
     async def documents ( self, folder: Pathish, recursive: bool = True ) -> list[Path]:
+
         return await self.of_kind(folder, "document", recursive)
 
     async def archives ( self, folder: Pathish, recursive: bool = True ) -> list[Path]:
+
         return await self.of_kind(folder, "archive", recursive)
 
     async def empty_dirs ( self, folder: Pathish ) -> list[Path]:
 
-        found = [Path(path) async for path in AsyncPath(folder).rglob("*") if await self.bare(path)]
+        found = [Path(path) async for path in AsyncPath(folder).rglob("*") if await self._bare_(path)]
 
         return sorted(found)
 
-    async def bare ( self, path: AsyncPath ) -> bool:
+    async def _bare_ ( self, path: AsyncPath ) -> bool:
+
         return await path.is_dir() and not [child async for child in path.iterdir()]
 
     async def empty_files ( self, folder: Pathish ) -> list[Path]:
 
-        found = [Path(path) async for path in AsyncPath(folder).rglob("*") if await self.hollow(path)]
+        found = [Path(path) async for path in AsyncPath(folder).rglob("*") if await self._hollow_(path)]
 
         return sorted(found)
 
-    async def hollow ( self, path: AsyncPath ) -> bool:
+    async def _hollow_ ( self, path: AsyncPath ) -> bool:
+
         return await path.is_file() and (await path.stat()).st_size == 0
 
     async def search (
@@ -93,6 +167,7 @@ class Scan:
         return sorted(found)
 
     async def select ( self, folder: Pathish, test: Callable[[Path], bool], pattern: str = "**/*" ) -> list[Path]:
+
         return sorted([Path(path) async for path in AsyncPath(folder).glob(pattern) if test(Path(path))])
 
     async def summary ( self, folder: Pathish ) -> dict[str, Any]:

@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Self
+from typing import Self, override
 
+from core.error import Code, Fault
 from core.parse import parse
 from .format import Formatter
 
@@ -25,7 +26,7 @@ class Duration:
 
         unknown = set(units) - set(UNITS)
 
-        if unknown: raise ValueError(sorted(unknown))
+        if unknown: raise Fault(Code.BAD_REQUEST, reason="date.duration")
 
         return cls(sum(float(amount) * UNITS[unit] for unit, amount in units.items()))
 
@@ -37,7 +38,7 @@ class Duration:
 
         seconds = parse.duration(value, -1.0)
 
-        if seconds < 0: raise ValueError(value)
+        if seconds < 0: raise Fault(Code.BAD_REQUEST, reason="date.duration")
 
         return cls(seconds)
 
@@ -50,28 +51,34 @@ class Duration:
         return cls(last - first)
 
     def seconds ( self ) -> float:
+
         return self.total
 
     def milliseconds ( self ) -> float:
+
         return self.total * 1000
 
     def minutes ( self ) -> float:
+
         return self.total / MINUTE
 
     def hours ( self ) -> float:
+
         return self.total / HOUR
 
     def days ( self ) -> float:
+
         return self.total / DAY
 
     def weeks ( self ) -> float:
+
         return self.total / WEEK
 
     def in_ ( self, unit: str ) -> float:
 
         size = UNITS.get(unit if unit.endswith("s") else unit + "s")
 
-        if size is None: raise ValueError(unit)
+        if size is None: raise Fault(Code.BAD_REQUEST, reason="date.unit")
 
         return self.total / size
 
@@ -88,6 +95,7 @@ class Duration:
         }
 
     def human ( self, short: bool = False ) -> str:
+
         return formatter.span(self.total, short)
 
     def iso ( self ) -> str:
@@ -111,49 +119,66 @@ class Duration:
         return f"{hours:02d}:{parts['minutes']:02d}:{parts['seconds']:02d}"
 
     def timedelta ( self ) -> timedelta:
+
         return timedelta(seconds=self.total)
 
     def is_zero ( self ) -> bool:
+
         return self.total == 0
 
     def is_negative ( self ) -> bool:
+
         return self.total < 0
 
     def abs ( self ) -> Self:
+
         return type(self)(abs(self.total))
 
     def scaled ( self, factor: float ) -> Self:
+
         return type(self)(self.total * factor)
 
     def plus ( self, other: Duration | float ) -> Self:
+
         return type(self)(self.total + (other.total if isinstance(other, Duration) else float(other)))
 
     def minus ( self, other: Duration | float ) -> Self:
+
         return type(self)(self.total - (other.total if isinstance(other, Duration) else float(other)))
 
     def clamp ( self, low: Duration, high: Duration ) -> Self:
+
         return type(self)(max(low.total, min(self.total, high.total)))
 
     def dump ( self ) -> float:
+
         return self.total
 
     def __bool__ ( self ) -> bool:
+
         return self.total != 0
 
+    @override
     def __str__ ( self ) -> str:
+
         return self.human(short=True)
 
     def __add__ ( self, other: Duration ) -> Duration:
+
         return Duration(self.total + other.total)
 
     def __sub__ ( self, other: Duration ) -> Duration:
+
         return Duration(self.total - other.total)
 
     def __mul__ ( self, factor: float ) -> Duration:
+
         return Duration(self.total * factor)
 
     def __truediv__ ( self, divisor: float ) -> Duration:
+
         return Duration(self.total / divisor)
 
     def __neg__ ( self ) -> Duration:
+
         return Duration(-self.total)

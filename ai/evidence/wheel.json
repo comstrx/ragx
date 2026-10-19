@@ -1,0 +1,11 @@
+{
+  "wheel": "ragx_ai-0.1.0-py3-none-any.whl",
+  "files": 289,
+  "bytes": 318309,
+  "includes_llm": true,
+  "includes_rag": true,
+  "includes_models": true,
+  "includes_candidate": true,
+  "typed": true,
+  "contains_cache_or_weights": false
+}

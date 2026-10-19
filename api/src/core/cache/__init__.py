@@ -1,8 +1,7 @@
-from .cache import Cache, Hit
+from .cache import Cache, Hit, Tagged
 from .lock import Lock
 from .redis import RedisStore
 from .store import MemoryStore, Store
-from .tags import Tagged
 
 cache = Cache()
 

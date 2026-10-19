@@ -1,11 +1,16 @@
-from collections.abc import Awaitable, Callable, Coroutine, Iterable
+from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor
-from typing import Any
-import asyncio, functools
+from typing import Any, Unpack
+
+from core.error import Code, Fault
+from core.func import Options, Policy, func
+import asyncio, contextlib, functools, os, signal
 
 type Job[T] = Callable[[], Awaitable[T]]
 type Task[T] = Coroutine[Any, Any, T]
-type Catch = tuple[type[BaseException], ...]
+
+PLAIN  = { "LANG": "C.UTF-8" }
+OUTPUT = 1 << 20
 
 class Run:
 
@@ -27,9 +32,11 @@ class Run:
         return [task.result() for task in tasks]
 
     async def settle[T] ( self, *jobs: Awaitable[T] ) -> list[T | BaseException]:
+
         return list(await asyncio.gather(*jobs, return_exceptions=True))
 
     async def map[T, R] ( self, fn: Callable[[T], Awaitable[R]], items: Iterable[T], limit: int = 8 ) -> list[R]:
+
         return await self.gather(*(fn(item) for item in items), limit=limit)
 
     async def first[T] ( self, *jobs: Awaitable[T] ) -> T:
@@ -47,9 +54,11 @@ class Run:
         finally:
             for task in tasks: task.cancel()
 
-    async def timeout[T] ( self, job: Awaitable[T], seconds: float ) -> T:
+    async def timeout[T] ( self, job: Awaitable[T], seconds: float, reason: str = "timeout" ) -> T:
 
-        async with asyncio.timeout(seconds): return await job
+        try:
+            async with asyncio.timeout(seconds): return await job
+        except TimeoutError as error: raise Fault(Code.UNAVAILABLE, reason=reason, unknown=True) from error
 
     async def wait_for[T] ( self, job: Awaitable[T], seconds: float, default: T ) -> T:
 
@@ -57,30 +66,42 @@ class Run:
             async with asyncio.timeout(seconds): return await job
         except TimeoutError: return default
 
-    async def retry[T] (
-        self, job: Job[T], times: int = 3, delay: float = 0.1, backoff: float = 2.0, on: Catch = (Exception,),
-    ) -> T:
+    async def retry[T] ( self, job: Job[T], policy: Policy | None = None, **options: Unpack[Options] ) -> T:
 
-        wait = delay
-
-        for attempt in range(1, times + 1):
-
-            try: return await job()
-            except on:
-
-                if attempt == times: raise
-
-                await asyncio.sleep(wait)
-
-                wait *= backoff
-
-        raise RuntimeError(times)
+        return await func.retry(job, policy, **options)()
 
     async def offload[**P, T] ( self, work: Callable[P, T], *args: P.args, **kwargs: P.kwargs ) -> T:
+
         return await asyncio.to_thread(work, *args, **kwargs)
 
     async def compute[T] ( self, work: Callable[..., T], *args: object ) -> T:
+
         return await asyncio.get_running_loop().run_in_executor(self.processes(), work, *args)
+
+    async def command (
+        self, argv: Sequence[str], feed: bytes = b"", seconds: float = 30.0, limit: int = OUTPUT,
+        environment: Mapping[str, str] = PLAIN,
+    ) -> tuple[int, bytes]:
+
+        child = await asyncio.create_subprocess_exec(
+            *argv, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            env=dict(environment), start_new_session=True,
+        )
+
+        try:
+            async with asyncio.timeout(seconds): output, _ = await child.communicate(feed)
+        except TimeoutError as error: raise Fault(Code.UNAVAILABLE, reason="thread.command.timeout") from error
+        finally:
+
+            if child.returncode is None:
+
+                with contextlib.suppress(ProcessLookupError): os.killpg(child.pid, signal.SIGKILL)
+
+                await child.wait()
+
+        if len(output) > limit: raise Fault(Code.VALIDATION, reason="thread.command.output")
+
+        return child.returncode or 0, output
 
     def processes ( self, workers: int | None = None ) -> ProcessPoolExecutor:
 
@@ -113,9 +134,11 @@ class Run:
         return cached
 
     async def sleep ( self, seconds: float ) -> None:
+
         await asyncio.sleep(seconds)
 
     async def forever ( self ) -> None:
+
         await asyncio.Event().wait()
 
     async def poll (
@@ -136,9 +159,11 @@ class Run:
             await asyncio.sleep(every)
 
     def run[T] ( self, job: Task[T] ) -> T:
+
         return asyncio.run(job)
 
     def loop ( self ) -> asyncio.AbstractEventLoop:
+
         return asyncio.get_running_loop()
 
     def running ( self ) -> bool:

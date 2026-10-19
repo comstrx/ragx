@@ -27,9 +27,11 @@ class Channel:
         return found.groupdict() if found else None
 
     def params ( self ) -> list[str]:
+
         return PARAM.findall(self.pattern)
 
     def describe ( self ) -> dict[str, Any]:
+
         return { "pattern": self.pattern, "guests": self.guests, "guarded": self.authorize is not None }
 
 class Channels:
@@ -49,12 +51,15 @@ class Channels:
         return channel
 
     def public ( self, pattern: str ) -> Channel:
+
         return self.channel(pattern, None, guests=True)
 
     def patterns ( self ) -> list[str]:
+
         return [channel.pattern for channel in self._channels]
 
     def all ( self ) -> list[Channel]:
+
         return list(self._channels)
 
     def forget ( self, pattern: str ) -> bool:
@@ -65,8 +70,13 @@ class Channels:
 
         return len(self._channels) < before
 
-    def clear ( self ) -> None:
+    def clear ( self ) -> int:
+
+        count = len(self._channels)
+
         self._channels.clear()
+
+        return count
 
     def find ( self, name: str ) -> tuple[Channel, dict[str, str]] | None:
 
@@ -93,4 +103,5 @@ class Channels:
         return name
 
     def describe ( self ) -> list[dict[str, Any]]:
+
         return [channel.describe() for channel in self._channels]

@@ -1,7 +1,6 @@
-from core.validate import Email, Password
-from app.utils.bases import BaseRequest
+from core.validate import Email, Password, Shape
 
-class LoginRequest(BaseRequest):
+class LoginRequest(Shape):
 
     email    : Email
     password : Password

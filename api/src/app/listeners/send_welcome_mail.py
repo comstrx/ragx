@@ -1,12 +1,14 @@
+from typing import override
 from core.config import config
 from core.error import Fault
 from core.queue import Queued
 from app.events import UserRegistered
 from app.mails import WelcomeMail
-from app.utils.bases import BaseListener
+from app.utils.cycle import Listener
 
-class SendWelcomeMail(BaseListener, Queued):
+class SendWelcomeMail(Listener, Queued):
 
+    @override
     async def handle ( self, event: UserRegistered ) -> None:
 
         welcome = WelcomeMail(name=event.name, app=config.get("app.name", "RagX")).to(event.email)

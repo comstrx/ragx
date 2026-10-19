@@ -1,5 +1,6 @@
 from collections.abc import Awaitable, Callable
 from typing import Any
+
 import asyncio, functools, time
 
 type Async[**P, T] = Callable[P, Awaitable[T]]

@@ -1,9 +1,9 @@
 from core.error import Code, Fault
 from core.http import Facts, Request, Response
 from app.services import HealthService
-from app.utils.bases import BaseController
+from app.utils.cycle import Controller
 
-class HealthController(BaseController):
+class HealthController(Controller):
 
     def __init__ ( self, service: HealthService ) -> None:
 

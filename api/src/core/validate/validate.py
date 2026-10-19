@@ -2,66 +2,71 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError, create_model
 from core.error import Code, Fault
-from .rulebook import Rulebook
-from .rules import Email, Phone, Url
+from pydantic import BaseModel, TypeAdapter, ValidationError, create_model
+from .checked import BOOK
+from .rule import Rules
+from .shape import Email, Phone, Shape, Url
 import functools
 
 type Errors = dict[str, list[str]]
-type Shape = Mapping[str, Any]
 
 @functools.cache
 def adapter ( kind: Any ) -> TypeAdapter[Any]:
+
     return TypeAdapter(kind)
 
 class Validate:
 
     def __init__ ( self ) -> None:
 
-        self.rules = Rulebook()
+        self.rules = BOOK
+        self.build = Rules()
 
     def make (
         self, data: Mapping[str, Any], rules: Mapping[str, str | list[str]], messages: Mapping[str, str] | None = None,
     ) -> Errors:
+
         return self.rules.check(data, rules, messages)
 
     def validated (
         self, data: Mapping[str, Any], rules: Mapping[str, str | list[str]], messages: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
+
         return self.rules.validate(data, rules, messages)
 
-    def rule ( self, name: str, check: Any ) -> None:
+    def extend ( self, name: str, check: Any ) -> None:
+
         self.rules.extend(name, check)
 
     def check ( self, kind: Any, value: object, field: str = "value" ) -> Any:
 
         try: return adapter(kind).validate_python(value)
-        except ValidationError as error: raise self.fault(error, field) from error
+        except ValidationError as error: raise self._fault_(error, field) from error
 
     def check_json ( self, kind: Any, text: str | bytes, field: str = "value" ) -> Any:
 
         try: return adapter(kind).validate_json(text)
-        except ValidationError as error: raise self.fault(error, field) from error
+        except ValidationError as error: raise self._fault_(error, field) from error
 
     def model[M: BaseModel] ( self, model: type[M], data: object ) -> M:
 
         try: return model.model_validate(data)
-        except ValidationError as error: raise self.fault(error) from error
+        except ValidationError as error: raise self._fault_(error) from error
 
-    def schema ( self, title: str = "Shape", /, **fields: Any ) -> type[BaseModel]:
+    def schema ( self, title: str = "Shape", /, **fields: Any ) -> type[Shape]:
 
         definitions: dict[str, Any] = {
             key: (kind if isinstance(kind, tuple) else (kind, ...)) for key, kind in fields.items()
         }
-        config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-        return create_model(title, __config__=config, **definitions)
+        return create_model(title, __base__=Shape, **definitions)
 
     def shape ( self, data: object, **fields: Any ) -> dict[str, Any]:
+
         return self.model(self.schema(**fields), data).model_dump()
 
-    def errors ( self, error: ValidationError, field: str | None = None ) -> Errors:
+    def _errors_ ( self, error: ValidationError, field: str | None = None ) -> Errors:
 
         errors: Errors = {}
 
@@ -74,8 +79,9 @@ class Validate:
 
         return errors
 
-    def fault ( self, error: ValidationError, field: str | None = None ) -> Fault:
-        return Fault(Code.VALIDATION, errors=self.errors(error, field))
+    def _fault_ ( self, error: ValidationError, field: str | None = None ) -> Fault:
+
+        return Fault(Code.VALIDATION, errors=self._errors_(error, field))
 
     def passes ( self, kind: Any, value: object ) -> bool:
 
@@ -87,17 +93,20 @@ class Validate:
     def failures ( self, kind: Any, value: object, field: str = "value" ) -> Errors:
 
         try: adapter(kind).validate_python(value)
-        except ValidationError as error: return self.errors(error, field)
+        except ValidationError as error: return self._errors_(error, field)
 
         return {}
 
     def is_email ( self, value: object ) -> bool:
+
         return self.passes(Email, value)
 
     def is_phone ( self, value: object ) -> bool:
+
         return self.passes(Phone, value)
 
     def is_url ( self, value: object ) -> bool:
+
         return self.passes(Url, value)
 
     def is_uuid ( self, value: object ) -> bool:
@@ -122,6 +131,7 @@ class Validate:
         if missing: raise Fault(Code.VALIDATION, errors=missing)
 
     def refuse ( self, field: str, message: str ) -> Fault:
+
         return Fault(Code.VALIDATION, errors={ field: [message] })
 
     def merge ( self, *groups: Errors ) -> Errors:

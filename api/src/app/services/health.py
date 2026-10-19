@@ -7,9 +7,9 @@ from core.health import Result, health
 from core.llm import llm
 from core.queue import queue
 from core.storage import storage
-from app.utils.bases import BaseService
+from app.utils.cycle import Service
 
-class HealthService(BaseService):
+class HealthService(Service):
 
     def __init__ ( self, database: Database ) -> None:
 
@@ -38,6 +38,7 @@ class HealthService(BaseService):
         return Result.ok(**cache.describe()) if alive else Result.degraded("cache", **cache.describe())
 
     async def queue ( self ) -> Result:
+
         return Result.ok(**queue.describe()) if queue.ready() else Result.degraded("queue")
 
     async def status ( self, facts: Mapping[str, object] ) -> tuple[bool, dict[str, object]]:

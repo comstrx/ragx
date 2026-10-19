@@ -1,15 +1,20 @@
 from collections.abc import Callable, Hashable, Iterator
 from typing import Any, cast
+
 import time
 
 type Entry[V] = tuple[float | None, V]
 
 class Ttl[K: Hashable, V]:
 
-    def __init__ ( self, sweep: int = 512, clock: Callable[[], float] = time.monotonic ) -> None:
+    def __init__ (
+        self, sweep: int = 512, clock: Callable[[], float] = time.monotonic, limit: int | None = None,
+    ) -> None:
 
-        self._sweep   = max(sweep, 1)
-        self._clock   = clock
+        self._sweep     = max(sweep, 1)
+        self._clock     = clock
+        self._limit     = limit
+        self._evictions = 0
         self._entries: dict[K, Entry[V]] = {}
 
     def entry ( self, key: K ) -> Entry[V] | None:
@@ -35,7 +40,13 @@ class Ttl[K: Hashable, V]:
 
         if len(self._entries) >= self._sweep: self.sweep()
 
+        self._entries.pop(key, None)
         self._entries[key] = (self._clock() + ttl if ttl else None, value)
+
+        while self._limit is not None and len(self._entries) > self._limit:
+
+            self._entries.pop(next(iter(self._entries)))
+            self._evictions += 1
 
     def add ( self, key: K, value: V, ttl: float | None = None ) -> bool:
 
@@ -58,6 +69,7 @@ class Ttl[K: Hashable, V]:
         return value
 
     def delete ( self, key: K ) -> bool:
+
         return self._entries.pop(key, None) is not None
 
     def pull ( self, key: K, default: V | None = None ) -> V | None:
@@ -97,10 +109,16 @@ class Ttl[K: Hashable, V]:
         return True
 
     def has ( self, key: K ) -> bool:
+
         return self.entry(key) is not None
 
-    def clear ( self ) -> None:
+    def clear ( self ) -> int:
+
+        count = len(self._entries)
+
         self._entries.clear()
+
+        return count
 
     def sweep ( self ) -> int:
 
@@ -118,13 +136,17 @@ class Ttl[K: Hashable, V]:
         return list(self._entries)
 
     def stats ( self ) -> dict[str, Any]:
-        return { "size": len(self._entries), "sweep": self._sweep }
+
+        return { "size": len(self._entries), "sweep": self._sweep, "limit": self._limit, "evictions": self._evictions }
 
     def __len__ ( self ) -> int:
+
         return len(self._entries)
 
     def __contains__ ( self, key: object ) -> bool:
+
         return self.entry(cast("K", key)) is not None
 
     def __iter__ ( self ) -> Iterator[K]:
+
         return iter(self.keys())

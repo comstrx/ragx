@@ -1,14 +1,18 @@
 from collections.abc import Iterable
 from typing import Any
 
-from redis.asyncio import Redis
-from redis.exceptions import RedisError
 from core.error import Code, Fault
 from core.json import json
+from redis.asyncio import Redis
+from redis.exceptions import RedisError
 
 BATCH   = 500
 MILLI   = 1000
 RELEASE = 'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end'
+COUNT   = (
+    'local value = redis.call("incrby", KEYS[1], ARGV[1]) '
+    'if tonumber(ARGV[2]) > 0 then redis.call("pexpire", KEYS[1], ARGV[2], "NX") end return value'
+)
 
 class RedisStore:
 
@@ -20,9 +24,11 @@ class RedisStore:
         self._client: Redis = Redis.from_url(url, socket_connect_timeout=wait, socket_timeout=wait)
 
     def key ( self, key: str ) -> str:
+
         return f"{self._prefix}:{key}"
 
-    def client ( self ) -> Redis:
+    def _client_ ( self ) -> Redis:
+
         return self._client
 
     async def get ( self, key: str ) -> object | None:
@@ -32,6 +38,7 @@ class RedisStore:
         return json.loads(raw) if raw else None
 
     async def set ( self, key: str, value: object, ttl: float | None = None ) -> None:
+
         await self.guard(self._client.set(self.key(key), json.encode(value), px=self.millis(ttl)))
 
     async def add ( self, key: str, value: object, ttl: float | None = None ) -> bool:
@@ -41,19 +48,15 @@ class RedisStore:
         return bool(stored)
 
     async def delete ( self, key: str ) -> bool:
+
         return bool(await self.guard(self._client.delete(self.key(key))))
 
     async def increment ( self, key: str, step: int = 1, ttl: float | None = None ) -> int:
 
-        pipe = self._client.pipeline(transaction=True)
+        span  = int(ttl * MILLI) if ttl else 0
+        value = await self.guard(self._client.eval(COUNT, 1, self.key(key), step, span))
 
-        pipe.incrby(self.key(key), step)
-
-        if ttl: pipe.pexpire(self.key(key), int(ttl * MILLI), nx=True)
-
-        outcome = await self.guard(pipe.execute())
-
-        return int(outcome[0])
+        return int(value)
 
     async def ttl ( self, key: str ) -> float | None:
 
@@ -62,6 +65,7 @@ class RedisStore:
         return left / MILLI if left >= 0 else None
 
     async def touch ( self, key: str, ttl: float ) -> bool:
+
         return bool(await self.guard(self._client.pexpire(self.key(key), int(ttl * MILLI))))
 
     async def many ( self, keys: Iterable[str] ) -> dict[str, object | None]:
@@ -80,9 +84,10 @@ class RedisStore:
 
         return bool(freed)
 
-    async def clear ( self ) -> None:
+    async def clear ( self ) -> int:
 
         batch: list[str] = []
+        count = 0
 
         async for found in self._client.scan_iter(match=f"{self._prefix}:*", count=BATCH):
 
@@ -90,11 +95,13 @@ class RedisStore:
 
             if len(batch) >= BATCH:
 
-                await self.guard(self._client.delete(*batch))
+                count += int(await self.guard(self._client.delete(*batch)))
 
                 batch.clear()
 
-        if batch: await self.guard(self._client.delete(*batch))
+        if batch: count += int(await self.guard(self._client.delete(*batch)))
+
+        return count
 
     async def ping ( self ) -> bool:
 
@@ -102,9 +109,11 @@ class RedisStore:
         except RedisError: return False
 
     async def close ( self ) -> None:
+
         await self._client.aclose()
 
     def millis ( self, ttl: float | None ) -> int | None:
+
         return int(ttl * MILLI) if ttl else None
 
     async def guard ( self, call: Any ) -> Any:

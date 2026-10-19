@@ -1,15 +1,14 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, override
 
-from starlette.testclient import TestClient, WebSocketTestSession
-from starlette.websockets import WebSocketDisconnect, WebSocketState
 from core.broadcast import Broadcast
 from core.event import Event, events
 from core.error import Code, Fault
 from core.http import Request, Response, Route, http
 from core.socket import Connection, Frame, Limits, Socket
-import asyncio, pytest
+from core.test import expect, test
+import asyncio
 
 @dataclass(frozen=True, slots=True)
 class Person:
@@ -19,6 +18,7 @@ class Person:
     roles : tuple[str, ...] = ()
 
     def has_role ( self, role: str ) -> bool:
+
         return role in self.roles
 
 @dataclass(frozen=True, slots=True)
@@ -26,7 +26,9 @@ class Announced(Event):
 
     title : str
 
+    @override
     def channels ( self ) -> Sequence[str]:
+
         return ("news", "private-staff")
 
 PEOPLE = { "alice": Person("1", "Alice", ("admin",)), "bob": Person("2", "Bob") }
@@ -38,24 +40,6 @@ async def guard ( token: str | None ) -> Person:
     if found is None: raise Fault(Code.UNAUTHORIZED, reason="token")
 
     return found
-
-class StubSocket:
-
-    client_state = WebSocketState.CONNECTED
-
-    def __init__ ( self ) -> None:
-
-        self.sent: list[bytes] = []
-        self.closed: tuple[int, str | None] | None = None
-
-    async def send_bytes ( self, data: bytes ) -> None:
-        self.sent.append(data)
-
-    async def receive ( self ) -> dict[str, object]:
-        return { "type": "websocket.disconnect", "code": 1000 }
-
-    async def close ( self, code: int = 1000, reason: str | None = None ) -> None:
-        self.closed = (code, reason)
 
 def wire () -> tuple[Socket, Broadcast, Any]:
 
@@ -71,26 +55,22 @@ def wire () -> tuple[Socket, Broadcast, Any]:
 
     async def emit ( request: Request ) -> Response:
 
-        body = await request.json()
-
+        body    = request.body()
         reached = live.emit(body["channel"], body["event"], body.get("data"), body.get("exclude"))
 
         return Response.ok({ "reached": reached })
 
     async def announce ( request: Request ) -> Response:
 
-        body = await request.json()
+        body = request.body()
 
         return Response.ok({ "listeners": await events.dispatch(Announced(body["title"])) })
 
     app = http.build("Live", "0.0.1", [Route.group("", [Route.post("/emit", emit), Route.post("/announce", announce)])])
 
-    app.add_api_websocket_route("/ws", hub.endpoint, name="socket")
+    app.socket("/ws", hub.endpoint, name="socket")
 
     return hub, live, app
-
-def frames ( session: WebSocketTestSession, count: int ) -> list[dict[str, Any]]:
-    return [session.receive_json(mode="binary") for _ in range(count)]
 
 class TestRealtime:
 
@@ -98,127 +78,130 @@ class TestRealtime:
 
         hub, _, app = wire()
 
-        with TestClient(app) as client, \
-             client.websocket_connect("/ws?token=alice") as alice, \
-             client.websocket_connect("/ws?token=bob") as bob, \
-             client.websocket_connect("/ws") as guest:
+        with test.sockets(app) as client, \
+             client.connect("/ws?token=alice") as alice, \
+             client.connect("/ws?token=bob") as bob, \
+             client.connect("/ws") as guest:
 
-            hello = frames(alice, 1)[0]
-            bobs  = frames(bob, 1)[0]["data"]["socket_id"]
+            hello = alice.frames(1)[0]
+            bobs  = bob.frames(1)[0]["data"]["socket_id"]
 
-            assert hello["event"] == "connected" and hello["data"]["ping"] == 5.0
-            assert frames(guest, 1)[0]["event"] == "connected"
+            expect(hello["event"]).equals("connected")
+            expect(hello["data"]["ping"]).equals(5.0)
+            expect(guest.frames(1)[0]["event"]).equals("connected")
 
             for session in (alice, bob, guest):
-                session.send_json({ "event": "subscribe", "channel": "news", "id": "s1" })
+                session.send({ "event": "subscribe", "channel": "news", "id": "s1" })
 
-            assert [frames(session, 1)[0] for session in (alice, bob, guest)] == [
+            expect([session.frames(1)[0] for session in (alice, bob, guest)]).equals([
                 { "event": "subscribed", "channel": "news", "data": { "channel": "news" }, "id": "s1" },
-            ] * 3
-            assert hub.subscribers("news") == 3 and hub.channels() == { "news": 3 }
+            ] * 3)
+            expect(hub.subscribers("news")).equals(3)
+            expect(hub.channels()).equals({ "news": 3 })
 
             reached = client.post("/emit", json={ "channel": "news", "event": "headline", "data": { "n": 1 } }).json()
 
-            assert reached["data"]["reached"] == 3
+            expect(reached["data"]["reached"]).equals(3)
             headline = { "event": "headline", "channel": "news", "data": { "n": 1 } }
 
-            assert frames(alice, 1) == frames(bob, 1) == [headline]
-            assert frames(guest, 1)[0]["data"] == { "n": 1 }
+            expect(alice.frames(1) == bob.frames(1) == [headline]).true()
+            expect(guest.frames(1)[0]["data"]).equals({ "n": 1 })
 
             only = client.post("/emit", json={ "channel": "news", "event": "aside", "exclude": bobs }).json()
 
-            assert only["data"]["reached"] == 2 and frames(alice, 1)[0]["event"] == "aside"
-            assert frames(guest, 1)[0]["event"] == "aside"
+            expect(only["data"]["reached"]).equals(2)
+            expect(alice.frames(1)[0]["event"]).equals("aside")
+            expect(guest.frames(1)[0]["event"]).equals("aside")
 
-            alice.send_json({ "event": "subscribe", "channel": "private-users.1" })
-            bob.send_json({ "event": "subscribe", "channel": "private-users.1" })
-            guest.send_json({ "event": "subscribe", "channel": "private-users.1" })
-            guest.send_json({ "event": "subscribe", "channel": "private-nowhere" })
+            alice.send({ "event": "subscribe", "channel": "private-users.1" })
+            bob.send({ "event": "subscribe", "channel": "private-users.1" })
+            guest.send({ "event": "subscribe", "channel": "private-users.1" })
+            guest.send({ "event": "subscribe", "channel": "private-nowhere" })
 
-            assert frames(alice, 1)[0]["event"] == "subscribed"
+            expect(alice.frames(1)[0]["event"]).equals("subscribed")
             denied = { "event": "error", "data": { "code": "forbidden", "reason": "channel.denied" } }
 
-            assert frames(bob, 1)[0] == denied
-            reasons = [frame["data"]["reason"] for frame in frames(guest, 2)]
+            expect(bob.frames(1)[0]).equals(denied)
+            reasons = [frame["data"]["reason"] for frame in guest.frames(2)]
 
-            assert reasons == ["channel.auth", "channel.private-nowhere.unknown"]
+            expect(reasons).equals(["channel.auth", "channel.private-nowhere.unknown"])
 
-            alice.send_json({ "event": "subscribe", "channel": "presence-room.lobby" })
+            alice.send({ "event": "subscribe", "channel": "presence-room.lobby" })
 
-            assert frames(alice, 1)[0]["data"]["members"] == [{ "id": "1", "name": "Alice", "room": "lobby" }]
+            expect(alice.frames(1)[0]["data"]["members"]).equals([{ "id": "1", "name": "Alice", "room": "lobby" }])
 
-            bob.send_json({ "event": "subscribe", "channel": "presence-room.lobby" })
+            bob.send({ "event": "subscribe", "channel": "presence-room.lobby" })
 
-            joined = frames(bob, 1)[0]
-            seen   = frames(alice, 1)[0]
+            joined = bob.frames(1)[0]
+            seen   = alice.frames(1)[0]
 
-            assert { member["id"] for member in joined["data"]["members"] } == { "1", "2" }
-            assert seen["event"] == "member_joined" and seen["data"]["member"]["name"] == "Bob"
+            expect({ member["id"] for member in joined["data"]["members"] }).equals({ "1", "2" })
+            expect(seen["event"]).equals("member_joined")
+            expect(seen["data"]["member"]["name"]).equals("Bob")
 
             said    = { "event": "typing", "data": { "on": True } }
             whisper = { "event": "publish", "channel": "presence-room.lobby", "data": said }
 
-            bob.send_json(whisper)
+            bob.send(whisper)
 
-            typing = frames(alice, 1)[0]
+            typing = alice.frames(1)[0]
 
-            assert typing["event"] == "typing"
-            assert typing["data"] == { "from": { "id": "2", "name": "Bob", "room": "lobby" }, "data": { "on": True } }
+            expect(typing["event"]).equals("typing")
+            expect(typing["data"]).equals(
+                { "from": { "id": "2", "name": "Bob", "room": "lobby" }, "data": { "on": True } },
+            )
 
-            alice.send_json({ "event": "publish", "channel": "private-users.1", "data": { "event": "x" } })
+            alice.send({ "event": "publish", "channel": "private-users.1", "data": { "event": "x" } })
 
-            assert frames(alice, 1)[0]["data"]["reason"] == "channel.publish"
+            expect(alice.frames(1)[0]["data"]["reason"]).equals("channel.publish")
 
-            bob.send_json({ "event": "unsubscribe", "channel": "presence-room.lobby", "id": "u1" })
+            bob.send({ "event": "unsubscribe", "channel": "presence-room.lobby", "id": "u1" })
 
             lobby = "presence-room.lobby"
             left  = { "event": "unsubscribed", "channel": lobby, "data": { "channel": lobby } }
 
-            assert frames(bob, 1)[0] == { **left, "id": "u1" }
-            assert frames(alice, 1)[0]["event"] == "member_left"
+            expect(bob.frames(1)[0]).equals({ **left, "id": "u1" })
+            expect(alice.frames(1)[0]["event"]).equals("member_left")
 
-            alice.send_json({ "event": "subscribe", "channel": "private-staff" })
+            alice.send({ "event": "subscribe", "channel": "private-staff" })
 
-            assert frames(alice, 1)[0]["event"] == "subscribed"
+            expect(alice.frames(1)[0]["event"]).equals("subscribed")
 
             told = client.post("/announce", json={ "title": "Launch" }).json()
 
-            assert told["data"]["listeners"] == 0
-            relayed = frames(alice, 2)
+            expect(told["data"]["listeners"]).equals(0)
+            relayed = alice.frames(2)
 
-            assert [frame["channel"] for frame in relayed] == ["news", "private-staff"]
-            assert relayed[0] == { "event": "Announced", "channel": "news", "data": { "title": "Launch" } }
+            expect([frame["channel"] for frame in relayed]).equals(["news", "private-staff"])
+            expect(relayed[0]).equals({ "event": "Announced", "channel": "news", "data": { "title": "Launch" } })
 
-            alice.send_json({ "event": "ping", "id": "p1" })
-            alice.send_json({ "event": "dance" })
-            alice.send_text("not json")
+            alice.send({ "event": "ping", "id": "p1" })
+            alice.send({ "event": "dance" })
+            alice.text("not json")
 
-            assert [frame["event"] for frame in frames(alice, 3)] == ["pong", "error", "error"]
-            assert hub.stats()["connections"] == 3 and hub.stats()["published"] >= 6
+            expect([frame["event"] for frame in alice.frames(3)]).equals(["pong", "error", "error"])
+            expect(hub.stats()["connections"]).equals(3)
+            expect(hub.stats()["published"] >= 6).true()
 
-            with pytest.raises(WebSocketDisconnect) as full, client.websocket_connect("/ws?token=alice") as fourth:
-                fourth.receive_json(mode="binary")
+            expect(client.refused("/ws?token=alice")).equals(1013)
 
-            assert full.value.code == 1013
-
-        assert hub.stats()["connections"] == 0 and hub.channels() == {}
+        expect(hub.stats()["connections"]).equals(0)
+        expect(hub.channels()).equals({})
 
     def test_oversized_frames_close_the_socket_and_slow_consumers_are_shed ( self ) -> None:
 
         hub, _, app = wire()
 
-        with TestClient(app) as client, client.websocket_connect("/ws?token=alice") as alice:
+        with test.sockets(app) as client, client.connect("/ws?token=alice") as alice:
 
-            frames(alice, 1)
-            alice.send_text("x" * 300)
+            alice.frames(1)
+            alice.text("x" * 300)
 
-            with pytest.raises(WebSocketDisconnect) as big: alice.receive_json(mode="binary")
-
-            assert big.value.code == 1009
+            expect(alice.closed()).equals(1009)
 
         async def shed () -> tuple[int, int, bool]:
 
-            stub = StubSocket()
+            stub = test.stub()
             slow = hub.attach(Connection("slow", stub, outbox=asyncio.Queue(2)))
 
             hub.join(slow, "flood")
@@ -231,8 +214,10 @@ class TestRealtime:
 
         dropped, shed_total, closed = asyncio.run(shed())
 
-        assert dropped == 3 and shed_total == 3 and closed is True
-        assert Frame.decode(Frame("x", "c", { "k": 1 }, "7").encode()) == Frame("x", "c", { "k": 1 }, "7")
+        expect(dropped).equals(3)
+        expect(shed_total).equals(3)
+        expect(closed).is_(True)
+        expect(Frame.decode(Frame("x", "c", { "k": 1 }, "7").encode())).equals(Frame("x", "c", { "k": 1 }, "7"))
 
-        with pytest.raises(Fault): Frame.decode('{"event": ""}')
-        with pytest.raises(Fault): Frame.decode("[1]")
+        with test.fails(Code.BAD_REQUEST, "frame.event"): Frame.decode('{"event": ""}')
+        with test.fails(Code.BAD_REQUEST, "frame"): Frame.decode("[1]")

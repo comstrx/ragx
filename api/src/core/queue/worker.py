@@ -2,7 +2,7 @@ from collections.abc import Awaitable, Callable, Sequence
 
 from core.log import log
 from .job import Job
-import asyncio
+import asyncio, contextlib
 
 type Pull = Callable[[str, float], Awaitable[Job | None]]
 type Perform = Callable[[Job], Awaitable[bool]]
@@ -43,7 +43,7 @@ class Workers:
 
             if self._stopping.is_set(): return
 
-            job = await self._pull(queue, PULL)
+            job = await self.next(queue)
 
             if job is None: continue
 
@@ -51,6 +51,25 @@ class Workers:
 
             try: await self._perform(job)
             finally: self._busy -= 1
+
+    async def next ( self, queue: str ) -> Job | None:
+
+        pull = asyncio.ensure_future(self._pull(queue, PULL))
+        halt = asyncio.ensure_future(self._stopping.wait())
+
+        done, _ = await asyncio.wait({ pull, halt }, return_when=asyncio.FIRST_COMPLETED)
+
+        if pull in done:
+
+            halt.cancel()
+
+            return pull.result()
+
+        pull.cancel()
+
+        with contextlib.suppress(asyncio.CancelledError): await pull
+
+        return None
 
     def pause ( self ) -> bool:
 
@@ -69,6 +88,7 @@ class Workers:
         return True
 
     def paused ( self ) -> bool:
+
         return bool(self._tasks) and not self._running.is_set()
 
     async def stop ( self, wait: float = 5.0 ) -> int:
@@ -90,15 +110,19 @@ class Workers:
         return stopped
 
     def alive ( self ) -> int:
+
         return sum(1 for task in self._tasks if not task.done())
 
     def busy ( self ) -> int:
+
         return self._busy
 
     def names ( self ) -> list[str]:
+
         return [task.get_name() for task in self._tasks if not task.done()]
 
     def describe ( self ) -> dict[str, object]:
+
         return { "workers": self.alive(), "busy": self._busy, "paused": self.paused() }
 
     def warn_if_dead ( self ) -> None:

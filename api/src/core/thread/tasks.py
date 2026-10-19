@@ -12,6 +12,7 @@ class Tasks:
     def __init__ ( self ) -> None:
 
         self._tasks: dict[str, asyncio.Task[Any]] = {}
+        self._fired: set[asyncio.Task[Any]] = set()
 
     def spawn ( self, name: str, work: Work ) -> asyncio.Task[Any]:
 
@@ -23,6 +24,17 @@ class Tasks:
         task.add_done_callback(lambda done: self._settled_(name, done))
 
         return task
+
+    def fire ( self, work: Work, name: str = "fired" ) -> None:
+
+        task = asyncio.create_task(work, name=name)
+
+        self._fired.add(task)
+        task.add_done_callback(lambda done: self._landed_(name, done))
+
+    def pending ( self ) -> int:
+
+        return sum(1 for task in self._fired if not task.done())
 
     def every ( self, name: str, seconds: float, tick: Tick, immediately: bool = False ) -> asyncio.Task[Any]:
 
@@ -93,6 +105,7 @@ class Tasks:
         return task is not None and not task.done()
 
     def names ( self ) -> list[str]:
+
         return sorted(name for name, task in self._tasks.items() if not task.done())
 
     def describe ( self ) -> dict[str, str]:
@@ -102,9 +115,18 @@ class Tasks:
             for name, task in sorted(self._tasks.items())
         }
 
+    def _landed_ ( self, name: str, task: asyncio.Task[Any] ) -> None:
+
+        self._fired.discard(task)
+        self._report_(name, task)
+
     def _settled_ ( self, name: str, task: asyncio.Task[Any] ) -> None:
 
         if self._tasks.get(name) is task: self._tasks.pop(name, None)
+
+        self._report_(name, task)
+
+    def _report_ ( self, name: str, task: asyncio.Task[Any] ) -> None:
 
         if task.cancelled(): return
 

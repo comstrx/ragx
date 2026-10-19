@@ -1,4 +1,7 @@
-from datetime import datetime
+from datetime import UTC, datetime, tzinfo
+
+from core.error import Code, Fault
+from .human import Human
 import re
 
 TOKEN   = re.compile(
@@ -7,19 +10,16 @@ TOKEN   = re.compile(
 SPECIAL = (11, 12, 13)
 SUFFIX  = { 1: "st", 2: "nd", 3: "rd" }
 MINUTE  = 60
-HOUR    = 3600
-DAY     = 86400
-WEEK    = 604800
-MONTH   = 2629800
-YEAR    = 31557600
-STEPS   = (
-    (YEAR, "year"), (MONTH, "month"), (WEEK, "week"), (DAY, "day"), (HOUR, "hour"), (MINUTE, "minute"),
-    (1, "second"),
-)
-JUST    = 5
 NOON    = 12
+STRP    = {
+    "YYYY": "%Y", "YY": "%y", "MMMM": "%B", "MMM": "%b", "MM": "%m", "M": "%m", "DD": "%d", "D": "%d", "dddd": "%A",
+    "ddd": "%a", "HH": "%H", "H": "%H", "hh": "%I", "h": "%I", "mm": "%M", "m": "%M", "ss": "%S", "s": "%S",
+    "SSS": "%f", "A": "%p", "a": "%p", "ZZ": "%z", "Z": "%z",
+}
+human   = Human()
 
 def ordinal ( value: int ) -> str:
+
     return f"{value}{'th' if value % 100 in SPECIAL else SUFFIX.get(value % 10, 'th')}"
 
 def offset ( moment: datetime, colon: bool ) -> str:
@@ -34,21 +34,27 @@ def offset ( moment: datetime, colon: bool ) -> str:
 
     return f"{sign}{hours:02d}{':' if colon else ''}{minutes:02d}"
 
-def piece ( moment: datetime, token: str ) -> str:
+def meridiem ( moment: datetime, locale: str ) -> str:
+
+    if locale == "ar": return "ص" if moment.hour < NOON else "م"
+
+    return "AM" if moment.hour < NOON else "PM"
+
+def piece ( moment: datetime, token: str, locale: str = "en" ) -> str:
 
     match token:
         case "YYYY": return f"{moment.year:04d}"
         case "YY":   return f"{moment.year % 100:02d}"
-        case "MMMM": return moment.strftime("%B")
-        case "MMM":  return moment.strftime("%b")
+        case "MMMM": return human.month(moment, locale)
+        case "MMM":  return human.month(moment, locale, short=True)
         case "MM":   return f"{moment.month:02d}"
         case "M":    return str(moment.month)
         case "DDDD": return f"{moment.timetuple().tm_yday:03d}"
         case "DD":   return f"{moment.day:02d}"
         case "Do":   return ordinal(moment.day)
         case "D":    return str(moment.day)
-        case "dddd": return moment.strftime("%A")
-        case "ddd":  return moment.strftime("%a")
+        case "dddd": return human.day(moment, locale)
+        case "ddd":  return human.day(moment, locale, short=True)
         case "d":    return str(moment.isoweekday() % 7)
         case "HH":   return f"{moment.hour:02d}"
         case "H":    return str(moment.hour)
@@ -59,7 +65,7 @@ def piece ( moment: datetime, token: str ) -> str:
         case "ss":   return f"{moment.second:02d}"
         case "s":    return str(moment.second)
         case "SSS":  return f"{moment.microsecond // 1000:03d}"
-        case "A":    return "AM" if moment.hour < NOON else "PM"
+        case "A":    return meridiem(moment, locale)
         case "a":    return "am" if moment.hour < NOON else "pm"
         case "ZZ":   return offset(moment, colon=False)
         case "Z":    return offset(moment, colon=True)
@@ -72,44 +78,43 @@ def piece ( moment: datetime, token: str ) -> str:
 
 class Formatter:
 
-    def format ( self, moment: datetime, pattern: str ) -> str:
+    def format ( self, moment: datetime, pattern: str, locale: str = "en" ) -> str:
 
         def swap ( found: re.Match[str] ) -> str:
 
             literal = found.group(1)
 
-            return literal if literal is not None else piece(moment, found.group(0))
+            return literal if literal is not None else piece(moment, found.group(0), locale)
 
         return TOKEN.sub(swap, pattern)
 
-    def relative ( self, seconds: float, short: bool = False ) -> str:
+    def strptime ( self, pattern: str ) -> str:
 
-        distance = abs(seconds)
+        def swap ( found: re.Match[str] ) -> str:
 
-        if distance < JUST: return "just now"
+            literal = found.group(1)
 
-        for size, unit in STEPS:
+            if literal is not None: return literal.replace("%", "%%")
 
-            if distance >= size:
+            token = found.group(0)
 
-                count = int(distance // size)
-                label = f"{count}{unit[0]}" if short else f"{count} {unit}{'' if count == 1 else 's'}"
+            if token not in STRP: raise Fault(Code.BAD_REQUEST, reason="date.token")
 
-                return f"{label} ago" if seconds < 0 else f"in {label}"
+            return STRP[token]
 
-        return "just now"
+        return TOKEN.sub(swap, pattern)
 
-    def span ( self, seconds: float, short: bool = False ) -> str:
+    def read ( self, text: str, pattern: str, zone: tzinfo = UTC ) -> datetime:
 
-        left  = int(abs(seconds))
-        parts: list[str] = []
+        try: parsed = datetime.strptime(text.strip(), self.strptime(pattern))
+        except ValueError as error: raise Fault(Code.BAD_REQUEST, reason="date.format") from error
 
-        for size, unit in STEPS:
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=zone)
 
-            if left < size or unit in ("week", "month"): continue
+    def relative ( self, seconds: float, short: bool = False, locale: str = "en", absolute: bool = False ) -> str:
 
-            count, left = divmod(left, size)
+        return human.relative(seconds, short, locale, absolute)
 
-            parts.append(f"{count}{unit[0]}" if short else f"{count} {unit}{'' if count == 1 else 's'}")
+    def span ( self, seconds: float, short: bool = False, locale: str = "en", parts: int = 7 ) -> str:
 
-        return " ".join(parts) if parts else ("0s" if short else "0 seconds")
+        return human.span(seconds, short, locale, parts)

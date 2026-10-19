@@ -1,6 +1,8 @@
 from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
 from typing import Any
 
+from core.error import Code, Fault
+
 type Row = Mapping[str, Any]
 type Test[T] = Callable[[T], bool]
 type Key[T] = Callable[[T], Any]
@@ -18,6 +20,7 @@ OPERATORS: dict[str, Callable[[Any, Any], bool]] = {
 }
 
 def field ( item: Any, name: str ) -> Any:
+
     return item.get(name) if isinstance(item, Mapping) else getattr(item, name, None)
 
 class Query:
@@ -27,7 +30,7 @@ class Query:
         operator, value = ("=", args[0]) if len(args) == 1 else (str(args[0]), args[1])
         compare         = OPERATORS.get(operator)
 
-        if compare is None: raise ValueError(operator)
+        if compare is None: raise Fault(Code.BAD_REQUEST, reason="array.operator")
 
         return [item for item in items if compare(field(item, name), value)]
 
@@ -44,22 +47,24 @@ class Query:
         return [item for item in items if field(item, name) not in unwanted]
 
     def where_not_none ( self, items: Iterable[Any], name: str ) -> list[Any]:
+
         return [item for item in items if field(item, name) is not None]
 
     def first_where ( self, items: Iterable[Any], name: str, value: Any, default: Any = None ) -> Any:
+
         return next((item for item in items if field(item, name) == value), default)
 
     def sole[T] ( self, items: Iterable[T], test: Test[T] | None = None ) -> T:
 
         found = [item for item in items if test is None or test(item)]
 
-        if len(found) != 1: raise ValueError(len(found))
+        if len(found) != 1: raise Fault(Code.NOT_FOUND if not found else Code.CONFLICT, reason="array.sole")
 
         return found[0]
 
     def nth[T] ( self, items: Sequence[T], step: int, offset: int = 0 ) -> list[T]:
 
-        if step <= 0: raise ValueError(step)
+        if step <= 0: raise Fault(Code.BAD_REQUEST, reason="array.step")
 
         return list(items[offset::step])
 
@@ -123,7 +128,7 @@ class Query:
 
     def split[T] ( self, items: Sequence[T], parts: int ) -> list[list[T]]:
 
-        if parts <= 0: raise ValueError(parts)
+        if parts <= 0: raise Fault(Code.BAD_REQUEST, reason="array.parts")
 
         size, extra = divmod(len(items), parts)
         groups: list[list[T]] = []
@@ -140,12 +145,15 @@ class Query:
         return groups
 
     def transpose[T] ( self, rows: Sequence[Sequence[T]] ) -> list[list[T]]:
+
         return [list(column) for column in zip(*rows, strict=True)] if rows else []
 
     def flat_map[T, R] ( self, items: Iterable[T], fn: Callable[[T], Iterable[R]] ) -> list[R]:
+
         return [out for item in items for out in fn(item)]
 
     def combine[K, V] ( self, keys: Sequence[K], values: Sequence[V] ) -> dict[K, V]:
+
         return dict(zip(keys, values, strict=True))
 
     def divide[T] ( self, items: Iterable[T], test: Test[T] ) -> tuple[list[T], list[T]]:
@@ -166,12 +174,15 @@ class Query:
         return [value] * max(-size - len(listed), 0) + listed
 
     def prepend[T] ( self, items: Iterable[T], *values: T ) -> list[T]:
+
         return [*values, *items]
 
     def collapse ( self, groups: Iterable[Iterable[Any]] ) -> list[Any]:
+
         return [item for group in groups for item in group]
 
     def sort_by_desc[T] ( self, items: Iterable[T], key: Key[T] ) -> list[T]:
+
         return sorted(items, key=key, reverse=True)
 
     def tally ( self, items: Iterable[Hashable] ) -> dict[Hashable, int]:
@@ -191,9 +202,11 @@ class Query:
         return max(counts, key=lambda item: counts[item]) if counts else None
 
     def key_by ( self, items: Iterable[Any], name: str ) -> dict[Any, Any]:
+
         return { field(item, name): item for item in items }
 
     def pluck_many ( self, items: Iterable[Any], *names: str ) -> list[dict[str, Any]]:
+
         return [{ name: field(item, name) for name in names } for item in items]
 
     def implode ( self, items: Iterable[Any], glue: str = ", ", final: str | None = None ) -> str:

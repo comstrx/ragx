@@ -1,55 +1,73 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
+from typing import ClassVar
 
-from httpx import ASGITransport, AsyncClient
 from core.error import Code, Fault, Faults
-from core.exception import exception
-from core.http import App, EventStream, Incoming, Redirect, Request, Response, Route, Sse, Streamed, http
-from app.exceptions import ExceptionHandler
+from core.exception import Handler, Target, exception
+from core.http import Request, Response, Route, Sse, Upload, http
+from core.test import Client, expect, test
+from core.validate import Shape, field
 import pytest
 
 faults = Faults()
 
+class Mapped(Handler):
+
+    maps : ClassVar[Mapping[type[BaseException], Target]] = { ValueError: Code.BAD_REQUEST }
+
+class Search(Shape):
+
+    term  : str = field(min_length=2)
+    limit : int = field(10, ge=1, le=50)
+
 class ItemsController:
 
     async def index ( self ) -> Response:
+
         return Response.page([{ "id": 1 }], 41, 2, 20)
 
     async def show ( self, key: int ) -> Response:
+
         return Response.ok({ "id": key })
 
     async def store ( self ) -> Response:
+
         return Response.created({ "id": 2 })
 
     async def destroy ( self, key: int ) -> Response:
+
         return Response.ok(message=f"removed {key}")
 
     async def crash ( self ) -> Response:
+
         raise RuntimeError("secret detail")
 
     async def mistake ( self ) -> Response:
+
         raise ValueError("bad input")
 
     async def refuse ( self ) -> Response:
+
         raise faults.forbidden("not yours")
 
     async def whoami ( self, request: Request ) -> Response:
-        return Response.ok({ "user": request.state.user })
+
+        return Response.ok({ "user": request.user() })
 
 async def gate ( request: Request ) -> None:
 
-    if request.headers.get("x-key") != "open": raise Fault(Code.UNAUTHORIZED, reason="key")
+    if request.header("x-key") != "open": raise Fault(Code.UNAUTHORIZED, reason="key")
 
-    request.state.user = "keyholder"
+    request.assign(user="keyholder")
 
 async def tenant ( request: Request ) -> None:
 
-    request.state.tenant = request.headers.get("x-tenant", "")
+    request.assign(tenant=request.header("x-tenant"))
 
-    if not request.state.tenant: raise Fault(Code.BAD_REQUEST, reason="tenant")
+    if not request.state("tenant"): raise Fault(Code.BAD_REQUEST, reason="tenant")
 
 async def member ( request: Request ) -> None:
 
-    if request.state.tenant != "acme": raise Fault(Code.FORBIDDEN, reason="tenant.member")
+    if request.state("tenant") != "acme": raise Fault(Code.FORBIDDEN, reason="tenant.member")
 
 items  = ItemsController()
 groups = [
@@ -72,91 +90,91 @@ groups = [
 ]
 
 def forwarded ( address: str ) -> dict[str, str]:
+
     return { "X-Forwarded-For": address }
 
 @pytest.fixture
-async def bare () -> AsyncIterator[AsyncClient]:
+async def bare () -> AsyncIterator[Client]:
 
-    exception.use(ExceptionHandler())
+    exception.use(Mapped())
 
-    app       = http.build("Bare", "0.0.1", groups, origins=["http://web.test"])
-    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    app = http.build("Bare", "0.0.1", groups, origins=["http://web.test"])
 
-    async with AsyncClient(transport=transport, base_url="http://bare") as client: yield client
+    async with test.client(app, "http://bare") as client: yield client
 
 @pytest.mark.anyio
 class TestHttp:
 
-    async def test_route_dsl_composes_names_prefixes_resources_and_constraints ( self, bare: AsyncClient ) -> None:
+    async def test_route_dsl_composes_names_prefixes_resources_and_constraints ( self, bare: Client ) -> None:
 
-        assert groups[0].names() == [
+        walked = { bound.name: bound for bound in groups[0].walk() }
+
+        expect(groups[0].names()).equals([
             "v1.items.index", "v1.items.store", "v1.items.show", "v1.items.destroy", "v1.typed",
             "v1.crash", "v1.mistake", "v1.refuse", "v1.private.me", "v1.limited", "v1.also",
             "v1.tenants.acme.orders", "v1.tenants.acme.slow",
-        ]
-        assert next(bound for bound in groups[0].walk() if bound.name == "v1.typed").path == "/v1/items/{key:int}/typed"
-        assert next(bound for bound in groups[0].walk() if bound.name == "v1.private.me").middleware == (gate,)
-        assert all(bound.tags == ("v1",) for bound in groups[0].walk())
+        ])
+        expect((walked["v1.typed"].path, walked["v1.private.me"].middleware)).equals(
+            ("/v1/items/{key:int}/typed", (gate,)),
+        )
+        expect(groups[0].walk()).each(lambda bound: bound.tags == ("v1",))
+        expect((walked["v1.tenants.acme.orders"].path, walked["v1.tenants.acme.orders"].throttle)).equals(
+            ("/v1/tenants/acme/orders", "3/minute"),
+        )
+        expect((walked["v1.tenants.acme.slow"].middleware, walked["v1.tenants.acme.slow"].throttle)).equals(
+            ((tenant, member), "1/minute"),
+        )
 
-        orders = next(bound for bound in groups[0].walk() if bound.name == "v1.tenants.acme.orders")
-        slow   = next(bound for bound in groups[0].walk() if bound.name == "v1.tenants.acme.slow")
+        with test.fails(Code.INTERNAL, "http.converter.key:regex"):
+            Route.get("/x", items.index).constrained(key="regex")
 
-        assert orders.path == "/v1/tenants/acme/orders"
-        assert (orders.middleware, orders.throttle) == ((tenant, member), "3/minute")
-        assert (slow.middleware, slow.throttle) == ((tenant, member), "1/minute")
+        listed = (await bare.get("/v1/items")).ok().header("x-content-type-options", "nosniff")
 
-        with pytest.raises(ValueError): Route.get("/x", items.index).constrained(key="regex")
+        expect(listed.json()).subset({
+            "data": [{ "id": 1 }], "meta": {
+                "request_id": listed.headers["x-request-id"], "page": 2, "limit": 20, "total": 41, "pages": 3,
+            },
+        })
+        expect((await bare.get("/v1/items/7")).ok().data()).equals({ "id": 7 })
+        (await bare.post("/v1/items")).created().expect("code").equals("created")
+        (await bare.delete("/v1/items/7")).ok().expect("message").equals("removed 7")
 
-        listed  = await bare.get("/v1/items")
-        shown   = await bare.get("/v1/items/7")
-        typed   = await bare.get("/v1/items/x/typed")
-        stored  = await bare.post("/v1/items")
-        removed = await bare.delete("/v1/items/7")
-        put     = await bare.put("/v1/items")
-        nowhere = await bare.get("/v1/nowhere")
+        (await bare.get("/v1/items/x/typed")).fault(Code.NOT_FOUND)
+        (await bare.put("/v1/items")).fault(Code.METHOD_NOT_ALLOWED)
+        (await bare.get("/v1/nowhere")).fault(Code.NOT_FOUND).expect("data").none()
+        (await bare.get("/openapi.json")).status(404)
+        (await bare.get("/docs")).status(404)
 
-        assert listed.status_code == 200 and listed.json()["data"] == [{ "id": 1 }]
-        assert listed.headers["x-content-type-options"] == "nosniff"
-        assert listed.json()["meta"] == {
-            "request_id": listed.headers["x-request-id"], "page": 2, "limit": 20, "total": 41, "pages": 3,
-        }
-        assert shown.json()["data"] == { "id": 7 } and typed.status_code == 404
-        assert (stored.status_code, stored.json()["code"]) == (201, "created")
-        assert (removed.status_code, removed.json()["message"]) == (200, "removed 7")
-        assert (put.status_code, put.json()["code"]) == (405, "method_not_allowed")
-        assert (nowhere.status_code, nowhere.json()["code"], nowhere.json()["data"]) == (404, "not_found", None)
-        assert (await bare.get("/openapi.json")).status_code == 404 and (await bare.get("/docs")).status_code == 404
-
-    async def test_failures_are_enveloped_masked_and_traced ( self, bare: AsyncClient ) -> None:
+    async def test_failures_are_enveloped_masked_and_traced ( self, bare: Client ) -> None:
 
         crashed = await bare.get("/v1/crash", headers={ "X-Request-Id": "trace-123" })
         mapped  = await bare.get("/v1/mistake")
-        refused = await bare.get("/v1/refuse")
-        rejected = await bare.get("/v1/private/me")
-        admitted = await bare.get("/v1/private/me", headers={ "x-key": "open" })
-        bogus    = await bare.get("/v1/items", headers={ "X-Request-Id": "bad id with spaces" })
+        bogus   = await bare.get("/v1/items", headers={ "X-Request-Id": "bad id with spaces" })
 
-        assert crashed.status_code == 500 and crashed.headers["x-request-id"] == "trace-123"
-        assert crashed.json()["code"] == "internal" and "secret" not in crashed.text
-        assert crashed.json()["meta"]["request_id"] == "trace-123"
-        assert (mapped.status_code, mapped.json()["code"]) == (400, "bad_request") and "bad input" not in mapped.text
-        assert (refused.status_code, refused.json()["reason"]) == (403, "not yours")
-        assert (rejected.status_code, rejected.json()["reason"]) == (401, "key")
-        assert admitted.json()["data"] == { "user": "keyholder" }
-        assert bogus.headers["x-request-id"] != "bad id with spaces" and len(bogus.headers["x-request-id"]) == 36
+        crashed.fault(Code.INTERNAL).header("x-request-id", "trace-123").expect("meta.request_id").equals("trace-123")
+        mapped.fault(Code.BAD_REQUEST)
 
-    async def test_throttle_counts_per_scope_and_per_client ( self, bare: AsyncClient ) -> None:
+        expect(crashed.text()).lacks("secret")
+        expect(mapped.text()).lacks("bad input")
+        expect(bogus.headers["x-request-id"]).differs("bad id with spaces").length(36)
+
+        (await bare.get("/v1/refuse")).fault(Code.FORBIDDEN, "not yours")
+        (await bare.get("/v1/private/me")).fault(Code.UNAUTHORIZED, "key")
+
+        expect((await bare.get("/v1/private/me", headers={ "x-key": "open" })).data()).equals({ "user": "keyholder" })
+
+    async def test_throttle_counts_per_scope_and_per_client_and_ignores_spoofed_hops ( self, bare: Client ) -> None:
 
         burst = [await bare.get("/v1/limited", headers=forwarded("10.1.0.1")) for _ in range(3)]
         other = await bare.get("/v1/also-limited", headers=forwarded("10.1.0.1"))
         fresh = await bare.get("/v1/limited", headers=forwarded("10.1.0.2"))
 
-        assert [reply.status_code for reply in burst] == [200, 200, 429]
-        assert [reply.headers["x-ratelimit-remaining"] for reply in burst] == ["1", "0", "0"]
-        assert all(reply.headers["x-ratelimit-limit"] == "2" for reply in burst)
-        assert float(burst[2].headers["x-ratelimit-reset"]) <= 60
-        assert burst[2].json()["code"] == "too_many_requests" and burst[2].json()["reason"].startswith("retry in")
-        assert other.status_code == 200 and fresh.status_code == 200
+        expect([reply.code for reply in burst]).equals([200, 200, 429])
+        expect([reply.headers["x-ratelimit-remaining"] for reply in burst]).equals(["1", "0", "0"])
+        expect(burst).each(lambda reply: reply.headers["x-ratelimit-limit"] == "2")
+        expect(float(burst[2].headers["x-ratelimit-reset"])).between(0, 60)
+        expect(int(burst[2].fault(Code.TOO_MANY_REQUESTS, "throttle").headers["retry-after"])).between(1, 60)
+        expect((other.code, fresh.code)).equals((200, 200))
 
         inside   = { **forwarded("10.1.0.9"), "X-Tenant": "acme" }
         nobody   = await bare.get("/v1/tenants/acme/orders", headers=forwarded("10.1.0.9"))
@@ -164,72 +182,45 @@ class TestHttp:
         allowed  = [await bare.get("/v1/tenants/acme/orders", headers=inside) for _ in range(4)]
         narrow   = [await bare.get("/v1/tenants/acme/slow", headers=inside) for _ in range(2)]
 
-        assert (nobody.status_code, nobody.json()["reason"]) == (400, "tenant")
-        assert (stranger.status_code, stranger.json()["reason"]) == (403, "tenant.member")
-        assert [reply.status_code for reply in allowed] == [200, 200, 200, 429]
-        assert allowed[3].headers["x-ratelimit-limit"] == "3" and "x-ratelimit-limit" not in nobody.headers
-        assert [reply.status_code for reply in narrow] == [200, 429] and narrow[1].headers["x-ratelimit-limit"] == "1"
+        nobody.fault(Code.BAD_REQUEST, "tenant").lacks("x-ratelimit-limit")
+        stranger.fault(Code.FORBIDDEN, "tenant.member")
 
-    async def test_cors_opens_only_to_listed_origins ( self, bare: AsyncClient ) -> None:
+        expect([reply.code for reply in allowed]).equals([200, 200, 200, 429])
+        expect([reply.code for reply in narrow]).equals([200, 429])
+        expect((allowed[3].headers["x-ratelimit-limit"], narrow[1].headers["x-ratelimit-limit"])).equals(("3", "1"))
+
+        app = http.build("Edge", "0.0.1", groups)
+
+        async with test.client(app, "http://edge", peer=("203.0.113.9", 4000)) as outside:
+
+            spoofed = [await outside.get("/v1/limited", headers=forwarded(f"10.9.0.{hop}")) for hop in range(3)]
+
+        expect([reply.code for reply in spoofed]).equals([200, 200, 429])
+
+    async def test_cors_opens_only_to_listed_origins ( self, bare: Client ) -> None:
 
         headers = { "Access-Control-Request-Method": "GET" }
         allowed = await bare.options("/v1/items", headers={ **headers, "Origin": "http://web.test" })
         denied  = await bare.options("/v1/items", headers={ **headers, "Origin": "http://evil.test" })
         simple  = await bare.get("/v1/items", headers={ "Origin": "http://web.test" })
 
-        assert allowed.status_code == 200 and allowed.headers["access-control-allow-origin"] == "http://web.test"
-        assert "x-request-id" in simple.headers["access-control-expose-headers"].lower()
-        assert denied.status_code == 400 and "access-control-allow-origin" not in denied.headers
-        assert simple.headers["access-control-allow-origin"] == "http://web.test"
+        allowed.ok().header("access-control-allow-origin", "http://web.test")
+        denied.status(400).lacks("access-control-allow-origin")
+        simple.header("access-control-allow-origin", "http://web.test")
 
-    async def test_application_serves_health_hello_validation_and_scalar_docs (
-        self, client: AsyncClient, app: App,
-    ) -> None:
+        expect(simple.headers["access-control-expose-headers"].lower()).contains("x-request-id", "retry-after")
 
-        health  = await client.get("/health")
-        hello   = await client.get("/v1/hello", params={ "name": "World" })
-        guest   = await client.get("/v1/hello", params={ "name": "Nobody Here" })
-        invalid = await client.get("/v1/hello", params={ "name": "x" * 33 })
-        docs    = await client.get("/docs")
-        icon    = await client.get("/assets/images/brand/icon.svg")
-        robots  = await client.get("/robots.txt")
-        hidden  = await client.get("/assets/../pyproject.toml")
-        schema  = await client.get("/openapi.json")
-        paths   = schema.json()["paths"]
-        named   = { str(getattr(route, "name", "")) for route in app.routes }
-
-        assert health.status_code == 200 and health.json()["data"]["status"] == "ok"
-        assert health.json()["data"]["database"]["alive"] is True
-        assert health.json()["data"]["checks"]["database"]["status"] == "ok"
-        assert "llm" in health.json()["data"]["checks"]
-        assert hello.json()["data"]["message"] == "Hello World"
-        assert hello.json()["data"]["user"]["email"] == "world@ragx.test"
-        assert guest.json()["data"] == { "message": "Hello Nobody Here", "user": None }
-        assert invalid.status_code == 422 and list(invalid.json()["errors"]) == ["name"]
-        assert docs.status_code == 200 and docs.headers["content-type"].startswith("text/html")
-        assert "scalar" in docs.text.lower()
-        assert schema.json()["info"]["title"] == app.title
-        assert icon.status_code == 200 and icon.headers["content-type"].startswith("image/svg+xml")
-        assert icon.headers["cache-control"] == "public, max-age=31536000, immutable"
-        assert robots.status_code == 200 and "Disallow: /" in robots.text and hidden.status_code == 404
-        assert { "/health", "/v1/hello", "/v1/auth/register", "/v1/auth/login" } <= set(paths)
-        assert { "/v1/auth/refresh", "/v1/auth/logout", "/v1/auth/me" } <= set(paths)
-        assert paths["/v1/auth/login"]["post"]["tags"] == ["auth"] and "docs" not in paths
-        assert { "401", "422", "429", "500" } <= set(paths["/v1/auth/login"]["post"]["responses"])
-        assert schema.json()["components"]["schemas"]["Envelope"]["required"][0] == "data"
-        assert { "health", "v1.hello", "v1.auth.register", "v1.auth.login", "v1.auth.me" } <= named
-
-async def echo ( payload: Incoming ) -> Response:
+async def echo ( request: Request ) -> Response:
 
     return Response.ok({
-        "all": payload.all(), "name": payload.text("name"), "n": payload.integer("n"), "flag": payload.boolean("flag"),
-        "tags": payload.items("tags"), "has": payload.has("name", "n"), "filled": payload.filled("empty"),
-        "bearer": payload.bearer(), "json": payload.is_json(), "route": payload.route_name(), "ip": payload.ip(),
-        "only": payload.only("name"), "nested": payload.input("meta.deep"), "missing": payload.missing("zzz"),
-        "without": sorted(payload.except_("name", "key", "n", "tags")), "wants": payload.wants_json(),
+        "all": request.all(), "name": request.text("name"), "n": request.integer("n"), "flag": request.boolean("flag"),
+        "tags": request.items("tags"), "has": request.has("name", "n"), "filled": request.filled("empty"),
+        "bearer": request.bearer(), "json": request.is_json(), "route": request.route_name(), "ip": request.ip(),
+        "only": request.only("name"), "nested": request.input("meta.deep"), "missing": request.missing("zzz"),
+        "without": sorted(request.except_("name", "key", "n", "tags")), "wants": request.wants_json(),
     })
 
-async def ticks () -> EventStream:
+async def ticks () -> Response:
 
     async def source () -> AsyncIterator[Sse | dict[str, object] | str]:
 
@@ -239,41 +230,56 @@ async def ticks () -> EventStream:
 
     return Response.sse(source(), ping=0)
 
-async def rows () -> Streamed:
+async def rows () -> Response:
+
     return Response.ndjson([{ "a": 1 }, { "b": 2 }])
 
-async def gone () -> Redirect:
+async def gone () -> Response:
+
     return Response.redirect("/v2/items", 308)
 
-async def shaped ( payload: Incoming ) -> Response:
-    return Response.ok(payload.shape(name=str, age=int))
+async def shaped ( request: Request ) -> Response:
 
-async def required ( payload: Incoming ) -> Response:
-    return Response.ok(payload.require("name"))
+    return Response.ok(request.shape(name=str, age=int))
 
-async def lost ( payload: Incoming ) -> Response:
-    return Response.problem(Code.NOT_FOUND, payload.param("fallback"))
+async def searched ( search: Search ) -> Response:
 
-async def probe ( payload: Incoming ) -> Response:
+    return Response.ok(search.dump())
 
-    day = payload.date("day")
+async def required ( request: Request ) -> Response:
 
-    return Response.with_cookie(Response.ok({
-        "agent": payload.user_agent(), "ips": payload.ips(), "is": payload.is_("d/probe*"),
-        "route": payload.route_is("d.pr*"), "day": day.isoformat() if day else None,
-        "merged": payload.merge(x=1).input("x"), "has": payload.when_has("name", str.upper, "none"),
-        "filled": payload.when_filled("empty", str.upper, "blank"), "file": payload.has_file("upload"),
-    }), "seen", "1", max_age=60)
+    return Response.ok(request.require("name"))
 
-async def pulled () -> Streamed:
+async def lost ( request: Request ) -> Response:
+
+    return Response.problem(Code.NOT_FOUND, request.param("fallback"))
+
+async def received ( file: Upload, request: Request ) -> Response:
+
+    return Response.created({ **file.describe(), "text": (await file.read()).decode(), "note": request.text("note") })
+
+async def probe ( request: Request ) -> Response:
+
+    day = request.date("day")
+
+    return Response.ok({
+        "agent": request.user_agent(), "ips": request.ips(), "is": request.is_("d/probe*"),
+        "route": request.route_is("d.pr*"), "day": day.isoformat() if day else None,
+        "merged": request.merge(x=1).input("x"), "has": request.when_has("name", str.upper, "none"),
+        "filled": request.when_filled("empty", str.upper, "blank"), "file": request.has_file("upload"),
+    }).cookie("seen", "1", max_age=60).header("x-custom", "1")
+
+async def pulled () -> Response:
 
     async def chunks () -> AsyncIterator[bytes]:
+
         yield b"abc"
 
-    return Response.stream_download(chunks(), "dump.bin")
+    return Response.stream(chunks(), name="dump.bin", download=True)
 
 async def tenant_home ( request: Request ) -> Response:
-    return Response.ok(request.state.domain)
+
+    return Response.ok(request.state("domain"))
 
 hosts = Route.group("/h", [
     Route.get("/home", tenant_home, name="home").domain("{tenant}.api.test"),
@@ -287,7 +293,10 @@ dsl = Route.group("/d", [
     Route.get("/rows", rows, name="rows"),
     Route.get("/gone", gone, name="gone"),
     Route.post("/shaped", shaped, name="shaped"),
+    Route.get("/search", searched, name="search"),
+    Route.post("/search", searched, name="search.body"),
     Route.post("/required", required, name="required"),
+    Route.post("/upload", received, name="upload"),
     Route.redirect("/old", "/d/rows", name="old"),
     Route.permanent_redirect("/older", "/d/rows", name="older"),
     Route.post("/probe", probe, name="probe"),
@@ -297,98 +306,124 @@ dsl = Route.group("/d", [
 @pytest.mark.anyio
 class TestDsl:
 
-    async def test_payload_router_and_streaming_responses ( self ) -> None:
+    async def test_router_names_urls_and_one_response_type ( self ) -> None:
 
         app    = http.build("Dsl", "0.0.1", [dsl])
-        router = http.router(app)
-
-        assert router.url("d.echo", key=7, page=2) == "/d/echo/7?page=2" and http.url("d.rows") == "/d/rows"
-        assert router.params("d.echo") == ["key"] and router.has("d.gone") and not http.has("nowhere")
-        assert router.methods("/d/rows") == ["GET"] and len(router.by_prefix("/d")) == 10
-        assert router.names()[0] == "d.echo"
-        assert router.describe()[0]["name"] == "d.echo" and router.find("d.old").methods == ("GET",)
+        router = app.router()
         things = Route.resource("/things", items, except_=("destroy",))
 
-        assert things.names() == ["things.index", "things.store", "things.show"]
-        assert Route.get("/x", items.index).tagged("a", "b").tags == ("a", "b") and dsl.find("d.rows") is not None
-        assert "/d/rows" in dsl.paths() and Response.problem(Code.CONFLICT, "dup").status_code == 409
-        assert Response.no_content().status_code == 204 and Response.json({ "a": 1 }, 202).status_code == 202
-        assert Response.with_headers(Response.ok(), x_custom="1").headers["x-custom"] == "1"
-        assert Response.text("hi").media_type == "text/plain"
-        assert Response.raw(b"x").media_type == "application/octet-stream"
+        expect((router.url("d.echo", key=7, page=2), http.url("d.rows"))).equals(("/d/echo/7?page=2", "/d/rows"))
+        expect((router.params("d.echo"), router.has("d.gone"), http.has("nowhere"))).equals((["key"], True, False))
+        expect((router.methods("/d/rows"), len(router.by_prefix("/d")), router.names()[0])).equals(
+            (["GET"], 13, "d.echo"),
+        )
+        expect((router.describe()[0]["name"], router.find("d.old").methods)).equals(("d.echo", ("GET",)))
+        expect(things.names()).equals(["things.index", "things.store", "things.show"])
+        expect((Route.get("/x", items.index).tagged("a", "b").tags, Route.get("/x", items.index).hide().hidden)).equals(
+            (("a", "b"), True),
+        )
+        expect(dsl.paths()).contains("/d/rows")
+        expect([
+            Response.problem(Code.CONFLICT, "dup").status(), Response.no_content().status(),
+            Response.json({ "a": 1 }, 202).status(), Response.redirect("/x").status(),
+        ]).equals([409, 204, 202, 307])
+        expect((Response.text("hi").media_type, Response.raw(b"x").media_type, Response.no_content().body)).equals(
+            ("text/plain", "application/octet-stream", b""),
+        )
+        expect(Response.ok().header("x-custom", "1").headers["x-custom"]).equals("1")
+        expect(Response.fail(Fault(Code.TOO_MANY_REQUESTS, retry_after=2.2)).headers["retry-after"]).equals("3")
 
-        with pytest.raises(Fault): router.url("d.echo")
-        with pytest.raises(Fault): router.url("nowhere")
+        with test.fails(Code.INTERNAL, "route.d.echo.key"): router.url("d.echo")
+        with test.fails(Code.NOT_FOUND, "route.nowhere"): router.url("nowhere")
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://dsl") as client:
+    async def test_request_verbs_shapes_uploads_and_streaming_replies ( self ) -> None:
+
+        async with test.client(http.build("Dsl", "0.0.1", [dsl]), "http://dsl") as client:
 
             sent = await client.post(
                 "/d/echo/9", params={ "n": "5", "tags[]": ["a", "b"] },
                 json={ "name": " Ann ", "flag": "yes", "empty": "", "meta": { "deep": 1 } },
                 headers={ "Authorization": "Bearer tok", "X-Forwarded-For": "10.0.0.7" },
             )
-            data = sent.json()["data"]
 
-            assert data["name"] == "Ann" and data["n"] == 5 and data["flag"] is True and data["tags"] == ["a", "b"]
-            assert data["has"] and not data["filled"] and data["bearer"] == "tok" and data["json"] and data["wants"]
-            assert data["route"] == "d.echo" and data["ip"] == "10.0.0.7" and data["only"] == { "name": " Ann " }
-            assert data["nested"] == 1 and data["all"]["key"] == "9" and data["missing"]
-            assert data["without"] == ["empty", "flag", "meta"]
+            expect(sent.ok().data()).subset({
+                "name": "Ann", "n": 5, "flag": True, "tags": ["a", "b"], "has": True, "filled": False,
+                "bearer": "tok", "json": True, "wants": True, "route": "d.echo", "ip": "10.0.0.7",
+                "only": { "name": " Ann " }, "nested": 1, "all": { "key": "9" }, "missing": True,
+                "without": ["empty", "flag", "meta"],
+            })
+            expect((await client.post("/d/shaped", data={ "name": "Bo", "age": "3" })).data()).equals(
+                { "name": "Bo", "age": 3 },
+            )
+            expect((await client.get("/d/search", params={ "term": "ab" })).data()).equals(
+                { "term": "ab", "limit": 10 },
+            )
+            expect((await client.post("/d/search", json={ "term": "abc", "limit": 3 })).data()).equals(
+                { "term": "abc", "limit": 3 },
+            )
 
-            formed  = await client.post("/d/shaped", data={ "name": "Bo", "age": "3" })
-            broken  = await client.post("/d/echo/1", content=b"{bad", headers={ "content-type": "application/json" })
-            lacking = await client.post("/d/required", json={})
-            invalid = await client.post("/d/shaped", json={ "name": "Bo", "age": "x" })
-            events  = await client.get("/d/events")
-            lines   = await client.get("/d/rows")
-            moved   = await client.get("/d/gone")
-            old     = await client.get("/d/old")
+            (await client.get("/d/search", params={ "term": "a", "limit": 99 })).fault(Code.VALIDATION, field="term")
+            (await client.post("/d/search", json={ "term": "abc", "rogue": 1 })).fault(Code.VALIDATION, field="rogue")
+            (await client.post("/d/echo/1", content=b"{bad", headers={ "content-type": "application/json" })).fault(
+                Code.BAD_REQUEST, "json",
+            )
+            (await client.post("/d/required", json={})).fault(Code.VALIDATION, field="name")
+            (await client.post("/d/shaped", json={ "name": "Bo", "age": "x" })).fault(Code.VALIDATION, field="age")
+            (await client.post("/d/upload", data={ "note": "n" })).fault(Code.VALIDATION, field="file")
 
-            assert formed.json()["data"] == { "name": "Bo", "age": 3 }
-            assert (broken.status_code, broken.json()["reason"]) == (400, "json")
-            assert (lacking.status_code, list(lacking.json()["errors"])) == (422, ["name"])
-            assert (invalid.status_code, list(invalid.json()["errors"])) == (422, ["age"])
-            assert events.headers["content-type"].startswith("text/event-stream")
-            assert events.headers["cache-control"] == "no-cache"
-            assert events.text == 'event: tick\nid: 1\ndata: {"n":1}\n\nevent: tick\ndata: two\n\ndata: three\n\n'
-            assert lines.text == '{"a":1}\n{"b":2}\n' and lines.headers["content-type"] == "application/x-ndjson"
-            assert (moved.status_code, moved.headers["location"]) == (308, "/v2/items")
-            assert (old.status_code, old.headers["location"]) == (307, "/d/rows")
+            attached = { "file": ("a.txt", b"hello", "text/plain") }
+            upload   = await client.post("/d/upload", files=attached, data={ "note": "x" })
+            events = (await client.get("/d/events")).ok().header("cache-control", "no-cache")
+            lines  = (await client.get("/d/rows")).ok().header("content-type", "application/x-ndjson")
 
-            older  = await client.get("/d/older")
+            expect(upload.created().data()).equals(
+                { "name": "a.txt", "mime": "text/plain", "size": 5, "text": "hello", "note": "x" },
+            )
+            expect(events.headers["content-type"]).starts_with("text/event-stream")
+            expect(events.text()).equals(
+                'event: tick\nid: 1\ndata: {"n":1}\n\nevent: tick\ndata: two\n\ndata: three\n\n',
+            )
+            expect(lines.text()).equals('{"a":1}\n{"b":2}\n')
+
+            (await client.get("/d/gone")).status(308).header("location", "/v2/items")
+            (await client.get("/d/old")).status(307).header("location", "/d/rows")
+            (await client.get("/d/older")).status(308).header("location", "/d/rows")
+
             probed = await client.post(
                 "/d/probe", params={ "day": "2026-01-02", "name": "ann", "empty": "" },
                 headers={ "User-Agent": "unit/1", "X-Forwarded-For": "10.0.0.1, 10.0.0.2" },
             )
-            pulled = await client.get("/d/pulled")
-            facts  = probed.json()["data"]
+            pulled = (await client.get("/d/pulled")).ok()
 
-            assert (older.status_code, older.headers["location"]) == (308, "/d/rows")
-            assert facts["agent"] == "unit/1" and facts["ips"][:2] == ["10.0.0.1", "10.0.0.2"]
-            assert facts["is"] and facts["route"] and facts["day"].startswith("2026-01-02") and facts["merged"] == 1
-            assert facts["has"] == "ANN" and facts["filled"] == "blank" and facts["file"] is False
-            assert probed.cookies["seen"] == "1" and pulled.content == b"abc"
-            assert pulled.headers["content-disposition"] == 'attachment; filename="dump.bin"'
+            pulled.header("content-disposition", 'attachment; filename="dump.bin"')
+
+            expect(probed.header("x-custom", "1").data()).subset({
+                "agent": "unit/1", "is": True, "route": True, "merged": 1, "has": "ANN", "filled": "blank",
+                "file": False,
+            })
+            expect(probed.data("ips")).at("0").equals("10.0.0.1")
+            expect(probed.data("day")).starts_with("2026-01-02")
+            expect((probed.cookie("seen"), pulled.content)).equals(("1", b"abc"))
+
+    async def test_domains_and_fallbacks_route_by_host ( self ) -> None:
 
         hosted = http.build("Hosts", "0.0.1", [hosts])
 
-        assert hosted.state.router.names() == ["h.home", "h.t.x", "h.fallback"]
+        expect(hosted.router().names()).equals(["h.home", "h.t.x", "h.fallback"])
 
-        async with AsyncClient(transport=ASGITransport(app=hosted), base_url="http://acme.api.test") as client:
+        async with test.client(hosted, "http://acme.api.test") as client:
 
-            home    = await client.get("/h/home")
-            nowhere = await client.get("/h/anything/here")
-            foreign = await client.get("/h/t/x")
+            expect((await client.get("/h/home")).data()).equals({ "tenant": "acme" })
 
-            assert home.json()["data"] == { "tenant": "acme" }
-            assert (nowhere.status_code, nowhere.json()["reason"]) == (404, "anything/here")
-            assert (foreign.status_code, foreign.json()["reason"]) == (404, "domain")
+            (await client.get("/h/anything/here")).fault(Code.NOT_FOUND, "anything/here")
+            (await client.get("/h/t/x")).fault(Code.NOT_FOUND, "domain")
 
-        async with AsyncClient(transport=ASGITransport(app=hosted), base_url="http://www.api.test") as client:
+        async with test.client(hosted, "http://www.api.test") as client:
 
-            assert (await client.get("/h/t/x")).status_code == 200
-            assert (await client.get("/h/home")).json()["data"] == { "tenant": "www" }
+            (await client.get("/h/t/x")).ok()
 
-        async with AsyncClient(transport=ASGITransport(app=hosted), base_url="http://nope.test") as client:
+            expect((await client.get("/h/home")).data()).equals({ "tenant": "www" })
 
-            assert (await client.get("/h/home")).json()["reason"] == "domain"
+        async with test.client(hosted, "http://nope.test") as client:
+
+            (await client.get("/h/home")).fault(Code.NOT_FOUND, "domain")

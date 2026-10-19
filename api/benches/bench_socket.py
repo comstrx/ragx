@@ -1,24 +1,22 @@
-from starlette.websockets import WebSocketState
+from typing import override
+
 from core.socket import Connection, Grant, Socket
+from core.test import Stub
 from benches import Bench
 import asyncio
 
-class Sink:
-
-    client_state = WebSocketState.CONNECTED
+class Sink(Stub):
 
     def __init__ ( self ) -> None:
 
+        super().__init__()
+
         self.count = 0
 
-    async def send_bytes ( self, _data: bytes ) -> None:
+    @override
+    async def send_bytes ( self, data: bytes ) -> None:
+
         self.count += 1
-
-    async def receive ( self ) -> dict[str, object]:
-        return { "type": "websocket.disconnect", "code": 1000 }
-
-    async def close ( self, _code: int = 1000, _reason: str | None = None ) -> None:
-        return None
 
 class SocketBench(Bench):
 

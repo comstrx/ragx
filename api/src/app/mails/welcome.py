@@ -1,7 +1,7 @@
 from core.queue import Queued
-from app.utils.bases import BaseMail
+from app.utils.cycle import Mail
 
-class WelcomeMail(BaseMail, Queued):
+class WelcomeMail(Mail, Queued):
 
     subject = "Welcome to {app}, {name}"
     html    = "mail/welcome.html"

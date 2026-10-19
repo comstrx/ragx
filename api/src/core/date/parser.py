@@ -1,8 +1,8 @@
 from datetime import datetime, timedelta, tzinfo
 from typing import Any
-import re
 
 from .calendar import DAYS, weekday_index
+import re
 
 UNITS    = {
     "second": "seconds", "minute": "minutes", "hour": "hours", "day": "days", "week": "weeks", "month": "months",
@@ -130,6 +130,7 @@ class Parser:
         return None
 
     def weekdays ( self ) -> tuple[str, ...]:
+
         return DAYS
 
     def shift_text ( self, delta: timedelta ) -> str:

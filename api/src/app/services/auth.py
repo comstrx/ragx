@@ -1,3 +1,4 @@
+from core.database import database
 from core.token import token
 from app.enums import Role as Roles
 from app.enums import TokenKind
@@ -6,13 +7,13 @@ from app.exceptions import EmailTaken, InvalidCredentials, TokenRevoked, Unknown
 from app.models import User
 from app.repositories import RoleRepository, TokenRepository, UserRepository
 from app.resources import UserResource
-from app.utils.bases import BaseService
+from app.utils.cycle import Service
 from app.utils.dna import passwords
 
 ACCESS_TTL  = 900
 REFRESH_TTL = 2_592_000
 
-class AuthService(BaseService):
+class AuthService(Service):
 
     def __init__ (
         self, users: UserRepository, roles: RoleRepository, tokens: TokenRepository, resource: UserResource,
@@ -47,9 +48,10 @@ class AuthService(BaseService):
 
     async def login ( self, email: str, password: str ) -> dict[str, object]:
 
-        user = await self._users.find_by_email(email)
+        user  = await self._users.find_by_email(email)
+        known = await passwords.verify(password, user.password if user else None)
 
-        if user is None or not await passwords.verify(password, user.password): raise InvalidCredentials
+        if user is None or not known: raise InvalidCredentials
         if user.password and passwords.stale(user.password):
             await self._users.update(user.id, { "password": await passwords.hash(password) })
 
@@ -64,11 +66,11 @@ class AuthService(BaseService):
 
         if stored is None or str(stored.owner_id) != claims.subject: raise TokenRevoked
 
-        user = await self._users.one(claims.subject)
+        async with database.transaction():
 
-        await self._tokens.revoke(stored.id)
+            if not await self._tokens.revoke(stored.id): raise TokenRevoked
 
-        return await self.session(user)
+            return await self.session(await self._users.one(claims.subject))
 
     async def logout ( self, refresh_token: str, user: User ) -> int:
 
@@ -81,6 +83,7 @@ class AuthService(BaseService):
         return 1
 
     async def identify ( self, authorization: str | None ) -> User:
+
         return await self.bearer(token.bearer(authorization))
 
     async def bearer ( self, access_token: str | None ) -> User:
@@ -93,6 +96,7 @@ class AuthService(BaseService):
         return user
 
     async def me ( self, user: User ) -> dict[str, object]:
+
         return self._resource.one(user if "roles" in user.related else await self._users.one(user.id, "roles"))
 
     async def session ( self, user: User ) -> dict[str, object]:

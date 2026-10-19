@@ -1,0 +1,46 @@
+{
+  "generation": {
+    "start_ms": 176963.82,
+    "reuse_ms": 0.01,
+    "output": {
+      "text": "",
+      "model": "/var/www/projects/ragx/ai/.runtime/models/57d1997790d1744fba5b40a7317df71ea5e2acee28c47e78f0cce39c0703f8cf/Qwen3.5-0.8B-Q4_0.gguf",
+      "provider": "generation",
+      "usage": {
+        "input": 20,
+        "output": 40,
+        "total": 60
+      },
+      "finish": "length",
+      "ms": 3134.33
+    }
+  },
+  "embedding": {
+    "start_ms": 183884.51,
+    "reuse_ms": 0.01,
+    "output": {
+      "count": 2,
+      "dimension": 1024,
+      "first_values": [
+        0.004519129171967506,
+        -0.015069217421114445,
+        0.0020752286072820425,
+        -0.08813398331403732
+      ]
+    }
+  },
+  "ranking": {
+    "start_ms": 272128.74,
+    "reuse_ms": 0.01,
+    "output": [
+      {
+        "index": 0,
+        "score": 1.3962551355361938
+      },
+      {
+        "index": 1,
+        "score": -11.029726028442383
+      }
+    ]
+  }
+}

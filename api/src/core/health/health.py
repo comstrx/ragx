@@ -1,10 +1,96 @@
-from collections.abc import Sequence
-from typing import Any
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import Any, Self
 
 from core.date import date
 from core.log import log
-from .check import DEGRADED, DOWN, OK, Check, Probe, Result, worst
-import asyncio
+import asyncio, inspect
+
+type Verdict = bool | str | Mapping[str, Any] | "Result"
+type Probe = Callable[[], Awaitable[Verdict] | Verdict]
+
+OK       = "ok"
+DEGRADED = "degraded"
+DOWN     = "down"
+RANKS    = { OK: 0, DEGRADED: 1, DOWN: 2 }
+
+@dataclass(frozen=True, slots=True)
+class Result:
+
+    status : str = OK
+    facts  : Mapping[str, Any] = field(default_factory=dict)
+    reason : str | None = None
+
+    @classmethod
+    def ok ( cls, **facts: Any ) -> Self:
+
+        return cls(OK, facts)
+
+    @classmethod
+    def degraded ( cls, reason: str | None = None, **facts: Any ) -> Self:
+
+        return cls(DEGRADED, facts, reason)
+
+    @classmethod
+    def down ( cls, reason: str | None = None, **facts: Any ) -> Self:
+
+        return cls(DOWN, facts, reason)
+
+    @classmethod
+    def of ( cls, verdict: Any ) -> Result:
+
+        if isinstance(verdict, Result): return verdict
+        if isinstance(verdict, bool): return cls(OK if verdict else DOWN)
+        if isinstance(verdict, str): return cls(verdict, {}, None) if verdict in RANKS else cls(DOWN, {}, verdict)
+        if isinstance(verdict, Mapping):
+
+            status = str(verdict.get("status", OK))
+
+            return cls(status if status in RANKS else DEGRADED, dict(verdict), verdict.get("reason"))
+
+        return cls(OK)
+
+    def healthy ( self ) -> bool:
+
+        return self.status == OK
+
+    def dump ( self ) -> dict[str, Any]:
+
+        body: dict[str, Any] = { "status": self.status, **self.facts }
+
+        if self.reason: body["reason"] = self.reason
+
+        return body
+
+@dataclass(slots=True)
+class Check:
+
+    name     : str
+    probe    : Probe
+    critical : bool = True
+    wait     : float = 3.0
+    tags     : tuple[str, ...] = ()
+
+    async def run ( self ) -> tuple[Result, float]:
+
+        started = date.tick()
+
+        try:
+
+            outcome = self.probe()
+
+            if inspect.isawaitable(outcome): outcome = await asyncio.wait_for(outcome, self.wait)
+
+            result = Result.of(outcome)
+
+        except TimeoutError: result = Result.down("timeout")
+        except Exception as error: result = Result.down(type(error).__name__)
+
+        return result, date.elapsed(started)
+
+def worst ( statuses: list[str] ) -> str:
+
+    return max(statuses, key=lambda status: RANKS.get(status, 2)) if statuses else OK
 
 class Health:
 
@@ -24,16 +110,24 @@ class Health:
         return check
 
     def forget ( self, name: str ) -> bool:
+
         return self._checks.pop(name, None) is not None
 
     def names ( self ) -> list[str]:
+
         return sorted(self._checks)
 
     def has ( self, name: str ) -> bool:
+
         return name in self._checks
 
-    def clear ( self ) -> None:
+    def clear ( self ) -> int:
+
+        count = len(self._checks)
+
         self._checks.clear()
+
+        return count
 
     async def run ( self, name: str ) -> Result:
 
@@ -73,18 +167,23 @@ class Health:
         return worst(statuses)
 
     def failing ( self, report: dict[str, Any] ) -> list[str]:
+
         return sorted(name for name, check in report["checks"].items() if check["status"] != OK)
 
     async def healthy ( self, only: Sequence[str] = () ) -> bool:
+
         return str((await self.report(only))["status"]) == OK
 
     async def alive ( self ) -> bool:
+
         return str((await self.report(tag="live"))["status"]) != DOWN
 
     async def ready ( self ) -> bool:
+
         return str((await self.report(tag="ready"))["status"]) == OK
 
     def last ( self ) -> dict[str, Any] | None:
+
         return self._last
 
     def describe ( self ) -> dict[str, Any]:

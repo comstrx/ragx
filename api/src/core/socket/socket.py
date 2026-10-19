@@ -1,11 +1,10 @@
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from starlette.websockets import WebSocket, WebSocketDisconnect
 from core.error import Code, Fault
 from core.rand import rand
-from .connection import POLICY, PRESENCE, PRIVATE, TOO_BIG, TRY_AGAIN, Connection, Grant, Limits
-from .frame import Frame
+from starlette.websockets import WebSocket, WebSocketDisconnect
+from .connection import POLICY, PRESENCE, PRIVATE, TOO_BIG, TRY_AGAIN, Connection, Frame, Grant, Limits
 from .hub import Hub
 import asyncio
 
@@ -26,7 +25,12 @@ class Socket(Hub):
         if limits is not None: self._limits = limits
         if authorizer is not None: self._authorizer = authorizer
 
-    async def endpoint ( self, websocket: WebSocket ) -> None:
+    @property
+    def endpoint ( self ) -> Callable[..., Awaitable[None]]:
+
+        return self._serve_
+
+    async def _serve_ ( self, websocket: WebSocket ) -> None:
 
         if self.full():
 
@@ -98,6 +102,7 @@ class Socket(Hub):
         except Fault as fault: self.refuse(connection, fault)
 
     def refuse ( self, connection: Connection, fault: Fault ) -> None:
+
         connection.emit("error", { "code": fault.code, "reason": fault.reason })
 
     async def command ( self, connection: Connection, frame: Frame ) -> None:

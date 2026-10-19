@@ -25,4 +25,5 @@ class Token(Model):
     updated_at : DateTime
 
     def alive ( self ) -> bool:
+
         return self.revoked_at is None and date.utc(self.expires_at) > date.now()

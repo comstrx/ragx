@@ -1,28 +1,37 @@
-from collections.abc import AsyncIterator, Sequence
-from typing import Any
+from collections.abc import AsyncGenerator, Sequence
+from typing import Any, ClassVar, override
 
-from httpx import AsyncBaseTransport
 from core.date import date
+from core.json import Schema
+from core.net import Transport
 from .message import Attachment, Chunk, Message, Options, Reply, Usage
-from .provider import Remote, text_of
+from .provider import CORE, DOCUMENTS, IMAGES, METADATA, SCHEMA, Provider, text_of
+import contextlib
 
 BASE    = "https://api.anthropic.com"
 MODEL   = "claude-sonnet-5-5"
 VERSION = "2023-06-01"
 TOKENS  = 4096
+LIMITED = frozenset({"minimum", "maximum", "minLength", "maxLength", "maxItems"})
 
-class Claude(Remote):
+class Claude(Provider):
 
-    name  = "claude"
-    model = MODEL
+    name         = "claude"
+    model        = MODEL
+    capabilities : ClassVar[frozenset[str]] = CORE | {SCHEMA, IMAGES, DOCUMENTS, METADATA}
 
     def __init__ (
-        self, key: str, model: str = MODEL, base: str = BASE, wait: float = 60.0, retries: int = 1,
-        transport: AsyncBaseTransport | None = None,
+        self, key: str, model: str | None = None, base: str | None = None, wait: float = 60.0, retries: int = 1,
+        transport: Transport | None = None,
     ) -> None:
-        super().__init__(base, key, model, wait, retries, transport)
 
+        self.missing(("key", key))
+
+        super().__init__(base or BASE, key, model, wait, retries, transport)
+
+    @override
     def headers ( self ) -> dict[str, str]:
+
         return { "x-api-key": self._key, "anthropic-version": VERSION }
 
     def part ( self, attachment: Attachment ) -> dict[str, Any]:
@@ -58,9 +67,16 @@ class Claude(Remote):
         if options.top_p is not None: payload["top_p"] = options.top_p
         if options.stop: payload["stop_sequences"] = list(options.stop)
         if options.metadata: payload["metadata"] = dict(options.metadata)
+        if options.schema is not None and options.native:
+            payload["output_config"] = { "format": { "type": "json_schema", "schema": self.shaped(options.schema) } }
         if stream: payload["stream"] = True
 
         return payload
+
+    @override
+    def shaped ( self, schema: Schema ) -> dict[str, Any]:
+
+        return schema.projected(LIMITED, items=1)
 
     def usage_of ( self, data: Any ) -> Usage:
 
@@ -70,7 +86,8 @@ class Claude(Remote):
 
         return Usage(int(usage.get("input_tokens", 0) or 0), int(usage.get("output_tokens", 0) or 0))
 
-    async def complete ( self, messages: Sequence[Message], options: Options ) -> Reply:
+    @override
+    async def answer ( self, messages: Sequence[Message], options: Options ) -> Reply:
 
         started = date.tick()
         data    = await self.post("/v1/messages", self.body(messages, options))
@@ -80,35 +97,39 @@ class Claude(Remote):
             self.usage_of(data), data.get("stop_reason"), date.elapsed(started), data,
         )
 
-    async def stream ( self, messages: Sequence[Message], options: Options ) -> AsyncIterator[Chunk]:
+    @override
+    async def chunks ( self, messages: Sequence[Message], options: Options ) -> AsyncGenerator[Chunk]:
 
         spent = Usage()
 
-        async for event in self.events("/v1/messages", self.body(messages, options, stream=True)):
+        async with contextlib.aclosing(self.flow("/v1/messages", self.body(messages, options, stream=True))) as events:
 
-            data = event.json()
+            async for event in events:
 
-            if not isinstance(data, dict): continue
+                data = event.json()
 
-            kind = str(data.get("type", ""))
+                if not isinstance(data, dict): continue
 
-            if kind == "message_start": spent = self.usage_of(data.get("message"))
-            if kind == "content_block_delta":
+                kind = str(data.get("type", ""))
 
-                delta = data.get("delta") or {}
+                if kind == "message_start": spent = self.usage_of(data.get("message"))
+                if kind == "content_block_delta":
 
-                if delta.get("type") == "text_delta": yield Chunk(str(delta.get("text", "")), raw=data)
+                    delta = data.get("delta") or {}
 
-            if kind == "message_delta": spent = spent.plus(self.usage_of(data))
-            if kind == "message_stop":
+                    if delta.get("type") == "text_delta": yield Chunk(str(delta.get("text", "")), raw=data)
 
-                yield Chunk("", done=True, usage=spent, raw=data)
+                if kind == "message_delta": spent = spent.plus(self.usage_of(data))
+                if kind == "message_stop":
 
-                return
+                    yield Chunk("", done=True, usage=spent, raw=data)
 
+                    return
+
+    @override
     async def models ( self ) -> list[str]:
 
-        data  = await self.get("/v1/models")
+        data  = await self.listing("/v1/models")
         found = data.get("data") if isinstance(data, dict) else []
 
         if not isinstance(found, list): return []

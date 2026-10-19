@@ -28,18 +28,54 @@ class Walk:
 
     def dig ( self, value: object, path: str, default: object = None, separator: str = "." ) -> Any:
 
+        parts = path.split(separator)
+
+        if "*" in parts: return self.gather(value, parts)
+
         current: object = value
 
-        for part in path.split(separator):
+        for part in parts:
 
-            if isinstance(current, Mapping) and part in current: current = current[part]
-            elif isinstance(current, list) and part.lstrip("-").isdigit() and -len(current) <= int(part) < len(current):
-                current = current[int(part)]
-            else: return default
+            current = self.step(current, part)
+
+            if current is MISSING: return default
 
         return current
 
+    def step ( self, current: object, part: str ) -> object:
+
+        if isinstance(current, Mapping): return current.get(part, MISSING)
+
+        if not (isinstance(current, list) and part.lstrip("-").isdigit()): return MISSING
+
+        return current[int(part)] if -len(current) <= int(part) < len(current) else MISSING
+
+    def gather ( self, value: object, parts: list[str] ) -> list[Any]:
+
+        found: list[Any] = []
+        lanes: list[object] = [value]
+
+        for index, part in enumerate(parts):
+
+            last  = index == len(parts) - 1
+            lanes = [
+                item for lane in lanes
+                for item in (self.spread(lane) if part == "*" else [self.step(lane, part)]) if item is not MISSING
+            ]
+
+            if last: found = lanes
+
+        return found
+
+    def spread ( self, lane: object ) -> list[object]:
+
+        if isinstance(lane, Mapping): return list(lane.values())
+        if isinstance(lane, list): return list(lane)
+
+        return []
+
     def has ( self, value: object, path: str, separator: str = "." ) -> bool:
+
         return self.dig(value, path, MISSING, separator) is not MISSING
 
     def put ( self, value: MutableMapping[str, Any], path: str, item: object, separator: str = "." ) -> None:

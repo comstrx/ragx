@@ -5,7 +5,7 @@ from core.date import date
 from core.error import Code, Fault
 from core.log import log
 from .task import Action, Task
-import asyncio
+import asyncio, contextlib
 
 TICK = 1.0
 
@@ -34,9 +34,11 @@ class Schedule:
         return self.call(dispatch if callable(dispatch) else dispatchable, label)
 
     def tasks ( self ) -> list[Task]:
+
         return list(self._tasks)
 
     def names ( self ) -> list[str]:
+
         return [task.name for task in self._tasks]
 
     def find ( self, name: str ) -> Task:
@@ -48,6 +50,7 @@ class Schedule:
         return found
 
     def has ( self, name: str ) -> bool:
+
         return any(task.name == name for task in self._tasks)
 
     def forget ( self, name: str ) -> bool:
@@ -58,8 +61,13 @@ class Schedule:
 
         return len(self._tasks) < before
 
-    def clear ( self ) -> None:
+    def clear ( self ) -> int:
+
+        count = len(self._tasks)
+
         self._tasks.clear()
+
+        return count
 
     def pause ( self, name: str | None = None ) -> int:
 
@@ -94,6 +102,7 @@ class Schedule:
         return [task.name for task in ready]
 
     async def run ( self, name: str ) -> bool:
+
         return await self.find(name).execute()
 
     def upcoming ( self, count: int = 10, now: datetime | None = None ) -> list[dict[str, Any]]:
@@ -123,22 +132,30 @@ class Schedule:
                 async with asyncio.timeout(tick): await self._stopping.wait()
             except TimeoutError: continue
 
-    async def stop ( self ) -> None:
+    async def stop ( self, wait: float = 5.0 ) -> int:
 
-        if self._ticker is None: return
+        ticker, self._ticker = self._ticker, None
+
+        if ticker is None: return 0
 
         self._stopping.set()
 
-        await self._ticker
+        try:
+            async with asyncio.timeout(wait): await asyncio.shield(ticker)
+        except TimeoutError: ticker.cancel()
 
-        self._ticker = None
+        with contextlib.suppress(asyncio.CancelledError, Exception): await ticker
 
         log.info("schedule.stopped", ticks=self._ticks)
 
+        return 1
+
     def running ( self ) -> bool:
+
         return self._ticker is not None and not self._ticker.done()
 
     def status ( self ) -> list[dict[str, Any]]:
+
         return [task.dump() for task in self._tasks]
 
     def describe ( self ) -> dict[str, Any]:

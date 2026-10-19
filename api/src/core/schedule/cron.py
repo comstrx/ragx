@@ -27,7 +27,7 @@ class Cron:
 
         parts = ALIASES.get(expression.strip().lower(), expression).split()
 
-        if len(parts) != len(FIELDS): raise Fault(Code.INTERNAL, reason=f"cron.{expression}")
+        if len(parts) != len(FIELDS): raise Fault(Code.INTERNAL, reason="cron.fields")
 
         self.expression = expression
         self.parts      = [self.words(part, index) for index, part in enumerate(parts)]
@@ -58,7 +58,7 @@ class Cron:
             stride        = int(step) if step else 1
             start, end    = self.bounds(span, low, high)
 
-            if stride < 1 or start < low or end > high or start > end: raise Fault(Code.INTERNAL, reason=f"cron.{text}")
+            if stride < 1 or start < low or end > high or start > end: raise Fault(Code.INTERNAL, reason="cron.range")
 
             values.update(range(start, end + 1, stride))
 
@@ -87,6 +87,7 @@ class Cron:
         return moment.day in self.days or weekday in self.weekdays
 
     def matches ( self, moment: datetime ) -> bool:
+
         return moment.minute in self.minutes and moment.hour in self.hours and self.day_matches(moment)
 
     def next ( self, after: datetime ) -> datetime:
@@ -103,7 +104,7 @@ class Cron:
 
             moment = (moment + timedelta(days=1)).replace(hour=0, minute=0)
 
-        raise Fault(Code.INTERNAL, reason=f"cron.{self.expression}.unreachable")
+        raise Fault(Code.INTERNAL, reason="cron.unreachable")
 
     def slot ( self, moment: datetime ) -> datetime | None:
 
@@ -133,6 +134,7 @@ class Cron:
         return found
 
     def with_weekdays ( self, weekdays: str ) -> Cron:
+
         return Cron(" ".join([*self.parts[:4], weekdays]))
 
     def describe ( self ) -> dict[str, Any]:

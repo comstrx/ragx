@@ -2,9 +2,8 @@ from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 from core.log import log
-from .connection import GOING_AWAY, POLICY, PRESENCE, Connection, Grant, Limits
-from .frame import Frame
-import asyncio
+from core.thread import thread
+from .connection import GOING_AWAY, POLICY, PRESENCE, Connection, Frame, Grant, Limits
 
 type Hook = Callable[[Connection], Awaitable[None] | None]
 
@@ -21,15 +20,19 @@ class Hub:
         self._dropped   = 0
 
     def limits ( self ) -> Limits:
+
         return self._limits
 
     def on_join ( self, hook: Hook ) -> None:
+
         self._joined = hook
 
     def on_leave ( self, hook: Hook ) -> None:
+
         self._left = hook
 
     def full ( self ) -> bool:
+
         return len(self._connections) >= self._limits.connections
 
     def attach ( self, connection: Connection ) -> Connection:
@@ -102,6 +105,7 @@ class Hub:
         return connection is not None and connection.offer(Frame(event, None, data).encode())
 
     def send_to_user ( self, user_id: str, event: str, data: Any = None ) -> int:
+
         return sum(1 for connection in self.connections_of(user_id) if connection.emit(event, data))
 
     def broadcast ( self, event: str, data: Any = None, exclude: str | None = None ) -> int:
@@ -118,7 +122,7 @@ class Hub:
         if connection.dropped >= self._limits.drops:
 
             log.warning("socket.slow_consumer", connection=connection.id, dropped=connection.dropped)
-            asyncio.get_running_loop().create_task(connection.close(POLICY, "slow"))
+            thread.tasks.fire(connection.close(POLICY, "slow"), "socket:shed")
 
     async def kick ( self, identity: str, reason: str = "kicked" ) -> bool:
 
@@ -145,18 +149,23 @@ class Hub:
         return found
 
     def connection ( self, identity: str ) -> Connection | None:
+
         return self._connections.get(identity)
 
     def connections ( self ) -> list[Connection]:
+
         return list(self._connections.values())
 
     def connections_of ( self, user_id: str ) -> list[Connection]:
+
         return [connection for connection in self._connections.values() if connection.user_id() == user_id]
 
     def channels ( self ) -> dict[str, int]:
+
         return { channel: len(group) for channel, group in sorted(self._topics.items()) }
 
     def subscribers ( self, channel: str ) -> int:
+
         return len(self._topics.get(channel, ()))
 
     def stats ( self ) -> dict[str, int]:

@@ -1,6 +1,4 @@
-from typing import Annotated
-
-from core.http import Header, Request
+from core.http import Request
 from app.models import User
 from app.services import AuthService
 
@@ -10,10 +8,10 @@ class Authenticate:
 
         self._service = service
 
-    async def __call__ ( self, request: Request, authorization: Annotated[str | None, Header()] = None ) -> User:
+    async def __call__ ( self, request: Request ) -> User:
 
-        user = await self._service.identify(authorization)
+        user = await self._service.identify(request.header("authorization") or None)
 
-        request.state.user = user
+        request.assign(user=user)
 
         return user

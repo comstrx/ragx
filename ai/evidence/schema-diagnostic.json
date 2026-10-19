@@ -1,0 +1,12 @@
+{
+  "text": "{\n  \"answer\": \"Refunds are available within 14 days.\",\n  \"citation\": [\n    \"untrusted_sources[0].content\"\n  ]\n}",
+  "model": "ggml-org/Qwen3.5-0.8B-GGUF",
+  "provider": "generation",
+  "usage": {
+    "input": 89,
+    "output": 40,
+    "total": 129
+  },
+  "finish": "stop",
+  "ms": 3286.26
+}

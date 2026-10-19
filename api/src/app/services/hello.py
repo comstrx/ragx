@@ -1,9 +1,9 @@
 from app.enums import Message
 from app.repositories import UserRepository
 from app.resources import UserResource
-from app.utils.bases import BaseService
+from app.utils.cycle import Service
 
-class HelloService(BaseService):
+class HelloService(Service):
 
     def __init__ ( self, users: UserRepository, resource: UserResource ) -> None:
 

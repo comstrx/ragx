@@ -24,12 +24,15 @@ class Lock:
         self._wait  = 0.0
 
     def key ( self ) -> str:
+
         return f"lock:{self._name}"
 
     def owner ( self ) -> str:
+
         return self._owner
 
     def owned ( self ) -> bool:
+
         return self._held
 
     async def acquire ( self, wait: float = 0.0, every: float = EVERY ) -> bool:
@@ -57,6 +60,7 @@ class Lock:
         return await self._store.release(self.key(), self._owner)
 
     async def extend ( self, ttl: float | None = None ) -> bool:
+
         return self._held and await self._store.touch(self.key(), ttl or self._ttl)
 
     async def force_release ( self ) -> bool:
@@ -73,12 +77,13 @@ class Lock:
 
     async def get[T] ( self, work: Work[T], wait: float = 0.0 ) -> T:
 
-        if not await self.acquire(wait): raise Fault(Code.CONFLICT, reason=f"lock.{self._name}")
+        if not await self.acquire(wait): raise Fault(Code.CONFLICT, reason="lock.busy")
 
         try: return await work()
         finally: await self.release()
 
     async def block[T] ( self, wait: float, work: Work[T] ) -> T:
+
         return await self.get(work, wait)
 
     def waiting ( self, wait: float ) -> Self:
@@ -89,11 +94,12 @@ class Lock:
 
     async def __aenter__ ( self ) -> Self:
 
-        if not await self.acquire(self._wait): raise Fault(Code.CONFLICT, reason=f"lock.{self._name}")
+        if not await self.acquire(self._wait): raise Fault(Code.CONFLICT, reason="lock.busy")
 
         return self
 
     async def __aexit__ (
         self, kind: type[BaseException] | None, error: BaseException | None, trace: TracebackType | None,
     ) -> None:
+
         await self.release()

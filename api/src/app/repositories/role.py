@@ -1,11 +1,12 @@
 from app.models import Role
-from app.utils.bases import BaseRepository
+from app.utils.cycle import Repository
 
-class RoleRepository(BaseRepository[Role]):
+class RoleRepository(Repository[Role]):
 
     model = Role
 
     async def by_name ( self, name: str ) -> Role | None:
+
         return await self.first_by("name", name)
 
     async def ensure ( self, name: str, label: str ) -> Role:

@@ -1,9 +1,9 @@
-from collections.abc import AsyncGenerator, MutableMapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, MutableMapping, Sequence
 from contextlib import asynccontextmanager
 
 from core.broadcast import broadcast
 from core.cache import cache
-from core.database import Database, Migrator, Seeds, Status, adapters
+from core.database import Database, Migrator, Seeds, Status, adapters, outbox
 from core.event import events
 from core.llm import llm
 from core.queue import queue
@@ -13,15 +13,15 @@ from core.fs import Path
 from core.http import App, warm
 from core.log import log
 from core.thread import thread
-from config import DatabaseConfig, QueueConfig, ScheduleConfig
+from config import DatabaseConfig, QueueConfig
 from database.seeders import seeders
 
 class Boot:
 
     def __init__ (
         self, source: Path, database: Database, settings: DatabaseConfig, application: str,
-        jobs: QueueConfig | None = None, timetable: ScheduleConfig | None = None,
-        paths: tuple[str, ...] = ("/health",),
+        jobs: QueueConfig | None = None, paths: tuple[str, ...] = ("/health",),
+        primers: Sequence[Callable[[], Awaitable[object]]] = (),
     ) -> None:
 
         self._source      = source
@@ -29,8 +29,8 @@ class Boot:
         self._settings    = settings
         self._application = application
         self._jobs        = jobs or QueueConfig()
-        self._timetable   = timetable or ScheduleConfig()
         self.paths        = paths
+        self._primers     = tuple(primers)
 
     @asynccontextmanager
     async def lifespan ( self, app: App ) -> AsyncGenerator[None]:
@@ -42,7 +42,7 @@ class Boot:
 
     async def start ( self, app: App, facts: MutableMapping[str, object] ) -> None:
 
-        await thread.gather(self.ready(), self.schema(app))
+        await thread.gather(self.ready(), self.schema(app), self.prime())
 
         facts["warmed"] = await self.warm(app)
         facts["pool"]   = self._database.describe()
@@ -51,6 +51,7 @@ class Boot:
         facts["events"] = events.bus().name
 
         if self._jobs.workers > 0: events.start()
+        if self._jobs.workers > 0: outbox.start()
         if broadcast.ready(): await broadcast.start()
 
     async def ready ( self ) -> None:
@@ -62,6 +63,8 @@ class Boot:
             if self._settings.migrate: await self.migrate()
             if self._settings.seed: await self.seed()
 
+            await self._database.fill(self._settings.pool_min)
+
     async def connect ( self ) -> None:
 
         cfg     = self._settings
@@ -72,19 +75,34 @@ class Boot:
         await self._database.connect(adapter, url, cfg.pool_min, cfg.pool_max, cfg.timeout, options)
 
     def migrator ( self ) -> Migrator:
+
         return Migrator(self._database, self._source / "database" / "migrations")
 
     async def migrate ( self ) -> list[str]:
+
         return await self.migrator().apply()
 
     async def rollback ( self, steps: int = 1 ) -> list[str]:
+
         return await self.migrator().rollback(steps)
 
     async def status ( self ) -> Status:
+
         return await self.migrator().status()
 
     async def seed ( self ) -> list[str]:
+
         return await Seeds(self._database, seeders).run()
+
+    async def prime ( self ) -> int:
+
+        with log.span("boot.prime") as facts:
+
+            await thread.gather(*(primer() for primer in self._primers))
+
+            facts["primed"] = len(self._primers)
+
+        return len(self._primers)
 
     async def schema ( self, app: App ) -> None:
 
@@ -108,7 +126,7 @@ class Boot:
 
     def clock ( self ) -> int:
 
-        if self._timetable.enabled: schedule.start(self._timetable.tick)
+        if self._jobs.schedule: schedule.start(self._jobs.tick)
 
         return len(schedule.tasks())
 
@@ -120,6 +138,7 @@ class Boot:
             await socket.close_all()
             await broadcast.stop()
             await events.stop()
+            await outbox.stop()
             await queue.close()
             await llm.close()
             await cache.close()

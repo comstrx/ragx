@@ -4,7 +4,7 @@ from typing import Any
 
 from anyio import Path as AsyncPath, to_thread
 from core.error import Code, Fault
-from .base import Pathish
+from .path import Pathish
 from .scan import Scan
 import shutil, time
 
@@ -13,6 +13,7 @@ type Tree = dict[str, Any]
 class Dir(Scan):
 
     async def exists ( self, target: Pathish ) -> bool:
+
         return await AsyncPath(target).is_dir()
 
     async def make ( self, target: Pathish ) -> Path:
@@ -48,7 +49,7 @@ class Dir(Scan):
 
         root = Path(folder)
 
-        if not await self.exists(root): raise Fault(Code.NOT_FOUND, reason=str(folder))
+        if not await self.exists(root): raise Fault(Code.NOT_FOUND, reason="fs.missing")
 
         return await to_thread.run_sync(self.branch, root, depth)
 
@@ -114,7 +115,7 @@ class Dir(Scan):
 
     async def copy ( self, source: Pathish, target: Pathish ) -> Path:
 
-        if not await self.exists(source): raise Fault(Code.NOT_FOUND, reason=str(source))
+        if not await self.exists(source): raise Fault(Code.NOT_FOUND, reason="fs.missing")
 
         await to_thread.run_sync(lambda: shutil.copytree(str(source), str(target), dirs_exist_ok=True))
 
@@ -122,7 +123,7 @@ class Dir(Scan):
 
     async def move ( self, source: Pathish, target: Pathish ) -> Path:
 
-        if not await self.exists(source): raise Fault(Code.NOT_FOUND, reason=str(source))
+        if not await self.exists(source): raise Fault(Code.NOT_FOUND, reason="fs.missing")
 
         await AsyncPath(Path(target).parent).mkdir(parents=True, exist_ok=True)
         await to_thread.run_sync(shutil.move, str(source), str(target))

@@ -99,9 +99,11 @@ class Inflect:
         return self.plural(word, count)
 
     def counted ( self, word: str, count: int ) -> str:
+
         return f"{count} {self.choose(word, count)}"
 
     def is_plural ( self, word: str ) -> bool:
+
         return word.lower() not in UNCOUNTABLE and self.singular(word) != word
 
     def match_case ( self, source: str, target: str ) -> str:

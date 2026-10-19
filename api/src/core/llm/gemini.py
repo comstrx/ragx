@@ -1,27 +1,41 @@
-from collections.abc import AsyncIterator, Sequence
-from typing import Any
+from collections.abc import AsyncGenerator, Sequence
+from typing import Any, ClassVar, override
 
-from httpx import AsyncBaseTransport
 from core.date import date
+from core.net import Transport
+from .embedding import Embeddings, embeddings
 from .message import Attachment, Chunk, Message, Options, Reply, Usage
-from .provider import Remote
+from .provider import AUDIO, CORE, DOCUMENTS, EMBED, IMAGES, INSTRUCT, JSON, SCHEMA, VECTORS, VIDEO, Provider
+import contextlib
 
 BASE  = "https://generativelanguage.googleapis.com"
 MODEL = "gemini-2.5-flash"
 ROLES = { "user": "user", "assistant": "model" }
+TASKS = { True: "RETRIEVAL_QUERY", False: "RETRIEVAL_DOCUMENT" }
 
-class Gemini(Remote):
+class Gemini(Provider):
 
-    name  = "gemini"
-    model = MODEL
+    name         = "gemini"
+    model        = MODEL
+    capabilities : ClassVar[frozenset[str]] = CORE | {JSON, SCHEMA, IMAGES, DOCUMENTS, AUDIO, VIDEO}
 
     def __init__ (
-        self, key: str, model: str = MODEL, base: str = BASE, wait: float = 60.0, retries: int = 1,
-        transport: AsyncBaseTransport | None = None,
+        self, key: str, model: str | None = None, base: str | None = None, wait: float = 60.0, retries: int = 1,
+        transport: Transport | None = None,
     ) -> None:
-        super().__init__(base, key, model, wait, retries, transport)
 
+        self.missing(("key", key))
+
+        super().__init__(base or BASE, key, model, wait, retries, transport)
+
+    @override
+    def abilities ( self ) -> frozenset[str]:
+
+        return VECTORS if "embedding" in self.model else super().abilities()
+
+    @override
     def headers ( self ) -> dict[str, str]:
+
         return { "x-goog-api-key": self._key }
 
     def part ( self, attachment: Attachment ) -> dict[str, Any]:
@@ -50,12 +64,16 @@ class Gemini(Remote):
         if options.top_p is not None: config["topP"] = options.top_p
         if options.stop: config["stopSequences"] = list(options.stop)
         if options.json: config["responseMimeType"] = "application/json"
+        if options.schema is not None and options.native:
+            config["responseMimeType"]   = "application/json"
+            config["responseJsonSchema"] = self.shaped(options.schema)
         if system: payload["system_instruction"] = { "parts": [{ "text": system }] }
         if config: payload["generationConfig"] = config
 
         return payload
 
     def path ( self, options: Options, action: str ) -> str:
+
         return f"/v1beta/models/{self.pick(options)}:{action}"
 
     def text_of ( self, data: Any ) -> str:
@@ -81,7 +99,8 @@ class Gemini(Remote):
 
         return Usage(int(usage.get("promptTokenCount", 0) or 0), int(usage.get("candidatesTokenCount", 0) or 0))
 
-    async def complete ( self, messages: Sequence[Message], options: Options ) -> Reply:
+    @override
+    async def answer ( self, messages: Sequence[Message], options: Options ) -> Reply:
 
         started = date.tick()
         data    = await self.post(self.path(options, "generateContent"), self.body(messages, options))
@@ -91,20 +110,39 @@ class Gemini(Remote):
             self.usage_of(data), self.finish_of(data), date.elapsed(started), data,
         )
 
-    async def stream ( self, messages: Sequence[Message], options: Options ) -> AsyncIterator[Chunk]:
+    @override
+    async def chunks ( self, messages: Sequence[Message], options: Options ) -> AsyncGenerator[Chunk]:
 
         path = f"{self.path(options, 'streamGenerateContent')}?alt=sse"
 
-        async for event in self.events(path, self.body(messages, options)):
+        async with contextlib.aclosing(self.flow(path, self.body(messages, options))) as events:
 
-            data   = event.json()
-            finish = self.finish_of(data)
+            async for event in events:
 
-            yield Chunk(self.text_of(data), finish is not None, self.usage_of(data) if finish else None, data)
+                data   = event.json()
+                finish = self.finish_of(data)
 
+                yield Chunk(self.text_of(data), finish is not None, self.usage_of(data) if finish else None, data)
+
+    @override
+    async def vectors ( self, texts: Sequence[str], query: bool, instruction: str | None ) -> Embeddings:
+
+        if instruction is not None: self.require(INSTRUCT)
+
+        named = f"models/{self.model}"
+        asked = [
+            { "model": named, "content": { "parts": [{ "text": text }] }, "taskType": TASKS[query] } for text in texts
+        ]
+        data  = await self.post(f"/v1beta/{named}:batchEmbedContents", { "requests": asked }, EMBED)
+        rows  = data.get("embeddings") if isinstance(data, dict) else None
+        pairs = [(index, row.get("values")) for index, row in enumerate(rows or []) if isinstance(row, dict)]
+
+        return embeddings(pairs, len(texts), self.model, self.name)
+
+    @override
     async def models ( self ) -> list[str]:
 
-        data  = await self.get("/v1beta/models")
+        data  = await self.listing("/v1beta/models")
         found = data.get("models") if isinstance(data, dict) else []
 
         return sorted(

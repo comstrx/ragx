@@ -1,0 +1,43 @@
+FLY002 Consider f-string instead of string join
+  --> src/core/llm/local.py:43:16
+   |
+41 |     def identity ( self ) -> str:
+42 |
+43 |         return ":".join((self.spec.source.artifact.sha256, self.spec.runtime.artifact.sha256, self.spec.embedding_format))
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+44 |
+45 |     @override
+   |
+help: Replace with f-string
+   |
+42 |
+   -         return ":".join((self.spec.source.artifact.sha256, self.spec.runtime.artifact.sha256, self.spec.embedding_format))
+43 +         return f"{self.spec.source.artifact.sha256}:{self.spec.runtime.artifact.sha256}:{self.spec.embedding_format}"
+44 |
+   |
+note: This is an unsafe fix and may change runtime behavior
+
+E501 Line too long (122 > 120)
+  --> src/core/llm/local.py:43:121
+   |
+41 |     def identity ( self ) -> str:
+42 |
+43 |         return ":".join((self.spec.source.artifact.sha256, self.spec.runtime.artifact.sha256, self.spec.embedding_format))
+   |                                                                                                                         ^^
+44 |
+45 |     @override
+   |
+
+E501 Line too long (125 > 120)
+  --> tests/test_transactions.py:27:121
+   |
+25 |         failure = True
+26 |         with pytest.raises(Fault):
+27 |             await rag.ingest([Document("same", "policy", (Part("first replacement"), Part("second replacement")))], "tenant")
+   |                                                                                                                         ^^^^^
+28 |         assert [item.text for item in await rag.retrieve("policy", "tenant")] == ["original"]
+29 |     finally: await engine.close()
+   |
+
+Found 3 errors.
+1 unsafe fix available with `--fix --unsafe-fixes`.

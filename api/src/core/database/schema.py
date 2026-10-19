@@ -2,10 +2,10 @@ from collections.abc import Callable
 
 from core.error import Code, Fault
 from sqlalchemy.schema import CreateColumn, DropTable
-import sqlalchemy as sa
 from .blueprint import Blueprint
 from .column import Column, Indexed
-from .engine import Session
+from .session import Session
+import sqlalchemy as sa
 
 type Define = Callable[[Blueprint], None]
 
@@ -16,7 +16,24 @@ class Schema:
         self._session = session
 
     def quote ( self, name: str ) -> str:
+
         return self._session.dialect().identifier_preparer.quote(name)
+
+    async def extension ( self, name: str ) -> None:
+
+        if not name.replace("_", "").isalnum(): raise Fault(Code.INTERNAL, reason="database.extension")
+
+        await self._session.script(f"CREATE EXTENSION IF NOT EXISTS {self.quote(name)}")
+
+    async def analyze ( self, table: str ) -> None:
+
+        await self._session.script(f"ANALYZE {self.quote(table)}")
+
+    async def extended ( self, name: str ) -> bool:
+
+        found = sa.text("SELECT 1 FROM pg_extension WHERE extname = :name")
+
+        return await self._session.value(found, { "name": name }) is not None
 
     async def create ( self, table: str, define: Define ) -> None:
 
@@ -28,7 +45,16 @@ class Schema:
 
         await self._session.sync(lambda connection: built.create(connection, checkfirst=True))
 
+        for column in blueprint.columns: await self.store(blueprint.table, column)
         for index in blueprint.indexes: await self.add_index(blueprint, index)
+
+    async def store ( self, table: str, column: Column ) -> None:
+
+        if column.storage is None: return
+
+        target = f"{self.quote(table)} ALTER COLUMN {self.quote(column.name)}"
+
+        await self._session.script(f"ALTER TABLE {target} SET STORAGE {column.storage.upper()}")
 
     async def create_if_missing ( self, table: str, define: Define ) -> bool:
 
@@ -109,18 +135,23 @@ class Schema:
         return len(tables)
 
     async def rename ( self, old: str, new: str ) -> None:
+
         await self._session.script(f"ALTER TABLE {self.quote(old)} RENAME TO {self.quote(new)}")
 
     async def comment ( self, table: str, text: str ) -> None:
+
         await self._session.script(f"COMMENT ON TABLE {self.quote(table)} IS :text", { "text": text })
 
     async def has ( self, table: str ) -> bool:
+
         return await self._session.sync(lambda connection: bool(sa.inspect(connection).has_table(table)))
 
     async def has_column ( self, table: str, column: str ) -> bool:
+
         return column in await self.columns(table)
 
     async def has_index ( self, table: str, index: str ) -> bool:
+
         return index in await self.indexes(table)
 
     async def columns ( self, table: str ) -> list[str]:
@@ -136,6 +167,7 @@ class Schema:
         return sorted(str(name) for name in found)
 
     async def truncate ( self, table: str ) -> None:
+
         await self._session.truncate(table)
 
     async def add_column ( self, table: str, column: Column ) -> None:

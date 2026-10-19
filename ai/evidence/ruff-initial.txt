@@ -1,0 +1,99 @@
+src/core/array/__init__.py:1:21: F401 `.search.Search` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
+src/core/array/__init__.py:1:29: F401 `.search.SearchItem` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
+src/core/array/__init__.py:2:22: F401 `.ranking.Ranked` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
+src/core/array/__init__.py:2:39: F401 `.ranking.RetrievalMetrics` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
+src/core/context/defer.py:87:20: BLE001 Do not catch blind exception: `Exception`
+src/core/date/format.py:109:23: DTZ007 Naive datetime constructed using `datetime.datetime.strptime()` without %z
+src/core/fs/__init__.py:1:22: F401 `.records.Records` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
+src/core/fs/__init__.py:2:23: F401 `.artifact.Artifact` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
+src/core/fs/__init__.py:2:33: F401 `.artifact.Artifacts` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
+src/core/fs/__init__.py:3:21: F401 `.bundle.Bundle` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
+src/core/fs/__init__.py:4:25: F401 `.extraction.Converter` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
+src/core/fs/__init__.py:4:36: F401 `.extraction.Extracted` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
+src/core/fs/__init__.py:4:47: F401 `.extraction.ExtractPolicy` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
+src/core/fs/__init__.py:4:62: F401 `.extraction.Extraction` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
+src/core/fs/__init__.py:4:74: F401 `.extraction.Part` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
+src/core/fs/artifact.py:17:32: PLR2004 Magic value used in comparison, consider replacing `64` with a constant variable
+src/core/fs/artifact.py:92:17: PTH105 `os.replace()` should be replaced by `Path.replace()`
+src/core/fs/artifact.py:99:17: ASYNC240 Async functions should not perform blocking pathlib.Path operations
+src/core/fs/bundle.py:18:85: PLR2004 Magic value used in comparison, consider replacing `4096` with a constant variable
+src/core/fs/bundle.py:30:13: PTH105 `os.replace()` should be replaced by `Path.replace()`
+src/core/fs/extraction.py:40:67: B008 Do not perform function call `ExtractPolicy` in argument defaults; instead, perform the call within the function, or read the default from a module-level singleton variable
+src/core/fs/extraction.py:61:57: B008 Do not perform function call `ExtractPolicy` in argument defaults; instead, perform the call within the function, or read the default from a module-level singleton variable
+src/core/gateway/gateway.py:30:31: ARG002 Unused method argument: `payment`
+src/core/gateway/gateway.py:34:31: ARG002 Unused method argument: `key`
+src/core/gateway/gateway.py:34:41: ARG002 Unused method argument: `amount`
+src/core/gateway/gateway.py:34:70: ARG002 Unused method argument: `idempotency`
+src/core/gateway/gateway.py:38:28: ARG002 Unused method argument: `key`
+src/core/gateway/gateway.py:38:38: ARG002 Unused method argument: `idempotency`
+src/core/gateway/gateway.py:42:30: ARG002 Unused method argument: `key`
+src/core/gateway/gateway.py:42:40: ARG002 Unused method argument: `idempotency`
+src/core/gateway/gateway.py:47:15: ARG002 Unused method argument: `key`
+src/core/gateway/gateway.py:47:25: ARG002 Unused method argument: `amount`
+src/core/gateway/gateway.py:47:54: ARG002 Unused method argument: `reason`
+src/core/gateway/gateway.py:47:72: ARG002 Unused method argument: `idempotency`
+src/core/gateway/gateway.py:52:32: ARG002 Unused method argument: `payout`
+src/core/gateway/gateway.py:57:15: ARG002 Unused method argument: `amount`
+src/core/gateway/gateway.py:57:30: ARG002 Unused method argument: `destination`
+src/core/gateway/gateway.py:57:48: ARG002 Unused method argument: `reference`
+src/core/gateway/gateway.py:57:69: ARG002 Unused method argument: `idempotency`
+src/core/gateway/gateway.py:62:28: ARG002 Unused method argument: `key`
+src/core/gateway/gateway.py:67:15: ARG002 Unused method argument: `body`
+src/core/gateway/gateway.py:67:28: ARG002 Unused method argument: `headers`
+src/core/gateway/gateway.py:67:56: ARG002 Unused method argument: `query`
+src/core/llm/__init__.py:1:20: F401 `.media.Transcriber` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
+src/core/llm/__init__.py:2:25: F401 `.capability.Capabilities` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
+src/core/llm/__init__.py:3:24: F401 `.embedding.EmbeddingOptions` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
+src/core/llm/__init__.py:3:42: F401 `.embedding.Embeddings` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
+src/core/llm/__init__.py:3:54: F401 `.embedding.Score` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
+src/core/llm/__init__.py:4:22: F401 `.harness.Harness` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
+src/core/llm/__init__.py:5:20: F401 `.model.LocalModel` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
+src/core/llm/__init__.py:5:32: F401 `.model.Source` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
+src/core/llm/compatible.py:2:24: F401 [*] `.embedding.EmbeddingOptions` imported but unused
+src/core/llm/compatible.py:2:42: F401 [*] `.embedding.Embeddings` imported but unused
+src/core/llm/compatible.py:2:54: F401 [*] `.embedding.Score` imported but unused
+src/core/llm/compatible.py:2:61: F401 [*] `.embedding.scores` imported but unused
+src/core/llm/compatible.py:3:24: F401 [*] `core.error.Code` imported but unused
+src/core/llm/compatible.py:3:30: F401 [*] `core.error.Fault` imported but unused
+src/core/llm/embedding.py:19:24: RUF009 Do not perform function call `Usage` in dataclass defaults
+src/core/llm/local.py:3:40: F401 [*] `core.fs.fs` imported but unused
+src/core/llm/local.py:68:21: TRY301 Abstract `raise` to an inner function
+src/core/llm/local.py:121:9: SIM117 [*] Use a single `with` statement with multiple contexts instead of nested `with` statements
+src/core/llm/model.py:27:38: RUF009 Do not perform function call `DownloadPolicy` in dataclass defaults
+src/core/llm/model.py:31:9: PLC0415 `import` should be at the top-level of a file
+src/core/llm/model.py:33:47: PLR2004 Magic value used in comparison, consider replacing `128` with a constant variable
+src/core/llm/prompt.py:38:9: SLF001 Private member accessed: `_options`
+src/core/llm/prompt.py:72:9: SLF001 Private member accessed: `_harness`
+src/core/llm/prompt.py:78:9: SLF001 Private member accessed: `_files`
+src/core/llm/prompt.py:88:9: SLF001 Private member accessed: `_history`
+src/core/llm/prompt.py:94:57: SLF001 Private member accessed: `_key`
+src/core/llm/prompt.py:96:13: SLF001 Private member accessed: `_key`
+src/core/llm/prompt.py:104:9: SLF001 Private member accessed: `_key`
+src/core/llm/prompt.py:122:121: E501 Line too long (121 > 120)
+src/core/llm/prompt.py:202:40: PLR2004 Magic value used in comparison, consider replacing `2` with a constant variable
+src/core/llm/prompt.py:220:9: SLF001 Private member accessed: `_key`
+src/core/llm/provider.py:93:29: ARG002 Unused method argument: `texts`
+src/core/llm/provider.py:93:51: ARG002 Unused method argument: `options`
+src/core/llm/provider.py:97:28: ARG002 Unused method argument: `query`
+src/core/llm/provider.py:97:40: ARG002 Unused method argument: `documents`
+src/core/llm/validation.py:6:5: C901 `validate` is too complex (13 > 10)
+src/core/llm/validation.py:6:5: PLR0912 Too many branches (13 > 12)
+src/core/llm/validation.py:13:76: PLR2004 Magic value used in comparison, consider replacing `2` with a constant variable
+src/core/net/__init__.py:1:23: F401 `.download.DownloadPolicy` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
+src/core/net/__init__.py:1:39: F401 `.download.Downloads` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
+src/core/net/download.py:39:51: B008 Do not perform function call `DownloadPolicy` in argument defaults; instead, perform the call within the function, or read the default from a module-level singleton variable
+src/core/net/download.py:55:49: PLR2004 Magic value used in comparison, consider replacing `200` with a constant variable
+src/core/rag/rag.py:93:121: E501 Line too long (124 > 120)
+src/core/string/__init__.py:1:21: F401 `.safety.Entity` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
+src/core/string/__init__.py:1:29: F401 `.safety.Inspection` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
+src/core/string/__init__.py:2:23: F401 `.segments.Segment` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
+src/core/string/script.py:8:34: RUF001 String contains ambiguous `ا` (ARABIC LETTER ALEF). Did you mean `l` (LATIN SMALL LETTER L)?
+src/core/string/script.py:8:44: RUF001 String contains ambiguous `ا` (ARABIC LETTER ALEF). Did you mean `l` (LATIN SMALL LETTER L)?
+src/core/string/script.py:8:54: RUF001 String contains ambiguous `ا` (ARABIC LETTER ALEF). Did you mean `l` (LATIN SMALL LETTER L)?
+src/core/string/script.py:8:64: RUF001 String contains ambiguous `ا` (ARABIC LETTER ALEF). Did you mean `l` (LATIN SMALL LETTER L)?
+src/core/string/script.py:9:44: RUF001 String contains ambiguous `ه` (ARABIC LETTER HEH). Did you mean `o` (LATIN SMALL LETTER O)?
+src/core/thread/__init__.py:1:22: F401 `.process.Process` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
+src/core/thread/process.py:54:13: SIM105 Use `contextlib.suppress(ProcessLookupError)` instead of `try`-`except`-`pass`
+src/core/thread/process.py:59:17: SIM105 Use `contextlib.suppress(ProcessLookupError)` instead of `try`-`except`-`pass`
+Found 97 errors.
+[*] 8 fixable with `--fix` (2 unsafe fixes available with `--fix --unsafe-fixes`).

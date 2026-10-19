@@ -6,6 +6,7 @@ class Timestamps:
     updated = "updated_at"
 
     def now ( self ) -> DateTime:
+
         return date.now()
 
     def born ( self, values: dict[str, object] ) -> dict[str, object]:
@@ -15,7 +16,9 @@ class Timestamps:
         return { **values, self.created: moment, self.updated: moment }
 
     def touch ( self, values: dict[str, object] ) -> dict[str, object]:
+
         return { **values, self.updated: self.now() }
 
     def age ( self, moment: DateTime ) -> float:
+
         return date.since(moment)

@@ -73,9 +73,11 @@ class Task(Frequency):
         return self
 
     def between ( self, start: str, end: str ) -> Self:
+
         return self.when(lambda: self.inside(start, end))
 
     def unless_between ( self, start: str, end: str ) -> Self:
+
         return self.when(lambda: not self.inside(start, end))
 
     def inside ( self, start: str, end: str ) -> bool:
@@ -110,15 +112,19 @@ class Task(Frequency):
         return self.when(inverted)
 
     def before ( self, hook: Hook ) -> Self:
+
         return self.hook("before", hook)
 
     def after ( self, hook: Hook ) -> Self:
+
         return self.hook("after", hook)
 
     def on_success ( self, hook: Hook ) -> Self:
+
         return self.hook("success", hook)
 
     def on_failure ( self, hook: Hook ) -> Self:
+
         return self.hook("failure", hook)
 
     def hook ( self, stage: str, hook: Hook ) -> Self:

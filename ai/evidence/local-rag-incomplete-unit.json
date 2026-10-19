@@ -1,0 +1,43 @@
+{
+  "elapsed_ms": 80620.36,
+  "cases": [
+    {
+      "question": "What is the refund period?",
+      "answer": "Customers can request a refund within 14 days of purchase.",
+      "citations": [
+        "ecd46619e4a544bc8f1f53e5f6b05209896479f8b5d415ac7b96b3d190574be9"
+      ],
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "model_evaluation": {
+        "score": 0.9,
+        "reasoning": "The user asks for the refund period, and the provided source text explicitly states: 'Customers can request a refund within 14 days of purchase.' This single statement directly answers the question with a specific duration (14 days). While the source text also contains other details (availability hours, password reset steps), they are irrelevant to the specific query about the refund period. The answer is factually supported by the available data as intended for the specific question asked."
+      },
+      "generative_ranking": [
+        {
+          "index": 0,
+          "score": 0.9
+        },
+        {
+          "index": 1,
+          "score": 0.3
+        },
+        {
+          "index": 2,
+          "score": 0.2
+        }
+      ]
+    },
+    {
+      "question": "ما مدة استرجاع المبلغ؟",
+      "answer": "14",
+      "citations": [
+        "ecd46619e4a544bc8f1f53e5f6b05209896479f8b5d415ac7b96b3d190574be9"
+      ],
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0
+    }
+  ]
+}

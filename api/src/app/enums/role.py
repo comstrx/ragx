@@ -14,8 +14,10 @@ class Role(StrEnum):
             case _:           assert_never(self)
 
     def is_staff ( self ) -> bool:
+
         return self is Role.ADMIN
 
     @classmethod
     def default ( cls ) -> Self:
+
         return cls(cls.CLIENT)

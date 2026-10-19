@@ -1,5 +1,4 @@
-from .filters import Filters
-from .view import View
+from .view import Filters, View
 
 view = View()
 

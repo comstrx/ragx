@@ -1,125 +1,118 @@
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Any
+from typing import Any, Unpack
 
+from core.context import context
+from core.database import Outbox
 from core.date import date
 from core.error import Code, Fault
 from core.json import json
 from core.log import log
 from core.rand import rand
-from .driver import Driver
-from .flow import Flow, Step
-from .graveyard import Graveyard
-from .job import BACKOFF, DEFAULT, TRIES, Failed, Job
-from .task import Task
-from .unique import Unique
+from .dispatch import Flow, Step, Task, Unique
+from .driver import Board, Driver, Handler
+from .job import BACKOFF, DEFAULT, TRIES, Dispatch, Failed, Failure, Graveyard, Job, Success
 from .worker import Workers
-import inspect
+import asyncio, inspect
 
-type Handler = Callable[..., Any]
-type Failure = Callable[[Job, BaseException], Awaitable[None] | None]
-type Success = Callable[[Job], Awaitable[None] | None]
+KIND = "queue"
 
-class Queue:
+class Queue(Board):
 
     def __init__ ( self ) -> None:
 
-        self._driver: Driver | None = None
-        self._handlers: dict[str, Handler] = {}
-        self._queues: tuple[str, ...] = (DEFAULT,)
+        super().__init__()
+
         self._tries   = TRIES
         self._backoff = BACKOFF
-        self._failed: Failure | None = None
-        self._succeeded: Success | None = None
+        self._timeout = 0.0
         self._graveyard = Graveyard()
         self._workers   = Workers(self.pull, self.perform)
         self._flow      = Flow(self)
         self._unique    = Unique()
         self._processed = 0
         self._failures  = 0
+        self._outbox: Outbox | None = None
 
     def setup (
         self, driver: Driver, queues: Sequence[str] = (DEFAULT,), tries: int = TRIES, backoff: float = BACKOFF,
+        timeout: float = 0.0,
     ) -> None:
 
         self._driver  = driver
         self._queues  = tuple(queues) or (DEFAULT,)
         self._tries   = tries
         self._backoff = backoff
+        self._timeout = timeout
 
-    def ready ( self ) -> bool:
-        return self._driver is not None
+    def durable ( self, outbox: Outbox ) -> None:
 
-    def driver ( self ) -> Driver:
+        async def deliver ( payload: Mapping[str, Any] ) -> None:
 
-        if self._driver is None: raise Fault(Code.INTERNAL, reason="queue")
+            await self.deliver(Job.load(payload))
 
-        return self._driver
+        outbox.kind(KIND, deliver)
 
-    def inline ( self ) -> bool:
-        return self._driver is None or self._driver.name == "sync"
-
-    def queues ( self ) -> tuple[str, ...]:
-        return self._queues
+        self._outbox = outbox
 
     def on_failure ( self, handler: Failure ) -> None:
-        self._failed = handler
+
+        self._graveyard.on_failure(handler)
 
     def on_success ( self, handler: Success ) -> None:
-        self._succeeded = handler
 
-    def register ( self, name: str, handler: Handler ) -> str:
-
-        self._handlers[name] = handler
-
-        return name
-
-    def name_of ( self, handler: Handler ) -> str:
-        return f"{handler.__module__}:{handler.__qualname__}"
-
-    def handler ( self, name: str ) -> Handler:
-
-        found = self._handlers.get(name)
-
-        if found is None: raise Fault(Code.INTERNAL, reason=f"queue.{name}")
-
-        return found
-
-    def names ( self ) -> list[str]:
-        return sorted(self._handlers)
+        self._graveyard.on_success(handler)
 
     def task[**P, T] ( self, fn: Callable[P, T] ) -> Task[P, T]:
+
         return Task(self, fn)
 
     async def push (
         self, handler: Handler | str, *args: Any, queue: str | None = None, delay: float = 0.0,
         tries: int | None = None, backoff: float | None = None, **kwargs: Any,
     ) -> Job:
+
         return await self.enqueue(handler, args, kwargs, queue=queue, delay=delay, tries=tries, backoff=backoff)
 
     async def enqueue (
         self, handler: Handler | str, args: tuple[Any, ...] = (), kwargs: Mapping[str, Any] | None = None,
-        queue: str | None = None, delay: float = 0.0, tries: int | None = None, backoff: float | None = None,
-        unique: str | None = None,
+        **options: Unpack[Dispatch],
     ) -> Job:
 
-        name = handler if isinstance(handler, str) else self.register(self.name_of(handler), handler)
-        job  = Job(
-            str(rand.uuid()), name, tuple(json.loads(json.encode(args))), json.loads(json.encode(dict(kwargs or {}))),
-            queue or self._queues[0], tries or self._tries, backoff if backoff is not None else self._backoff,
-            0, date.stamp() + max(delay, 0.0), unique,
+        name    = handler if isinstance(handler, str) else self.register(self.name_of(handler), handler)
+        backoff = options.get("backoff")
+        timeout = options.get("timeout")
+        plain   = self.plain(args, kwargs)
+        job     = Job(
+            str(rand.uuid()), name, tuple(plain[0]), plain[1],
+            options.get("queue") or self._queues[0], options.get("tries") or self._tries,
+            backoff if backoff is not None else self._backoff, 0, date.stamp() + max(options.get("delay", 0.0), 0.0),
+            options.get("unique"), context.dump(), timeout if timeout is not None else self._timeout,
         )
 
         self.handler(name)
 
-        if self.inline(): await self.perform(job)
-        else: await self.driver().push(job)
+        if self._outbox is not None: await self._outbox.put(KIND, job.dump())
+        else: await context.defer(lambda: self.deliver(job))
 
         return job
+
+    def plain ( self, args: tuple[Any, ...], kwargs: Mapping[str, Any] | None ) -> list[Any]:
+
+        try: found: list[Any] = json.loads(json.encode([args, dict(kwargs or {})]))
+        except TypeError as error: raise Fault(Code.INTERNAL, reason="queue.payload") from error
+
+        return found
+
+    async def deliver ( self, job: Job ) -> None:
+
+        if self.inline(): await self.perform(job)
+        else: await self.driver().push(job)
 
     async def push_unique (
         self, key: str, handler: Handler | str, *args: Any, unique_for: float = 60.0, queue: str | None = None,
         delay: float = 0.0, **kwargs: Any,
     ) -> Job | None:
+
         return await self._unique.push(self, key, handler, args, kwargs, unique_for, queue, delay)
 
     async def bulk ( self, handler: Handler | str, items: Sequence[tuple[Any, ...]], queue: str | None = None ) -> int:
@@ -129,12 +122,15 @@ class Queue:
         return len(items)
 
     async def chain ( self, steps: Sequence[Step], queue: str | None = None, delay: float = 0.0 ) -> Job:
+
         return await self._flow.chain(steps, queue, delay)
 
     async def batch ( self, steps: Sequence[Step], queue: str | None = None, delay: float = 0.0 ) -> list[Job]:
+
         return await self._flow.batch(steps, queue, delay)
 
     async def pull ( self, queue: str, wait: float ) -> Job | None:
+
         return await self.driver().pull(queue, wait)
 
     async def perform ( self, job: Job ) -> bool:
@@ -143,15 +139,17 @@ class Queue:
 
         try:
 
-            result = fn(*job.args, **job.kwargs)
+            with context.load(job.context, job.id):
 
-            if inspect.isawaitable(result): await result
+                result = fn(*job.args, **job.kwargs)
+
+                if inspect.isawaitable(result): await self.bounded(job, result)
 
         except Exception as error:
 
             self._failures += 1
 
-            if job.exhausted():
+            if job.exhausted() or (isinstance(error, Fault) and error.client()):
 
                 log.exception("queue.failed", job=job.name, id=job.id, attempts=job.attempts + 1)
 
@@ -180,29 +178,29 @@ class Queue:
 
         return True
 
+    async def bounded ( self, job: Job, work: Awaitable[Any] ) -> Any:
+
+        if job.timeout <= 0: return await work
+
+        try:
+            async with asyncio.timeout(job.timeout): return await work
+        except TimeoutError as error:
+            raise Fault(Code.UNAVAILABLE, reason=f"queue.timeout.{job.short()}", unknown=True) from error
+
     async def settle ( self, job: Job ) -> None:
 
         if self._driver is not None and job.receipt is not None: await self._driver.ack(job)
 
     async def bury ( self, job: Job, error: BaseException ) -> None:
 
-        self._graveyard.add(job, error)
-
-        if self._failed is None: return
-
-        outcome = self._failed(job, error)
-
-        if inspect.isawaitable(outcome): await outcome
+        await self._graveyard.bury(job, error)
 
     async def celebrate ( self, job: Job ) -> None:
 
-        if self._succeeded is None: return
-
-        outcome = self._succeeded(job)
-
-        if inspect.isawaitable(outcome): await outcome
+        await self._graveyard.celebrate(job)
 
     def failed ( self, limit: int = 50 ) -> list[Failed]:
+
         return self._graveyard.failed(limit)
 
     async def retry_failed ( self, job_id: str | None = None ) -> int:
@@ -214,6 +212,7 @@ class Queue:
         return len(chosen)
 
     def flush_failed ( self ) -> int:
+
         return self._graveyard.flush()
 
     def start ( self, workers: int = 1 ) -> int:
@@ -235,12 +234,15 @@ class Queue:
         return stopped
 
     def pause ( self ) -> bool:
+
         return self._workers.pause()
 
     def resume ( self ) -> bool:
+
         return self._workers.resume()
 
     def paused ( self ) -> bool:
+
         return self._workers.paused()
 
     async def close ( self ) -> None:
@@ -268,18 +270,6 @@ class Queue:
                 done += 1
 
         return done
-
-    async def size ( self, queue: str | None = None ) -> int:
-        return await self.driver().size(queue or self._queues[0])
-
-    async def sizes ( self ) -> dict[str, int]:
-        return { name: await self.driver().size(name) for name in self._queues }
-
-    async def clear ( self, queue: str | None = None ) -> int:
-        return await self.driver().clear(queue or self._queues[0])
-
-    async def clear_all ( self ) -> int:
-        return sum([await self.driver().clear(name) for name in self._queues])
 
     def stats ( self ) -> Mapping[str, int]:
 

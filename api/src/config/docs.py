@@ -1,8 +1,6 @@
 from typing import Literal
 
-from pydantic import Field
-from pydantic_settings import SettingsConfigDict
-from core.config import Settings
+from core.config import Settings, field
 
 type Theme = Literal[
     "default", "alternate", "moon", "purple", "solarized", "bluePlanet", "saturn", "kepler", "mars", "deepSpace",
@@ -10,9 +8,7 @@ type Theme = Literal[
 ]
 type Layout = Literal["modern", "classic"]
 
-class DocsConfig(Settings):
-
-    model_config = SettingsConfigDict(env_prefix="DOCS_")
+class DocsConfig(Settings, env_prefix="DOCS_"):
 
     enabled     : bool   = True
     path        : str    = "/docs"
@@ -27,6 +23,6 @@ class DocsConfig(Settings):
     download    : bool   = True
     search      : bool   = True
     errors      : bool   = True
-    servers     : list[str] = Field(default_factory=list)
-    tags        : list[str] = Field(default_factory=list)
-    hide        : list[str] = Field(default_factory=list)
+    servers     : list[str] = field(factory=list)
+    tags        : list[str] = field(factory=list)
+    hide        : list[str] = field(factory=list)

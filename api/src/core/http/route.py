@@ -2,9 +2,9 @@ from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, Self
 
-from fastapi import Request
-from starlette.responses import RedirectResponse
 from core.error import Code, Fault
+from .request import Request
+from .response import Response
 import re
 
 type Handler = Callable[..., Awaitable[Any]]
@@ -13,6 +13,10 @@ type Guard = Callable[..., Any]
 CONVERTERS = ("int", "float", "uuid", "path", "str")
 PARAM      = re.compile(r"\{(\w+)\}")
 ALL        = ("GET", "POST", "PUT", "PATCH", "DELETE")
+ACTIONS    = (
+    ("index", "GET", ""), ("store", "POST", ""), ("show", "GET", "/{key}"),
+    ("update", "PUT", "/{key}"), ("patch", "PATCH", "/{key}"), ("destroy", "DELETE", "/{key}"),
+)
 
 def host_guard ( pattern: str ) -> Guard:
 
@@ -21,19 +25,15 @@ def host_guard ( pattern: str ) -> Guard:
 
     async def domain ( request: Request ) -> None:
 
-        found = regex.match(request.url.hostname or "")
+        found = regex.match(request.host())
 
         if found is None: raise Fault(Code.NOT_FOUND, reason="domain")
 
-        request.state.domain = found.groupdict()
+        request.assign(domain=found.groupdict())
 
     domain.__name__ = f"domain_{pattern.replace('.', '_')}"
 
     return domain
-ACTIONS    = (
-    ("index", "GET", ""), ("store", "POST", ""), ("show", "GET", "/{key}"),
-    ("update", "PUT", "/{key}"), ("patch", "PATCH", "/{key}"), ("destroy", "DELETE", "/{key}"),
-)
 
 @dataclass(frozen=True, slots=True)
 class Bound:
@@ -45,6 +45,7 @@ class Bound:
     tags       : tuple[str, ...]
     middleware : tuple[Guard, ...]
     throttle   : str | None
+    hidden     : bool = False
 
 @dataclass(frozen=True, slots=True)
 class Route:
@@ -57,58 +58,71 @@ class Route:
     middleware : tuple[Guard, ...] = ()
     throttle   : str | None = None
     where      : Mapping[str, str] = field(default_factory=dict)
+    hidden     : bool = False
 
     @classmethod
     def match (
         cls, methods: Sequence[str], path: str, handler: Handler, name: str | None = None, tags: Sequence[str] = (),
     ) -> Self:
+
         return cls(tuple(method.upper() for method in methods), path, handler, name, tuple(tags))
 
     @classmethod
     def get ( cls, path: str, handler: Handler, name: str | None = None, tags: Sequence[str] = () ) -> Self:
+
         return cls.match(("GET",), path, handler, name, tags)
 
     @classmethod
     def post ( cls, path: str, handler: Handler, name: str | None = None, tags: Sequence[str] = () ) -> Self:
+
         return cls.match(("POST",), path, handler, name, tags)
 
     @classmethod
     def put ( cls, path: str, handler: Handler, name: str | None = None, tags: Sequence[str] = () ) -> Self:
+
         return cls.match(("PUT",), path, handler, name, tags)
 
     @classmethod
     def patch ( cls, path: str, handler: Handler, name: str | None = None, tags: Sequence[str] = () ) -> Self:
+
         return cls.match(("PATCH",), path, handler, name, tags)
 
     @classmethod
     def delete ( cls, path: str, handler: Handler, name: str | None = None, tags: Sequence[str] = () ) -> Self:
+
         return cls.match(("DELETE",), path, handler, name, tags)
 
     @classmethod
     def options ( cls, path: str, handler: Handler, name: str | None = None, tags: Sequence[str] = () ) -> Self:
+
         return cls.match(("OPTIONS",), path, handler, name, tags)
 
     @classmethod
     def head ( cls, path: str, handler: Handler, name: str | None = None, tags: Sequence[str] = () ) -> Self:
+
         return cls.match(("HEAD",), path, handler, name, tags)
 
     @classmethod
     def any ( cls, path: str, handler: Handler, name: str | None = None, tags: Sequence[str] = () ) -> Self:
+
         return cls.match(ALL, path, handler, name, tags)
 
     @classmethod
     def permanent_redirect ( cls, path: str, target: str, name: str | None = None ) -> Self:
+
         return cls.redirect(path, target, 308, name)
 
     @classmethod
     def fallback ( cls, handler: Handler, name: str = "fallback" ) -> Self:
+
         return cls.match(ALL, "/{fallback}", handler, name).constrained(fallback="path")
 
     @classmethod
     def redirect ( cls, path: str, target: str, status: int = 307, name: str | None = None ) -> Self:
 
-        async def send () -> RedirectResponse:
-            return RedirectResponse(target, status_code=status)
+        async def send () -> Response:
+
+            return Response.redirect(target, status)
 
         return cls.match(("GET",), path, send, name)
 
@@ -137,19 +151,28 @@ class Route:
         return Group(prefix, tuple(routes), (), (), None, name or prefix.strip("/").replace("/", "."))
 
     def guarded ( self, *guards: Guard ) -> Self:
+
         return replace(self, middleware=(*self.middleware, *guards))
 
     def tagged ( self, *tags: str ) -> Self:
+
         return replace(self, tags=(*self.tags, *tags))
 
     def domain ( self, pattern: str ) -> Self:
+
         return replace(self, middleware=(host_guard(pattern), *self.middleware))
 
     def limited ( self, rate: str ) -> Self:
+
         return replace(self, throttle=rate)
 
     def named ( self, name: str ) -> Self:
+
         return replace(self, name=name)
+
+    def hide ( self ) -> Self:
+
+        return replace(self, hidden=True)
 
     def constrained ( self, **patterns: str ) -> Self:
 
@@ -157,7 +180,7 @@ class Route:
 
             unknown = f"{parameter}:{kind}"
 
-            if kind not in CONVERTERS: raise ValueError(unknown)
+            if kind not in CONVERTERS: raise Fault(Code.INTERNAL, reason=f"http.converter.{unknown}")
 
         return replace(self, where={ **self.where, **patterns })
 
@@ -201,14 +224,17 @@ class Group:
             yield Bound(
                 route.pattern(base), route.methods, route.handler,
                 f"{label}{route.name}" if route.name else None,
-                owned + route.tags, guards + route.middleware, route.throttle or rate,
+                owned + route.tags, guards + route.middleware, route.throttle or rate, route.hidden,
             )
 
     def names ( self ) -> list[str]:
+
         return [bound.name for bound in self.walk() if bound.name]
 
     def find ( self, name: str ) -> Bound | None:
+
         return next((bound for bound in self.walk() if bound.name == name), None)
 
     def paths ( self ) -> list[str]:
+
         return [bound.path for bound in self.walk()]

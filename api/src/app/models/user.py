@@ -25,7 +25,9 @@ class User(Model):
     deleted_at : DateTime | None = None
 
     def role_names ( self ) -> list[str]:
+
         return [str(role.name) for role in self.related.get("roles", [])]
 
     def has_role ( self, name: str ) -> bool:
+
         return name in self.role_names()

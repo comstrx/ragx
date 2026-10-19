@@ -1,23 +1,21 @@
-from pathlib import Path
-
 from .archive import Archive
-from .base import Pathish
 from .dir import Dir
-from .editor import Editor
 from .driver import Driver, Transfer
-from .drivers import Drivers
+from .editor import Editor
+from .extract import Converter, Extracted, Extraction, ExtractPolicy, Part
 from .file import File
-from .fs import Fs
-from .kind import Kind
+from .fs import Drivers, Fs
 from .local import LocalDriver
-from .path import Paths
+from .path import Pathish, Paths
 from .s3 import S3Driver, S3Options
-from .scan import Scan
+from .scan import Kind, Scan
 from .watch import Change, Watch
+from pathlib import Path
 
 fs = Fs()
 
 __all__ = [
-    "Archive", "Change", "Dir", "Driver", "Drivers", "Editor", "File", "Fs", "Kind", "LocalDriver", "Path", "Pathish",
-    "Paths", "S3Driver", "S3Options", "Scan", "Transfer", "Watch", "fs",
+    "Archive", "Change", "Converter", "Dir", "Driver", "Drivers", "Editor", "ExtractPolicy", "Extracted", "Extraction",
+    "File", "Fs", "Kind", "LocalDriver", "Part", "Path", "Pathish", "Paths", "S3Driver", "S3Options", "Scan",
+    "Transfer", "Watch", "fs",
 ]

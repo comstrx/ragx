@@ -1,3 +1,3 @@
-from . import bases, dna
+from . import cycle, dna
 
-__all__ = ["bases", "dna"]
+__all__ = ["cycle", "dna"]

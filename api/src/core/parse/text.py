@@ -1,5 +1,7 @@
 from collections.abc import Iterable
 from typing import Any
+
+from core.error import Code, Fault
 import csv, io, re
 
 SEMVER  = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?$")
@@ -29,6 +31,7 @@ class Text:
         return [cell.strip() for cell in rows[0]] if rows else []
 
     def csv_rows ( self, text: str, delimiter: str = "," ) -> list[list[str]]:
+
         reader = csv.reader(io.StringIO(text), delimiter=delimiter, skipinitialspace=True)
 
         return [[cell.strip() for cell in row] for row in reader if row]
@@ -53,7 +56,7 @@ class Text:
 
             matched = RANGE.match(piece)
 
-            if matched is None: raise ValueError(piece)
+            if matched is None: raise Fault(Code.BAD_REQUEST, reason="parse.ranges")
 
             start = int(matched.group(1))
             end   = int(matched.group(2)) if matched.group(2) is not None else start
@@ -94,18 +97,23 @@ class Text:
         return maximum is None or self.compare_versions(version, maximum) <= 0
 
     def numbers ( self, text: str ) -> list[float]:
+
         return [float(found) for found in re.findall(r"-?\d+(?:\.\d+)?", text)]
 
     def words ( self, text: str ) -> list[str]:
+
         return re.findall(r"[^\W_]+", text)
 
     def mentions ( self, text: str, sigil: str = "@" ) -> list[str]:
+
         return re.findall(rf"(?<!\w){re.escape(sigil)}([\w.-]+)", text)
 
     def hashtags ( self, text: str ) -> list[str]:
+
         return self.mentions(text, "#")
 
     def lines ( self, text: str, keep_blank: bool = False ) -> list[str]:
+
         return [line.rstrip() for line in text.splitlines() if keep_blank or line.strip()]
 
     def flags ( self, items: Iterable[str] ) -> dict[str, str | bool]:

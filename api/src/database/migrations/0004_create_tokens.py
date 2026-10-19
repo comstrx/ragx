@@ -18,4 +18,5 @@ class Migration:
         await schema.create(Table.TOKENS, define)
 
     async def down ( self, schema: Schema ) -> None:
+
         await schema.drop(Table.TOKENS)

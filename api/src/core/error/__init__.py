@@ -1,7 +1,7 @@
-from .code import Code
-from .fault import Errors, Fault
+from .bag import Bag
+from .fault import Code, Errors, Fault
 from .faults import Faults
 
 error = Faults()
 
-__all__ = ["Code", "Errors", "Fault", "Faults", "error"]
+__all__ = ["Bag", "Code", "Errors", "Fault", "Faults", "error"]

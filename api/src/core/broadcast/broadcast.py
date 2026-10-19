@@ -1,6 +1,8 @@
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
+from core.context import context
+from core.database import Outbox
 from core.event import Event, events
 from core.error import Code, Fault
 from core.log import log
@@ -11,6 +13,8 @@ import inspect
 
 type Guard = Callable[[str | None], Awaitable[Any]]
 
+KIND = "broadcast"
+
 class Broadcast:
 
     def __init__ ( self ) -> None:
@@ -18,6 +22,7 @@ class Broadcast:
         self._channels = Channels()
         self._socket: Socket | None = None
         self._driver: Driver | None = None
+        self._outbox: Outbox | None = None
         self._guard: Guard | None = None
         self._emitted = 0
 
@@ -31,27 +36,35 @@ class Broadcast:
         events.on_any(self.relay)
 
     def ready ( self ) -> bool:
+
         return self._driver is not None
 
     def registry ( self ) -> Channels:
+
         return self._channels
 
     def channel ( self, pattern: str, authorize: Authorize | None = None, guests: bool = False ) -> Channel:
+
         return self._channels.channel(pattern, authorize, guests)
 
     def public ( self, pattern: str ) -> Channel:
+
         return self._channels.public(pattern)
 
     def channels ( self ) -> list[str]:
+
         return self._channels.patterns()
 
     def find ( self, name: str ) -> tuple[Channel, dict[str, str]] | None:
+
         return self._channels.find(name)
 
     def kind ( self, name: str ) -> str:
+
         return self._channels.kind(name)
 
     def bare ( self, name: str ) -> str:
+
         return self._channels.bare(name)
 
     async def grant ( self, connection: Connection, name: str, auth: str | None ) -> Grant:
@@ -110,19 +123,49 @@ class Broadcast:
         return reached
 
     def to ( self, *channels: str ) -> Emission:
+
         return Emission(self, channels)
 
     def to_user ( self, user_id: str ) -> Emission:
+
         return Emission(self, (f"private-users.{user_id}",))
 
     def to_everyone ( self, event: str, data: Any = None ) -> int:
+
         return self.socket().broadcast(event, data)
 
     async def relay ( self, event: Event ) -> None:
 
         channels = tuple(event.channels())
 
-        if channels and self._driver is not None: self.emit(channels, event.label(), event.payload())
+        if not channels or self._driver is None: return
+
+        label, payload = event.label(), event.payload()
+
+        if self._outbox is not None:
+            await self._outbox.put(KIND, { "channels": list(channels), "event": label, "data": payload })
+        else: await context.defer(lambda: self.emit(channels, label, payload))
+
+    async def deliver ( self, channels: Sequence[str], event: str, data: Any = None ) -> int:
+
+        driver  = self.driver()
+        reached = 0
+
+        for name in channels: reached += await driver.deliver(name, event, data, None)
+
+        self._emitted += 1
+
+        return reached
+
+    def durable ( self, outbox: Outbox ) -> None:
+
+        async def deliver ( frame: Mapping[str, Any] ) -> None:
+
+            await self.deliver(tuple(frame["channels"]), str(frame["event"]), frame.get("data"))
+
+        outbox.kind(KIND, deliver)
+
+        self._outbox = outbox
 
     def socket ( self ) -> Socket:
 
@@ -132,9 +175,13 @@ class Broadcast:
 
     async def start ( self ) -> None:
 
+        events.on_any(self.relay)
+
         if self._driver is not None: await self._driver.start()
 
     async def stop ( self ) -> None:
+
+        events.off_any(self.relay)
 
         if self._driver is not None: await self._driver.stop()
 
@@ -160,7 +207,9 @@ class Emission:
         return self
 
     def send ( self, event: str, data: Any = None ) -> int:
+
         return self._owner.emit(self._channels, event, data, self._exclude)
 
     def send_event ( self, event: Event ) -> int:
+
         return self._owner.emit(self._channels, event.label(), event.payload(), self._exclude)

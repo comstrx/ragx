@@ -3,19 +3,21 @@ from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from typing import Any, Self
 
+from core.context import context
+from core.database import Outbox
 from core.date import date
 from core.error import Code, Fault
 from core.log import log
 from core.queue import Queued, queue
 from core.rand import rand
-from .bus import Bus, Envelope, LocalBus
-from .event import Event, Listener
+from .event import Bus, Envelope, Event, Listener, LocalBus
 import asyncio, contextlib, inspect
 
 type Handler = Callable[[Any], Awaitable[None] | None]
 type Target = Handler | type[Listener] | Listener
 
 KEPT = 200
+KIND = "events"
 
 class Events:
 
@@ -33,11 +35,24 @@ class Events:
         self._held: list[Event] | None = None
         self._recorded: list[Event] | None = None
         self._dispatched = 0
+        self._outbox: Outbox | None = None
 
     def setup ( self, bus: Bus ) -> None:
+
         self._bus = bus
 
+    def durable ( self, outbox: Outbox ) -> None:
+
+        async def publish ( envelope: Mapping[str, Any] ) -> None:
+
+            await self._bus.publish(dict(envelope))
+
+        outbox.kind(KIND, publish)
+
+        self._outbox = outbox
+
     def bus ( self ) -> Bus:
+
         return self._bus
 
     def listen ( self, kind: type[Event], *targets: Target ) -> Self:
@@ -70,6 +85,14 @@ class Events:
 
         return self
 
+    def off_any ( self, handler: Handler ) -> bool:
+
+        if handler not in self._any: return False
+
+        self._any.remove(handler)
+
+        return True
+
     def off ( self, kind: type[Event], target: Target ) -> bool:
 
         group = self._listeners.get(kind, [])
@@ -80,21 +103,26 @@ class Events:
 
         return True
 
-    def forget ( self, kind: type[Event] ) -> None:
+    def forget ( self, kind: type[Event] ) -> bool:
 
-        self._listeners.pop(kind, None)
-        self._once.pop(kind, None)
+        found = self._listeners.pop(kind, None) is not None
+
+        return self._once.pop(kind, None) is not None or found
 
     def listeners ( self, kind: type[Event] ) -> list[Target]:
+
         return [target for known, group in self._listeners.items() if issubclass(kind, known) for target in group]
 
     def listener_names ( self, kind: type[Event] ) -> list[str]:
+
         return [self.name_of(target) for target in self.listeners(kind)]
 
     def has_listeners ( self, kind: type[Event] ) -> bool:
+
         return bool(self.listeners(kind)) or bool(self._once.get(kind))
 
     def kinds ( self ) -> list[str]:
+
         return sorted(kind.kind for kind in self._listeners)
 
     def name_of ( self, target: Target ) -> str:
@@ -104,6 +132,7 @@ class Events:
         return f"{kind.__module__}:{kind.__qualname__}"
 
     def envelope ( self, event: Event ) -> Envelope:
+
         return { "id": str(rand.uuid()), "kind": event.kind, "data": event.dump(), "at": date.iso(date.now()) }
 
     async def dispatch ( self, event: Event ) -> int:
@@ -123,7 +152,8 @@ class Events:
 
         if self._bus.local:
             for target in targets: await self.deliver(target, event)
-        else: await self._bus.publish(envelope)
+        elif self._outbox is not None: await self._outbox.put(KIND, envelope)
+        else: await context.defer(lambda: self._bus.publish(envelope))
 
         for handler in self._any: await self.call(handler, event)
 
@@ -137,12 +167,15 @@ class Events:
         return len(targets)
 
     async def dispatch_if ( self, condition: object, event: Event ) -> int:
+
         return await self.dispatch(event) if condition else 0
 
     async def dispatch_unless ( self, condition: object, event: Event ) -> int:
+
         return await self.dispatch(event) if not condition else 0
 
     async def dispatch_many ( self, events: Sequence[Event] ) -> int:
+
         return sum([await self.dispatch(event) for event in events])
 
     async def deliver ( self, target: Target, event: Event ) -> None:
@@ -177,7 +210,7 @@ class Events:
 
         log.info("events.listening", bus=self._bus.name)
 
-    async def stop ( self ) -> None:
+    async def stop ( self, wait: float = 5.0 ) -> int:
 
         self._stopping.set()
 
@@ -185,11 +218,15 @@ class Events:
 
         if consumer is not None:
 
-            consumer.cancel()
+            try:
+                async with asyncio.timeout(wait): await asyncio.shield(consumer)
+            except TimeoutError: consumer.cancel()
 
-            with contextlib.suppress(asyncio.CancelledError): await consumer
+            with contextlib.suppress(asyncio.CancelledError, Exception): await consumer
 
         await self._bus.close()
+
+        return 0 if consumer is None else 1
 
     def pause ( self ) -> bool:
 
@@ -210,6 +247,7 @@ class Events:
         return len(held)
 
     def paused ( self ) -> bool:
+
         return self._held is not None
 
     @contextmanager
@@ -221,6 +259,7 @@ class Events:
         finally: self._recorded = previous
 
     def history ( self, limit: int = 50 ) -> list[Envelope]:
+
         return list(self._history)[-limit:]
 
     async def replay ( self, listener: str, event: str, data: dict[str, Any] ) -> None:

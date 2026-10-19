@@ -18,6 +18,7 @@ class Url:
         return f"{full}?{urlencode(tail)}" if tail else full
 
     def join ( self, base: str, path: str ) -> str:
+
         return urljoin(base.rstrip("/") + "/", path.lstrip("/"))
 
     def origin ( self, url: str ) -> str:
@@ -27,9 +28,11 @@ class Url:
         return f"{parts.scheme}://{parts.netloc}" if parts.scheme and parts.netloc else ""
 
     def scheme ( self, url: str ) -> str:
+
         return urlsplit(url).scheme
 
     def host ( self, url: str ) -> str:
+
         return urlsplit(url).hostname or ""
 
     def port ( self, url: str ) -> int | None:
@@ -39,12 +42,15 @@ class Url:
         return parts.port or PORTS.get(parts.scheme)
 
     def path ( self, url: str ) -> str:
+
         return urlsplit(url).path or "/"
 
     def fragment ( self, url: str ) -> str:
+
         return urlsplit(url).fragment
 
     def query ( self, url: str ) -> dict[str, str]:
+
         return dict(parse_qsl(urlsplit(url).query, keep_blank_values=True))
 
     def query_all ( self, url: str ) -> dict[str, list[str]]:
@@ -105,18 +111,23 @@ class Url:
         return parts.scheme in SCHEMES and bool(parts.netloc)
 
     def is_secure ( self, url: str ) -> bool:
+
         return urlsplit(url).scheme == "https"
 
     def is_absolute ( self, text: str ) -> bool:
+
         return bool(urlsplit(text).scheme)
 
     def encode ( self, text: str, safe: str = "" ) -> str:
+
         return quote(text, safe=safe)
 
     def decode ( self, text: str ) -> str:
+
         return unquote(text)
 
     def query_of ( self, params: Query | None ) -> dict[str, str]:
+
         return { key: str(value) for key, value in (params or {}).items() if value is not None }
 
     def parts ( self, url: str ) -> dict[str, object]:

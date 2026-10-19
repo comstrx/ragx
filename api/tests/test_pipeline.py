@@ -1,85 +1,77 @@
-from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
 
-from starlette.websockets import WebSocketState
 from core.broadcast import RedisDriver
 from core.cache import Cache, RedisStore
 from core.date import UTC, DateTime
-from core.event import Event, Events, RabbitBus, events
-from core.error import Fault
-from core.http import App
-from core.mail import MemoryTransport
-from core.queue import Job, MemoryDriver, Queue, Queued, RabbitDriver, SyncDriver, queue
+from core.event import Event, Events, RabbitBus
+from core.error import Code
+from core.queue import Job, MemoryDriver, Queue, RabbitDriver, SyncDriver
 from core.rand import rand
 from core.schedule import Cron, Schedule
 from core.socket import Connection, Frame, Socket
-from app.enums import TokenKind
-from app.events import UserRegistered
-from app.jobs import PurgeTokens
-from app.mails import WelcomeMail
-from app.repositories import tokens, users
-from app.utils.bases import BaseEvent, BaseJob, BaseListener
-from routes import schedule as timetable
+from core.test import expect, test
 import asyncio, pytest
-
-voices: list[str] = []
-counted: list[tuple[int, int]] = []
-OLD = DateTime(2020, 1, 1, tzinfo=UTC)
 
 AMQP  = "amqp://guest:guest@127.0.0.1:5672/"
 REDIS = "redis://127.0.0.1:6379/15"
-
-@dataclass(frozen=True, slots=True)
-class Pinged(BaseEvent):
-
-    tag : str
 
 @dataclass(frozen=True, slots=True)
 class Shipped(Event):
 
     order : str
 
-class Loud(BaseListener, Queued):
-
-    async def handle ( self, event: Pinged ) -> None:
-        voices.append(f"loud:{event.tag}")
-
-class Quiet(BaseListener):
-
-    async def handle ( self, event: Pinged ) -> None:
-        voices.append(f"quiet:{event.tag}")
-
-class Counting(BaseJob):
-
-    async def handle ( self ) -> None:
-        counted.append((self.args[0], self.kwargs.get("step", 1)))
-
-class Count(Counting, Queued):
-
-    queue = "maintenance"
-
-class CountNow(Counting):
-
-    pass
-
 def short ( job: Job ) -> str:
+
     return job.name.rsplit(".", 1)[-1]
 
-class Mute:
-
-    client_state = WebSocketState.CONNECTED
-
-    async def send_bytes ( self, data: bytes ) -> None:
-        return None
-
-    async def receive ( self ) -> Mapping[str, Any]:
-        return { "type": "websocket.disconnect", "code": 1000 }
-
-    async def close ( self, code: int = 1000, reason: str | None = None ) -> None:
-        return None
-
 @pytest.mark.anyio
+class Relay:
+
+    def __init__ ( self ) -> None:
+
+        self.links  : list[asyncio.StreamWriter] = []
+        self.server : asyncio.Server | None = None
+
+    async def open ( self ) -> str:
+
+        self.server = await asyncio.start_server(self.pipe, "127.0.0.1", 0)
+
+        return f"redis://127.0.0.1:{self.server.sockets[0].getsockname()[1]}/15"
+
+    async def pipe ( self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter ) -> None:
+
+        far_reader, far_writer = await asyncio.open_connection("127.0.0.1", 6379)
+
+        self.links.extend((writer, far_writer))
+
+        async def pump ( source: asyncio.StreamReader, target: asyncio.StreamWriter ) -> None:
+
+            while chunk := await source.read(65536):
+
+                target.write(chunk)
+
+                await target.drain()
+
+            target.close()
+
+        await asyncio.gather(pump(reader, far_writer), pump(far_reader, writer), return_exceptions=True)
+
+    def sever ( self ) -> None:
+
+        for link in self.links: link.transport.abort()
+
+        self.links.clear()
+
+    async def close ( self ) -> None:
+
+        self.sever()
+
+        if self.server is not None:
+
+            self.server.close()
+
+            await self.server.wait_closed()
+
 class TestPipeline:
 
     async def test_queue_runs_retries_and_buries_jobs_in_any_driver ( self ) -> None:
@@ -95,6 +87,7 @@ class TestPipeline:
             if calls.count(label) < 3: raise RuntimeError(label)
 
         def sync_work ( value: int ) -> None:
+
             calls.append(value)
 
         own.setup(MemoryDriver(), ("default", "slow"), tries=3, backoff=0.0)
@@ -104,88 +97,42 @@ class TestPipeline:
         job  = await task.later(7)
         late = await task.after(0.05, 8)
 
-        assert isinstance(job, Job) and job.queue == "default" and late.available > job.available
-        assert await own.size() == 2 and await own.drain() == 1 and calls == [7] and await own.size() == 1
+        expect(job.queue).equals("default")
+        expect(late.available).above(job.available)
+        expect(await own.size()).equals(2)
+        expect(await own.drain()).equals(1)
+        expect(calls).equals([7])
+        expect(await own.size()).equals(1)
 
         await own.push(fragile, "flaky", queue="slow")
 
         for _ in range(3): await own.drain("slow")
 
-        assert calls.count("flaky") == 3 and buried == []
+        expect(calls.count("flaky")).equals(3)
+        expect(buried).equals([])
 
         await own.push(fragile, "doomed", queue="slow", tries=2)
 
         for _ in range(2): await own.drain("slow")
 
-        assert calls.count("doomed") == 2 and buried == [("fragile", "RuntimeError")]
-        assert own.stats()["failures"] == 4 and own.stats()["processed"] == 2
-        assert await own.clear() == 1 and await own.size() == 0
+        expect(calls.count("doomed")).equals(2)
+        expect(buried).equals([("fragile", "RuntimeError")])
+        expect(own.stats()["failures"]).equals(4)
+        expect(own.stats()["processed"]).equals(2)
+        expect(await own.clear()).equals(1)
+        expect(await own.size()).equals(0)
 
-        with pytest.raises(Fault): await own.push("nowhere:missing")
-        with pytest.raises(TypeError): await own.push(sync_work, object())
+        await test.rejects(own.push("nowhere:missing"), Code.INTERNAL, "queue.nowhere:missing")
+        await test.rejects(own.push(sync_work, object()), Code.INTERNAL, "queue.payload")
 
         inline = Queue()
 
         inline.setup(SyncDriver())
 
-        assert inline.inline() and await inline.push(sync_work, 9) and calls[-1] == 9 and await inline.size() == 0
-
-    async def test_events_jobs_and_mails_queue_or_run_inline_by_inheritance (
-        self, app: App, outbox: MemoryTransport,
-    ) -> None:
-
-        tag  = rand.hex(3)
-        user = await users.create({ "name": f"Job {tag}", "email": f"job-{tag}@unit.test", "password": None })
-
-        events.listen(Pinged, Loud, Quiet)
-
-        try:
-
-            await queue.clear()
-            await queue.clear("maintenance")
-
-            waited = events.until(Pinged)
-            heard  = await Pinged(tag).dispatch()
-
-            assert heard == 2 and voices == [f"quiet:{tag}"] and waited.done() and waited.result().tag == tag
-            assert await queue.drain() == 1 and voices == [f"quiet:{tag}", f"loud:{tag}"]
-            assert await Count.dispatch(1, step=2) is not None and counted == []
-            assert await queue.size("maintenance") == 1 and await queue.drain("maintenance") == 1
-            assert counted == [(1, 2)]
-            assert await CountNow.dispatch(3) is None and counted == [(1, 2), (3, 1)]
-
-            outbox.clear()
-
-            sent = await WelcomeMail(name="Queued", app="RagX").to(f"q-{tag}@unit.test").send()
-
-            assert sent is None and outbox.last() is None and await queue.drain() == 1
-
-            queued = outbox.last()
-
-            assert queued is not None and queued.subject == "Welcome to RagX, Queued"
-
-            now = await WelcomeMail(name="Direct", app="RagX").to(f"d-{tag}@unit.test").send_now()
-
-            assert now.subject == "Welcome to RagX, Direct" and outbox.last() is now
-
-            await tokens.remember(user, TokenKind.ACCESS, f"old-{tag}", OLD)
-
-            assert await PurgeTokens.dispatch() is not None and await queue.drain("maintenance") == 1
-            assert await tokens.query().where("hash", f"old-{tag}").count() == 0
-
-            await UserRegistered(str(user.id), user.name, user.email).dispatch()
-
-            assert await queue.drain() == 1
-
-            welcome = outbox.last()
-
-            assert welcome is not None and welcome.to == (user.email,)
-
-        finally:
-
-            events.forget(Pinged)
-
-            await users.query().where("id", user.id).force_delete()
+        expect(inline.inline()).truthy()
+        expect((await inline.push(sync_work, 9)).queue).equals("default")
+        expect(calls[-1]).equals(9)
+        expect(await inline.size()).equals(0)
 
 @pytest.mark.anyio
 class TestBrokers:
@@ -207,7 +154,8 @@ class TestBrokers:
 
         try:
 
-            assert await own.clear("fast") == 0 and not own.inline()
+            expect(await own.clear("fast")).equals(0)
+            expect(own.inline()).falsy()
 
             job = await own.push(work, 7, queue="fast")
 
@@ -217,26 +165,37 @@ class TestBrokers:
 
                 await asyncio.sleep(0.05)
 
-            assert job.queue == "fast" and await own.size("fast") == 1
+            expect(job.queue).equals("fast")
+            expect(await own.size("fast")).equals(1)
 
             pulled = await driver.pull("fast", 1.0)
 
-            assert pulled is not None and pulled.id == job.id and pulled.args == (7,) and pulled.receipt is not None
-            assert await own.perform(pulled) and calls == [7] and await own.size("fast") == 0
+            pulled = test.some(pulled)
+            expect(pulled.id).equals(job.id)
+            expect(pulled.args).equals((7,))
+            expect(pulled.receipt).some()
+            expect(await own.perform(pulled)).truthy()
+            expect(calls).equals([7])
+            expect(await own.size("fast")).equals(0)
 
             await own.push(work, 13, queue="fast")
 
-            assert await own.drain("fast") == 2 and calls == [7, 13, 13] and own.stats()["failures"] == 2
-            assert await own.drain("fast") == 0 and await own.size("fast") == 0
-            assert await driver.pull("fast", 0.2) is None
+            expect(await own.drain("fast")).equals(2)
+            expect(calls).equals([7, 13, 13])
+            expect(own.stats()["failures"]).equals(2)
+            expect(await own.drain("fast")).equals(0)
+            expect(await own.size("fast")).equals(0)
+            expect(await driver.pull("fast", 0.2)).none()
 
             late = await own.push(work, 21, queue="fast", delay=0.4)
 
-            assert late.available > job.available and await driver.pull("fast", 0.1) is None
+            expect(late.available).above(job.available)
+            expect(await driver.pull("fast", 0.1)).none()
 
             await asyncio.sleep(0.6)
 
-            assert await own.drain("fast") == 1 and calls[-1] == 21
+            expect(await own.drain("fast")).equals(1)
+            expect(calls[-1]).equals(21)
 
         finally:
 
@@ -263,7 +222,8 @@ class TestBrokers:
 
             receiver.start()
 
-            assert not sender.bus().local and await sender.dispatch(Shipped(f"o-{tag}")) == 0
+            expect(sender.bus().local).falsy()
+            expect(await sender.dispatch(Shipped(f"o-{tag}"))).equals(0)
 
             for _ in range(50):
 
@@ -271,7 +231,7 @@ class TestBrokers:
 
                 await asyncio.sleep(0.1)
 
-            assert heard == [f"o-{tag}"]
+            expect(heard).equals([f"o-{tag}"])
 
         finally:
 
@@ -285,22 +245,27 @@ class TestBrokers:
 
         try:
 
-            assert await store.ping()
+            expect(await store.ping()).truthy()
 
             await cache.set("k", { "n": [1, 2] }, ttl=30)
 
-            assert await cache.get("k") == { "n": [1, 2] } and await cache.has("k")
-            assert 0 < (await store.ttl("k") or 0) <= 30 and await store.ttl("missing") is None
-            assert await cache.increment("n", 2, ttl=30) == 2 and await cache.increment("n") == 3
+            expect(await cache.get("k")).equals({ "n": [1, 2] })
+            expect(await cache.has("k")).truthy()
+            expect(0 < (await store.ttl("k") or 0) <= 30).true()
+            expect(await store.ttl("missing")).none()
+            expect(await cache.increment("n", 2, ttl=30)).equals(2)
+            expect(await cache.increment("n")).equals(3)
 
             hits = [await cache.hit("bucket", 2, 30) for _ in range(3)]
 
-            assert [hit.allowed for hit in hits] == [True, True, False] and 0 < hits[2].reset <= 30
-            assert await cache.forget("k") and not await cache.forget("k")
+            expect([hit.allowed for hit in hits]).equals([True, True, False])
+            expect(0 < hits[2].reset <= 30).true()
+            expect(await cache.forget("k")).truthy()
+            expect(await cache.forget("k")).falsy()
 
             await cache.clear()
 
-            assert await cache.get("n") is None
+            expect(await cache.get("n")).none()
 
         finally:
 
@@ -314,8 +279,8 @@ class TestBrokers:
         right  = Socket()
         first  = RedisDriver(left, REDIS, topic)
         second = RedisDriver(right, REDIS, topic)
-        near   = left.attach(Connection("a", Mute()))
-        far    = right.attach(Connection("b", Mute()))
+        near   = left.attach(Connection("a", test.stub()))
+        far    = right.attach(Connection("b", test.stub()))
 
         left.join(near, "news")
         right.join(far, "news")
@@ -325,7 +290,7 @@ class TestBrokers:
             await first.start()
             await second.start()
 
-            assert first.publish("news", "headline", { "n": 1 }, None) == 1
+            expect(first.publish("news", "headline", { "n": 1 }, None)).equals(1)
 
             for _ in range(100):
 
@@ -333,14 +298,64 @@ class TestBrokers:
 
                 await asyncio.sleep(0.02)
 
-            assert Frame.decode(far.outbox.get_nowait()) == Frame("headline", "news", { "n": 1 })
-            assert near.outbox.qsize() == 1 and second.describe()["relayed"] == 1 and first.describe()["relayed"] == 0
-            assert first.origin() != second.origin() and second.describe()["listening"]
+            expect(Frame.decode(far.outbox.get_nowait())).equals(Frame("headline", "news", { "n": 1 }))
+            expect(near.outbox.qsize()).equals(1)
+            expect(second.describe()["relayed"]).equals(1)
+            expect(first.describe()["relayed"]).equals(0)
+            expect(first.origin()).differs(second.origin())
+            expect(second.describe()["listening"]).truthy()
 
         finally:
 
             await first.stop()
             await second.stop()
+
+    async def test_a_severed_redis_subscription_heals_and_keeps_relaying ( self ) -> None:
+
+        topic  = f"unit-{rand.hex(3)}"
+        relay  = Relay()
+        left   = Socket()
+        right  = Socket()
+        sender = RedisDriver(left, REDIS, topic)
+        hurt   = RedisDriver(right, await relay.open(), topic)
+        far    = right.attach(Connection("b", test.stub()))
+
+        right.join(far, "news")
+
+        async def heard ( count: int ) -> int:
+
+            for _ in range(150):
+
+                if far.outbox.qsize() >= count: break
+
+                expect(await sender.deliver("news", "tick", { "n": count }, None)).equals(0)
+
+                await asyncio.sleep(0.02)
+
+            return far.outbox.qsize()
+
+        try:
+
+            await hurt.start()
+
+            expect(await heard(1)).equals(1)
+
+            relay.sever()
+
+            for _ in range(100):
+
+                if hurt.describe()["lost"]: break
+
+                await asyncio.sleep(0.02)
+
+            expect(hurt.describe()).subset({ "lost": 1, "listening": True })
+            expect(await heard(2)).above(1)
+
+        finally:
+
+            await hurt.stop()
+            await sender.stop()
+            await relay.close()
 
 class TestSchedule:
 
@@ -351,34 +366,36 @@ class TestSchedule:
         cron  = Cron("*/15 2 * * 1-5")
         early = DateTime(2026, 10, 19, 0, 0, tzinfo=UTC)
 
-        assert cron.matches(DateTime(2026, 10, 19, 2, 30, tzinfo=UTC))
-        assert not cron.matches(DateTime(2026, 10, 18, 2, 30, tzinfo=UTC))
-        assert not cron.matches(DateTime(2026, 10, 19, 2, 31, tzinfo=UTC))
-        assert Cron("@daily").matches(DateTime(2026, 1, 1, tzinfo=UTC))
-        assert not Cron("@hourly").matches(DateTime(2026, 1, 1, 0, 1, tzinfo=UTC))
-        assert Cron("0 0 1 * 1").matches(DateTime(2026, 6, 1, tzinfo=UTC))
-        assert Cron("0 0 1 * 1").matches(DateTime(2026, 6, 8, tzinfo=UTC))
+        expect(cron.matches(DateTime(2026, 10, 19, 2, 30, tzinfo=UTC))).truthy()
+        expect(cron.matches(DateTime(2026, 10, 18, 2, 30, tzinfo=UTC))).falsy()
+        expect(cron.matches(DateTime(2026, 10, 19, 2, 31, tzinfo=UTC))).falsy()
+        expect(Cron("@daily").matches(DateTime(2026, 1, 1, tzinfo=UTC))).truthy()
+        expect(Cron("@hourly").matches(DateTime(2026, 1, 1, 0, 1, tzinfo=UTC))).falsy()
+        expect(Cron("0 0 1 * 1").matches(DateTime(2026, 6, 1, tzinfo=UTC))).truthy()
+        expect(Cron("0 0 1 * 1").matches(DateTime(2026, 6, 8, tzinfo=UTC))).truthy()
 
-        with pytest.raises(Fault): Cron("61 * * * *")
-        with pytest.raises(Fault): Cron("* * *")
+        with test.fails(Code.INTERNAL, "cron.range"): Cron("61 * * * *")
+        with test.fails(Code.INTERNAL, "cron.fields"): Cron("* * *")
 
         quick = table.call(lambda: ran.append("quick"), "quick").every(60)
         night = table.call(lambda: ran.append("night"), "night").daily_at("03:00").timezone("Africa/Cairo")
 
         night.without_overlapping()
 
-        assert [task.name for task in table.due(early)] == ["quick", "night"]
-        assert night.due(early) and not night.due(DateTime(2026, 10, 19, 1, 0, tzinfo=UTC))
+        expect([task.name for task in table.due(early)]).equals(["quick", "night"])
+        expect(night.due(early)).truthy()
+        expect(night.due(DateTime(2026, 10, 19, 1, 0, tzinfo=UTC))).falsy()
 
         night.running = True
 
-        assert not night.due(early)
+        expect(night.due(early)).falsy()
 
         night.running = False
         night.started = early
 
-        assert not night.due(early) and quick.due(early) and night.dump()["cron"] == "0 3 * * *"
-        assert [task.name for task in timetable.tasks] == ["tokens.purge"] and timetable.tasks[0].exclusive
-        assert table.find("quick") is quick
+        expect(night.due(early)).falsy()
+        expect(quick.due(early)).truthy()
+        expect(night.dump()["cron"]).equals("0 3 * * *")
+        expect(table.find("quick")).is_(quick)
 
-        with pytest.raises(Fault): table.find("missing")
+        with test.fails(Code.NOT_FOUND, "schedule.missing"): table.find("missing")

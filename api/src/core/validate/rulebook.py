@@ -33,6 +33,7 @@ def size_of ( value: Any ) -> float:
     return 0.0
 
 def when ( ok: object, message: str ) -> str | None:
+
     return None if ok else message
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +46,7 @@ class Context:
     numeric : bool = False
 
     def text ( self ) -> str:
+
         return str(self.value)
 
     def size ( self ) -> float:
@@ -54,9 +56,11 @@ class Context:
         return size_of(self.value)
 
     def other ( self, index: int = 0 ) -> Any:
+
         return self.data.get(self.args[index]) if index < len(self.args) else None
 
     def limit ( self, index: int = 0 ) -> float:
+
         return float(self.args[index])
 
 def span ( context: Context ) -> str | None:
@@ -126,9 +130,11 @@ class Rulebook:
         self._checks: dict[str, Check] = dict(CHECKS)
 
     def extend ( self, name: str, check: Check ) -> None:
+
         self._checks[name] = check
 
     def names ( self ) -> list[str]:
+
         return sorted(self._checks)
 
     def split ( self, rules: str | list[str] ) -> list[tuple[str, list[str]]]:
@@ -168,6 +174,7 @@ class Rulebook:
         return errors
 
     def wording ( self, messages: Messages, field: str, rule: str, fallback: str ) -> str:
+
         return messages.get(f"{field}.{rule}", messages.get(rule, fallback))
 
     def field_errors (
@@ -201,7 +208,7 @@ class Rulebook:
 
             check = self._checks.get(name)
 
-            if check is None: raise ValueError(name)
+            if check is None: raise Fault(Code.INTERNAL, reason=f"validate.rule.{name}")
 
             message = check(Context(field, value, args, data, numeric))
 
@@ -222,7 +229,9 @@ class Rulebook:
         return { field: data[field] for field in rules if field in data }
 
     def passes ( self, data: Mapping[str, Any], rules: Rules ) -> bool:
+
         return not self.check(data, rules)
 
     def fails ( self, data: Mapping[str, Any], rules: Rules ) -> bool:
+
         return bool(self.check(data, rules))

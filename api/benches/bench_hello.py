@@ -14,13 +14,13 @@ class HelloBench(Bench):
 
                 reply = await client.get("/v1/hello", params={ "name": "World" })
 
-                self.expect("hello", reply.status_code, 200, reply.text)
+                self.expect("hello", reply.code, 200, reply.text())
 
             async def health () -> None:
 
                 reply = await client.get("/health")
 
-                self.expect("health", reply.status_code, 200, reply.text)
+                self.expect("health", reply.code, 200, reply.text())
 
             await hello()
 

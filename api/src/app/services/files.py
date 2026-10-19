@@ -2,9 +2,9 @@ from collections.abc import AsyncIterator
 
 from core.storage import Stored, Uploaded, storage
 from app.models import User
-from app.utils.bases import BaseService
+from app.utils.cycle import Service
 
-class FilesService(BaseService):
+class FilesService(Service):
 
     async def publish ( self, file: Uploaded, user: User ) -> Stored:
 

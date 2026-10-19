@@ -1,10 +1,10 @@
+from .math import Embedding, Math, Vector
+from .money import Money
+from .number import Format, Number
+from .words import Words
 from decimal import Decimal
 
-from .format import Format
-from .math import Math
-from .number import Number
-from .words import Words
-
 number = Number()
+vector = Vector()
 
-__all__ = ["Decimal", "Format", "Math", "Number", "Words", "number"]
+__all__ = ["Decimal", "Embedding", "Format", "Math", "Money", "Number", "Vector", "Words", "number", "vector"]

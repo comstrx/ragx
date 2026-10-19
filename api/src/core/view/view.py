@@ -1,10 +1,55 @@
 from collections.abc import Callable, Mapping
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from jinja2 import Environment, FileSystemLoader, StrictUndefined, TemplateNotFound, select_autoescape
+from core.date import Moment, date
 from core.error import Code, Fault
-from .filters import Filters
+from core.json import json
+from core.number import number
+from core.string import string
+from jinja2 import Environment, FileSystemLoader, StrictUndefined, TemplateNotFound, select_autoescape
+
+type Filter = Callable[..., Any]
+
+def ago ( value: datetime | Moment | str ) -> str:
+
+    return date.moment(value).human()
+
+def when ( value: datetime | Moment | str, pattern: str = "YYYY-MM-DD" ) -> str:
+
+    return date.moment(value).format(pattern)
+
+def pretty ( value: object ) -> str:
+
+    return json.pretty(value)
+
+class Filters:
+
+    def all ( self ) -> dict[str, Filter]:
+
+        return {
+            "slug"          : string.slug,
+            "truncate_text" : string.truncate,
+            "title_case"    : string.title,
+            "headline"      : string.headline,
+            "plural"        : string.plural,
+            "mask"          : string.mask,
+            "iso"           : date.iso,
+            "ago"           : ago,
+            "when"          : when,
+            "human"         : number.human,
+            "bytes"         : number.bytes,
+            "percent"       : number.percent,
+            "ordinal"       : number.ordinal,
+            "thousands"     : number.thousands,
+            "currency"      : number.currency,
+            "pretty"        : pretty,
+        }
+
+    def globals ( self ) -> dict[str, Any]:
+
+        return { "now": date.now, "today": date.today }
 
 class View:
 
@@ -29,9 +74,10 @@ class View:
         self._folder = folder
 
     def ready ( self ) -> bool:
+
         return self._env is not None
 
-    def engine ( self ) -> Environment:
+    def _engine_ ( self ) -> Environment:
 
         if self._env is None: raise Fault(Code.INTERNAL, reason="view")
 
@@ -44,10 +90,12 @@ class View:
         return self._folder
 
     def share ( self, **values: object ) -> None:
-        self.engine().globals.update(values)
+
+        self._engine_().globals.update(values)
 
     def filter ( self, name: str, fn: Callable[..., Any] ) -> None:
-        self.engine().filters[name] = fn
+
+        self._engine_().filters[name] = fn
 
     def exists ( self, name: str ) -> bool:
 
@@ -59,11 +107,12 @@ class View:
         return True
 
     def names ( self ) -> list[str]:
-        return self.engine().list_templates()
+
+        return self._engine_().list_templates()
 
     async def render ( self, name: str, /, **data: object ) -> str:
 
-        try: template = self.engine().get_template(name)
+        try: template = self._engine_().get_template(name)
         except TemplateNotFound as error: raise Fault(Code.INTERNAL, reason=f"view.{name}") from error
 
         return await template.render_async(**data)
@@ -76,7 +125,9 @@ class View:
         raise Fault(Code.INTERNAL, reason=f"view.{names[0] if names else 'none'}")
 
     async def text ( self, source: str, /, **data: object ) -> str:
-        return await self.engine().from_string(source).render_async(**data)
+
+        return await self._engine_().from_string(source).render_async(**data)
 
     def describe ( self ) -> dict[str, object]:
+
         return { "ready": self.ready(), "folder": str(self._folder) if self._folder else None }

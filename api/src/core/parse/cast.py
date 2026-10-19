@@ -1,6 +1,8 @@
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from enum import Enum
 from typing import Any
+from uuid import UUID
 
 from core.json import json
 import builtins
@@ -11,6 +13,7 @@ FALSES = frozenset({"0", "false", "no", "off", "n", "f", ""})
 class Cast:
 
     def truths ( self ) -> frozenset[str]:
+
         return TRUTHS
 
     def string ( self, value: object ) -> str | None:
@@ -23,9 +26,10 @@ class Cast:
         return text or None
 
     def text ( self, value: object ) -> str:
+
         return self.string(value) or ""
 
-    def bool ( self, value: object ) -> bool:
+    def bool ( self, value: object ) -> builtins.bool:
 
         if isinstance(value, bool): return value
         if isinstance(value, int | float): return value != 0
@@ -46,7 +50,7 @@ class Cast:
         try: return int(Decimal(self.text(value)))
         except (InvalidOperation, ValueError): return default
 
-    def float ( self, value: object, default: float = 0.0, digits: int | None = None ) -> float:
+    def float ( self, value: object, default: builtins.float = 0.0, digits: int | None = None ) -> builtins.float:
 
         try:
 
@@ -65,9 +69,10 @@ class Cast:
         return number.quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP)
 
     def positive ( self, value: object ) -> builtins.float:
+
         return max(self.float(value), 0.0)
 
-    def list ( self, value: object ) -> list[Any]:
+    def list ( self, value: object ) -> builtins.list[Any]:
 
         if value is None: return []
         if isinstance(value, list): return value
@@ -82,7 +87,7 @@ class Cast:
 
         return [value]
 
-    def dict ( self, value: object ) -> dict[str, Any]:
+    def dict ( self, value: object ) -> builtins.dict[str, Any]:
 
         if isinstance(value, Mapping): return { str(key): item for key, item in value.items() }
         if isinstance(value, str):
@@ -92,6 +97,45 @@ class Cast:
             return parsed if isinstance(parsed, dict) else {}
 
         return {}
+
+    def enum[E: Enum] ( self, value: object, kind: type[E], default: E | None = None ) -> E | None:
+
+        if isinstance(value, kind): return value
+
+        wanted = self.text(value).lower().replace("-", "_").replace(" ", "_")
+
+        for case in kind:
+
+            if wanted in (str(case.value).lower(), case.name.lower()): return case
+
+        return default
+
+    def uuid ( self, value: object ) -> UUID | None:
+
+        if isinstance(value, UUID): return value
+
+        try: return UUID(self.text(value))
+        except ValueError: return None
+
+    def choice[T] ( self, value: object, choices: Sequence[T], default: T | None = None ) -> T | None:
+
+        exact = next((choice for choice in choices if choice == value), None)
+        text  = self.text(value).lower()
+
+        return exact if exact is not None else next((item for item in choices if str(item).lower() == text), default)
+
+    def amount ( self, value: object, places: int = 2 ) -> Decimal:
+
+        if isinstance(value, int | float | Decimal): return self.decimal(value, places)
+
+        text  = "".join(char for char in self.text(value) if char.isdigit() or char in ".,-")
+        comma = text.rfind(",")
+        dot   = text.rfind(".")
+
+        if comma > dot and len(text) - comma - 1 in (1, 2): text = text.replace(".", "").replace(",", ".")
+        else: text = text.replace(",", "")
+
+        return self.decimal(text or "0", places)
 
     def parse ( self, value: object ) -> object:
 

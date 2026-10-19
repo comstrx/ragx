@@ -1,141 +1,262 @@
 from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from http import HTTPStatus
 from pathlib import Path
-from typing import Any, Literal, Self
+from typing import Any, Literal, Self, override
 
-from starlette.responses import (
-    FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse, Response as Raw, StreamingResponse,
-)
 from core.array import array
 from core.error import Code, Fault
 from core.json import json
-from .envelope import Envelope
-from .sse import PING, EventStream, Packet
+from starlette.responses import FileResponse, RedirectResponse, Response as Raw, StreamingResponse
+from starlette.types import Receive, Scope, Send
+from .wire import Envelope
+import asyncio, math
 
+type Packet = Sse | Mapping[str, Any] | str | bytes
+
+HEADERS = { "Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive" }
+PING    = 15.0
 type Meta = Mapping[str, object] | None
 type Headers = Mapping[str, str] | None
+type SameSite = Literal["lax", "strict", "none"]
+JSON   = "application/json"
+BINARY = "application/octet-stream"
+
+@dataclass(frozen=True, slots=True)
+class Sse:
+
+    data  : Any
+    event : str | None = None
+    id    : str | None = None
+    retry : int | None = None
+
+    def encode ( self ) -> bytes:
+
+        lines: list[str] = []
+
+        if self.event: lines.append(f"event: {self.event}")
+        if self.id: lines.append(f"id: {self.id}")
+        if self.retry: lines.append(f"retry: {int(self.retry)}")
+
+        text = self.data if isinstance(self.data, str) else json.dumps(self.data)
+
+        lines.extend(f"data: {line}" for line in text.split("\n"))
+
+        return ("\n".join(lines) + "\n\n").encode()
+
+    @staticmethod
+    def comment ( text: str = "ping" ) -> bytes:
+
+        return f": {text}\n\n".encode()
+
+    @staticmethod
+    def pack ( packet: Packet ) -> bytes:
+
+        if isinstance(packet, Sse): return packet.encode()
+        if isinstance(packet, bytes): return packet
+        if isinstance(packet, str): return Sse(packet).encode()
+
+        return Sse(
+            packet.get("data"), packet.get("event"), packet.get("id"), packet.get("retry"),
+        ).encode() if "data" in packet else Sse(dict(packet)).encode()
+
+class EventStream(StreamingResponse):
+
+    def __init__ (
+        self, source: AsyncIterator[Packet], ping: float = PING, status: int = 200,
+        headers: Mapping[str, str] | None = None,
+    ) -> None:
+
+        super().__init__(
+            self.pulse(source, ping), status_code=status, media_type="text/event-stream",
+            headers={ **HEADERS, **(headers or {}) },
+        )
+
+    @staticmethod
+    async def pulse ( source: AsyncIterator[Packet], ping: float ) -> AsyncIterator[bytes]:
+
+        iterator = source.__aiter__()
+
+        while True:
+
+            try:
+                async with asyncio.timeout(ping if ping > 0 else None): packet = await iterator.__anext__()
+            except TimeoutError:
+
+                yield Sse.comment()
+
+                continue
+
+            except StopAsyncIteration: return
+
+            yield Sse.pack(packet)
 
 class Response(Raw):
 
-    media_type = "application/json"
+    media_type: str | None = JSON
 
+    def __init__ (
+        self, content: object = None, status_code: int = HTTPStatus.OK, headers: Headers = None,
+        media: str | None = JSON,
+    ) -> None:
+
+        self._inner: Raw | None = None
+        self.media_type         = media
+
+        super().__init__(content, status_code, dict(headers or {}), media)
+
+    @override
     def render ( self, content: object ) -> bytes:
+
+        if isinstance(content, bytes): return content
+        if isinstance(content, str): return content.encode(self.charset)
+        if content is None and self.media_type != JSON: return b""
+
         return json.encode(content)
 
     @classmethod
+    def _delegate_ ( cls, inner: Raw ) -> Self:
+
+        made = cls(None, inner.status_code, media=inner.media_type)
+
+        made.raw_headers = inner.raw_headers
+        made._inner      = inner
+
+        return made
+
+    @override
+    async def __call__ ( self, scope: Scope, receive: Receive, send: Send ) -> None:
+
+        if self._inner is None: return await super().__call__(scope, receive, send)
+
+        return await self._inner(scope, receive, send)
+
+    def header ( self, name: str, value: str ) -> Self:
+
+        self.headers[name] = value
+
+        return self
+
+    def cookie (
+        self, name: str, value: str, max_age: int | None = None, path: str = "/", secure: bool = True,
+        http_only: bool = True, same_site: SameSite = "lax",
+    ) -> Self:
+
+        self.set_cookie(name, value, max_age=max_age, path=path, secure=secure, httponly=http_only, samesite=same_site)
+
+        return self
+
+    def forget ( self, name: str, path: str = "/" ) -> Self:
+
+        self.delete_cookie(name, path=path)
+
+        return self
+
+    def status ( self ) -> int:
+
+        return self.status_code
+
+    @classmethod
     def ok ( cls, data: object = None, message: str | None = None, meta: Meta = None ) -> Self:
+
         return cls(Envelope.success(data, message, Code.OK, meta), HTTPStatus.OK)
 
     @classmethod
     def created ( cls, data: object = None, message: str | None = None, meta: Meta = None ) -> Self:
+
         return cls(Envelope.success(data, message, Code.CREATED, meta), HTTPStatus.CREATED)
 
     @classmethod
     def accepted ( cls, data: object = None, message: str | None = None, meta: Meta = None ) -> Self:
+
         return cls(Envelope.success(data, message, Code.ACCEPTED, meta), HTTPStatus.ACCEPTED)
 
     @classmethod
     def page ( cls, rows: Sequence[object], total: int, page: int = 1, limit: int = 20, meta: Meta = None ) -> Self:
+
         return cls.ok(list(rows), meta={ **array.page(total, page, limit), **(meta or {}) })
 
     @classmethod
     def fail ( cls, fault: Fault, meta: Meta = None ) -> Self:
-        return cls(Envelope.failure(fault, meta), fault.status)
+
+        made = cls(Envelope.failure(fault, meta), fault.status)
+
+        if fault.retry_after is not None: made.headers["Retry-After"] = str(math.ceil(fault.retry_after))
+
+        return made
 
     @classmethod
     def problem ( cls, code: Code, reason: str | None = None, errors: Mapping[str, list[str]] | None = None ) -> Self:
+
         return cls.fail(Fault(code, reason=reason, errors=dict(errors) if errors else None))
 
     @classmethod
     def json ( cls, data: object, status: int = HTTPStatus.OK, headers: Headers = None ) -> Self:
-        return cls(data, status, headers=dict(headers or {}))
+
+        return cls(data, status, headers)
 
     @classmethod
-    def with_headers[R: Raw] ( cls, response: R, **headers: str ) -> R:
+    def no_content ( cls ) -> Self:
 
-        for name, value in headers.items(): response.headers[name.replace("_", "-")] = value
+        return cls(None, HTTPStatus.NO_CONTENT, media=None)
 
-        return response
+    @classmethod
+    def text ( cls, content: str, status: int = HTTPStatus.OK, media: str = "text/plain" ) -> Self:
 
-    @staticmethod
-    def with_cookie[R: Raw] (
-        response: R, name: str, value: str, max_age: int | None = None, path: str = "/", secure: bool = True,
-        http_only: bool = True, same_site: Literal["lax", "strict", "none"] = "lax",
-    ) -> R:
+        return cls(content, status, media=media)
 
-        response.set_cookie(
-            name, value, max_age=max_age, path=path, secure=secure, httponly=http_only, samesite=same_site,
-        )
+    @classmethod
+    def html ( cls, content: str, status: int = HTTPStatus.OK ) -> Self:
 
-        return response
+        return cls(content, status, media="text/html")
 
-    @staticmethod
-    def without_cookie[R: Raw] ( response: R, name: str, path: str = "/" ) -> R:
+    @classmethod
+    def raw ( cls, content: bytes, media: str = BINARY, status: int = HTTPStatus.OK ) -> Self:
 
-        response.delete_cookie(name, path=path)
+        return cls(content, status, media=media)
 
-        return response
+    @classmethod
+    def redirect ( cls, url: str, status: int = HTTPStatus.TEMPORARY_REDIRECT, headers: Headers = None ) -> Self:
 
-    @staticmethod
-    def stream_download (
-        chunks: AsyncIterator[bytes], name: str, media: str = "application/octet-stream",
-    ) -> StreamingResponse:
-        return Response.stream(chunks, media, name, download=True)
+        return cls._delegate_(RedirectResponse(url, status_code=status, headers=dict(headers or {})))
 
-    @staticmethod
-    def no_content () -> Raw:
-        return Raw(status_code=HTTPStatus.NO_CONTENT)
+    @classmethod
+    def permanent_redirect ( cls, url: str ) -> Self:
 
-    @staticmethod
-    def text ( content: str, status: int = HTTPStatus.OK, media: str = "text/plain" ) -> PlainTextResponse:
-        return PlainTextResponse(content, status_code=status, media_type=media)
+        return cls.redirect(url, HTTPStatus.PERMANENT_REDIRECT)
 
-    @staticmethod
-    def html ( content: str, status: int = HTTPStatus.OK ) -> HTMLResponse:
-        return HTMLResponse(content, status_code=status)
-
-    @staticmethod
-    def raw ( content: bytes, media: str = "application/octet-stream", status: int = HTTPStatus.OK ) -> Raw:
-        return Raw(content, status_code=status, media_type=media)
-
-    @staticmethod
-    def redirect ( url: str, status: int = HTTPStatus.TEMPORARY_REDIRECT, headers: Headers = None ) -> RedirectResponse:
-        return RedirectResponse(url, status_code=status, headers=dict(headers or {}))
-
-    @staticmethod
-    def permanent_redirect ( url: str ) -> RedirectResponse:
-        return RedirectResponse(url, status_code=HTTPStatus.PERMANENT_REDIRECT)
-
-    @staticmethod
-    def file ( path: Path, name: str | None = None, media: str | None = None, download: bool = False ) -> FileResponse:
+    @classmethod
+    def file ( cls, path: Path, name: str | None = None, media: str | None = None, download: bool = False ) -> Self:
 
         disposition = "attachment" if download else "inline"
 
-        return FileResponse(path, media_type=media, filename=name, content_disposition_type=disposition)
+        return cls._delegate_(FileResponse(path, media_type=media, filename=name, content_disposition_type=disposition))
 
-    @staticmethod
-    def download ( path: Path, name: str | None = None, media: str | None = None ) -> FileResponse:
-        return Response.file(path, name or path.name, media, download=True)
+    @classmethod
+    def download ( cls, path: Path, name: str | None = None, media: str | None = None ) -> Self:
 
-    @staticmethod
+        return cls.file(path, name or path.name, media, download=True)
+
+    @classmethod
     def stream (
-        chunks: AsyncIterator[bytes], media: str = "application/octet-stream", name: str | None = None,
-        download: bool = False, headers: Headers = None,
-    ) -> StreamingResponse:
+        cls, chunks: AsyncIterator[bytes], media: str = BINARY, name: str | None = None, download: bool = False,
+        headers: Headers = None,
+    ) -> Self:
 
         disposition = "attachment" if download else "inline"
         sent        = dict(headers or {})
 
         if name: sent["Content-Disposition"] = f'{disposition}; filename="{name}"'
 
-        return StreamingResponse(chunks, media_type=media, headers=sent)
+        return cls._delegate_(StreamingResponse(chunks, media_type=media, headers=sent))
 
-    @staticmethod
-    def sse ( source: AsyncIterator[Packet], ping: float = PING, headers: Headers = None ) -> EventStream:
-        return EventStream(source, ping, headers=headers)
+    @classmethod
+    def sse ( cls, source: AsyncIterator[Packet], ping: float = PING, headers: Headers = None ) -> Self:
 
-    @staticmethod
-    def ndjson ( items: AsyncIterator[Any] | Iterable[Any], headers: Headers = None ) -> StreamingResponse:
+        return cls._delegate_(EventStream(source, ping, headers=headers))
+
+    @classmethod
+    def ndjson ( cls, items: AsyncIterator[Any] | Iterable[Any], headers: Headers = None ) -> Self:
 
         async def lines () -> AsyncIterator[bytes]:
 
@@ -144,4 +265,6 @@ class Response(Raw):
             else:
                 for item in items: yield json.encode(item) + b"\n"
 
-        return StreamingResponse(lines(), media_type="application/x-ndjson", headers=dict(headers or {}))
+        streamed = StreamingResponse(lines(), media_type="application/x-ndjson", headers=dict(headers or {}))
+
+        return cls._delegate_(streamed)
