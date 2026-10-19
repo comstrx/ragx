@@ -19,5 +19,5 @@ ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 HOSTNAME=0.0.0.0 PORT=3000 HOM
 COPY --from=build --chown=10001:10001 /app /app
 USER 10001:10001
 EXPOSE 3000
-HEALTHCHECK --interval=10s --timeout=3s --start-period=30s --retries=3 ["CMD", "bun", "-e", "const s=await Bun.connect({hostname:\"127.0.0.1\",port:3000,socket:{data(){},error(){process.exit(1)}}}); s.end(); process.exit(0)"]
+HEALTHCHECK --interval=10s --timeout=3s --start-period=30s --retries=3 CMD ["bun", "-e", "const s=await Bun.connect({hostname:\"127.0.0.1\",port:3000,socket:{data(){},error(){process.exit(1)}}}); s.end(); process.exit(0)"]
 CMD ["bun", "run", "start"]
