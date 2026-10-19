@@ -57,7 +57,8 @@ Every release of RagX, one section per tag, one block per part.
 - Edge: `init-state fully-down` (new replicas receive traffic only after passing checks; measured 5 x 503 before, 0 after), `timeout connect 1s` (crash failover tail 3.0 s to 1.0 s), passive `observe layer7` circuit, `X25519MLKEM768` first, UUIDv7 request ids, `http-after-response` security headers, query-free path logging, per-route readiness status (API 200, web 200-399), balance per service type.
 - Releases interpolate replicas, slot and release root at run time, so one rendered release serves Compose and Portainer in any slot; slot retirement counts retention from the demotion, preflights edge drift before any destructive step, and refuses while sessions live.
 - Portainer install mints a private CA (key deleted after issuance) for verified loopback TLS, registers the local environment with `-H`, and creates the API key into a mode-600 secret; the desired-state export no longer doubles the release root in `env_file`.
-- Replaced the Python benches with `benches/curl.Dockerfile` (curl 8.23.0 with ngtcp2 and nghttp3) and `benches/protocols.sh`; `benches/results.json` records the lab on a 4 vCPU rootless-Docker host. GHCR push and private-Git reconcile remain unverified with the supplied token.
+- Replaced the Python benches with `benches/curl.Dockerfile` (curl 8.23.0 with ngtcp2 and nghttp3) and `benches/protocols.sh`; `benches/results.json` records the lab on a 4 vCPU rootless-Docker host and a GitHub Actions run in a private repository that proves private GHCR push and pull, Portainer GitOps from a private repository, and launchd timers on macOS.
+- Worker and scheduler disable the image healthcheck, which probes a port only the API serves.
 
 ## v0.1.0 — 2026-10-17
 

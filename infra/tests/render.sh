@@ -67,6 +67,7 @@ test-render-artifacts () {
     expect-contains "${text}" "env_file: ['\${RELEASE_ROOT:?RELEASE_ROOT required}/api.env']"
     expect-contains "${text}" "image: \"example/api@$(fixture-digest 1)\""
     expect-contains "${text}" 'no-new-privileges:true'
+    expect-equal "$(grep -c 'healthcheck: {disable: true}' <<< "${text}")" 2 'worker and scheduler serve no port'
     expect-contains "${text}" "name: 'shop-staging-data'"
     expect-absent "${text}" 'container_name'
     expect-absent "${text}" 'ports:'

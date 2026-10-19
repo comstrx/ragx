@@ -42,11 +42,13 @@ services:
     profiles: [worker]
     command: [python, -m, bootstrap, work]
     environment: {SCHEDULE_ENABLED: 'false'}
+    healthcheck: {disable: true}
   scheduler:
     <<: *application
     profiles: [scheduler]
     command: [python, -m, bootstrap, schedule]
     environment: {QUEUE_WORKERS: '0', SCHEDULE_ENABLED: 'true'}
+    healthcheck: {disable: true}
 
 networks:
   data:

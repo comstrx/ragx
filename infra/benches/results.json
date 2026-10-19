@@ -87,7 +87,13 @@
       "max_s": 0.19,
       "duration_s": 35
     },
-    { "scenario": "rollback r2 to r1 under load", "requests": 60000, "ok": 60000, "max_s": 0.138, "duration_s": 7 },
+    {
+      "scenario": "rollback r2 to r1 under load",
+      "requests": 60000,
+      "ok": 60000,
+      "max_s": 0.138,
+      "duration_s": 7
+    },
     {
       "scenario": "candidate whose containers never become healthy",
       "requests": 200000,
@@ -122,9 +128,33 @@
     "export": "the desired Compose artifact keeps ${API_REPLICAS}, ${DEPLOY_SLOT} and ${RELEASE_ROOT}, carries no host path or secret, and validates with docker compose under Portainer-style variables"
   },
   "unverified": [
-    "GHCR push: the supplied fine-grained token logs in but lacks package write",
-    "Portainer reconcile from a private Git repository: the supplied token reaches no private repository",
-    "public UDP 443 through a cloud firewall, Let's Encrypt issuance, Cloudflare API, S3 backup upload",
-    "macOS host operations (CI runs the offline suite on macOS only)"
-  ]
+    "Docker Hub private push and pull: no Docker Hub credentials were supplied; the driver differs from GHCR only in host and Portainer type, both covered by offline tests",
+    "public UDP 443 through a cloud firewall, Let's Encrypt issuance, Cloudflare API, S3 backup upload: they need public DNS, a cloud firewall rule or provider accounts"
+  ],
+  "private_git_and_registry": {
+    "where": "GitHub Actions run 39214929789 in the private repository comstrx/infra-lab-gitops, Ubuntu 24.04 runner with Docker 28.0.4 and Compose 2.38.2; the job-scoped GITHUB_TOKEN reached the tool only through REGISTRY_TOKEN and GITOPS_TOKEN in the environment",
+    "registry": "registry login and registry push sent the RagX API image to private ghcr.io/comstrx/lab-api, every local copy was removed, and the deploy pulled it back by digest with the stored credentials; portainer registry registered ghcr.io with authentication",
+    "gitops": "reconcile cloned the private branch and the protected release tag, verified the desired files and Compose checksum, and Portainer created authenticated Git stacks from the private repository whose GitConfig.ConfigHash equaled the verified commit",
+    "lifecycle": [
+      {
+        "scenario": "second release reconciled under load",
+        "requests": 120000,
+        "ok": 120000
+      },
+      {
+        "scenario": "repeat reconcile",
+        "result": "changed=false"
+      },
+      {
+        "scenario": "branch desired state tampered after tagging",
+        "result": "refused: Tagged desired state differs from the branch"
+      },
+      {
+        "scenario": "rollback",
+        "result": "switched back, X-Release of the first release"
+      }
+    ],
+    "audit": "no token in release files, edge, data, desired state or Git history; registry config, API key and api.env at mode 600"
+  },
+  "macos": "GitHub Actions macos-latest: the release bundle ran plan, installed the launchd timer (state active, run interval 3600 s), and removed it"
 }
