@@ -1,0 +1,13 @@
+[Unit]
+Description=infra {{UNIT_NAME}}
+After=default.target
+
+[Service]
+Type=oneshot
+WorkingDirectory={{UNIT_DIRECTORY}}
+ExecStart={{UNIT_COMMAND}}
+UMask=0077
+NoNewPrivileges=true
+TimeoutStartSec=1800
+StandardOutput=journal
+StandardError=journal

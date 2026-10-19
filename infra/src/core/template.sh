@@ -1,47 +1,62 @@
-#!/usr/bin/env bash
+template-text () {
 
-## the template payload — one bundle, one extraction per version, verified
+    local source="${1}" text="" token="" key="" filter="" value=""
 
-template_dir () {
+    text="$(asset-text "${source}")" || return
 
-    if [[ -n "${INFRA_DEV_TEMPLATE:-}" && -d "${INFRA_DEV_TEMPLATE}" ]]; then
+    while [[ "${text}" =~ \{\{([A-Z][A-Z0-9_]*)(\|json)?\}\} ]]; do
 
-        printf '%s' "${INFRA_DEV_TEMPLATE}"
-        return 0
+        token="${BASH_REMATCH[0]}"
+        key="${BASH_REMATCH[1]}"
+        filter="${BASH_REMATCH[2]}"
 
-    fi
+        cfg-has "${key}" || { err "Template ${source} requires ${key}"; return; }
 
-    printf '%s' "${BUILD_DIR}/template/${INFRA_VERSION}-${INFRA_TEMPLATE_SHA:0:12}"
+        value="${CONFIG[${key}]}"
+        [[ "${value}" != *'{{'* ]] || { err "Nested placeholder in ${key}"; return; }
+        [[ -z "${filter}" ]] || value="$(parse-json-string "${value}")"
+
+        text="${text//"${token}"/"${value}"}"
+
+    done
+
+    [[ "${text}" != *'{{'* ]] || { err "Invalid placeholder in ${source}"; return; }
+
+    printf '%s\n' "${text}"
 
 }
-template_payload () {
+template-render () {
 
-    sed -n '/^#__INFRA_PAYLOAD__$/,$p' "${INFRA_BIN}" | tail -n +2 | sed 's/^#//' | base64 -d
+    fs-produce "${2}" "${3:-600}" template-text "${1}"
 
 }
-template_ensure () {
+template-env-text () {
 
-    local tmp="" archive="" sha=""
+    local compose="${1}" key="" value=""
 
-    [[ "${TEMPLATE_DIR}" != "${INFRA_DEV_TEMPLATE:-}" ]] || return 0
-    [[ ! -f "${TEMPLATE_DIR}/.sha256" ]] || return 0
+    shift
 
-    tmp="$(tmp_dir)"
-    archive="${tmp}/template.tgz"
+    for key in "$@"; do
+        cfg-value value "${key}" || return
+        printf '%s=' "${key}"
+        parse-env-string "${value}" "${compose}" || return
+        printf '\n'
+    done
 
-    template_payload > "${archive}" || die "The bundle carries no readable template payload"
+}
+template-env () {
 
-    sha="$(sha256sum "${archive}" | cut -c1-64)"
+    local destination="${1}"
 
-    [[ "${sha}" == "${INFRA_TEMPLATE_SHA}" ]] || die "Template payload is corrupt — expected ${INFRA_TEMPLATE_SHA:0:12}, got ${sha:0:12}"
+    shift
+    fs-produce "${destination}" 600 template-env-text false "$@"
 
-    tar xzf "${archive}" -C "${tmp}" || die "Cannot unpack the template payload"
+}
+template-compose-env () {
 
-    ensure_dir "$(dirname "${TEMPLATE_DIR}")"
-    rm -rf "${TEMPLATE_DIR}"
-    mv "${tmp}/template" "${TEMPLATE_DIR}" || die "Cannot place the templates: ${TEMPLATE_DIR}"
+    local destination="${1}"
 
-    printf '%s\n' "${sha}" > "${TEMPLATE_DIR}/.sha256"
-    rm -rf "${tmp}"
+    shift
+    fs-produce "${destination}" 600 template-env-text true "$@"
 
 }

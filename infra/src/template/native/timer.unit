@@ -1,0 +1,12 @@
+[Unit]
+Description=infra {{UNIT_NAME}} timer
+
+[Timer]
+OnBootSec=60
+OnUnitActiveSec={{UNIT_INTERVAL}}
+RandomizedDelaySec=10
+Persistent=true
+Unit={{UNIT_NAME}}.service
+
+[Install]
+WantedBy=timers.target

@@ -3,27 +3,15 @@ name: Infra
 on:
   push:
     branches: [main]
-    paths:
-      - 'infra/**'
-      - '.github/workflows/infra.yml'
-      - 'api/pyproject.toml'
-      - 'api/uv.lock'
-      - 'api/.python-version'
-      - 'web/package.json'
-      - 'web/bun.lock'
-
+    paths: ['infra/**', '.github/workflows/infra.yml', 'api/**', 'web/**']
   pull_request:
-    paths:
-      - 'infra/**'
-      - '.github/workflows/infra.yml'
-      - 'api/pyproject.toml'
-      - 'api/uv.lock'
-      - 'api/.python-version'
-      - 'web/package.json'
-      - 'web/bun.lock'
-
+    paths: ['infra/**', '.github/workflows/infra.yml', 'api/**', 'web/**']
   workflow_dispatch:
-
+    inputs:
+      publish:
+        description: Publish scanned images to the configured private registry
+        type: boolean
+        default: false
   workflow_call:
 
 concurrency:
@@ -39,49 +27,143 @@ defaults:
 
 jobs:
   verify:
-    name: verify
-    runs-on: ubuntu-latest
+    name: verify ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
-
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
+      - name: Bash
+        if: runner.os == 'macOS'
+        run: |
+          brew install bash
+          printf '%s/bin\n' "$(brew --prefix)" >> "${GITHUB_PATH}"
+      - name: Pinned tools
+        working-directory: infra
+        run: bash src/main.sh prepare >> "${GITHUB_PATH}"
       - name: Test
         working-directory: infra
         run: bash src/main.sh test --check
+      - name: Release bundle
+        working-directory: infra
+        run: bash src/main.sh build-release
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: infra-${{ runner.os }}
+          path: infra/target/release/
+          if-no-files-found: error
+          retention-days: 7
 
   images:
     name: image ${{ matrix.name }}
     runs-on: ubuntu-latest
+    needs: verify
     timeout-minutes: 30
-
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: api
-            file: infra/src/template/docker/Dockerfile
-            target: app
+            component: api
             spec: ''
-          - name: web
-            file: infra/src/template/docker/Dockerfile.web
-            target: runtime
+          - name: admin
+            component: web
             spec: admin
-
+          - name: client
+            component: web
+            spec: client
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
       - name: Build
         env:
-          FILE: ${{ matrix.file }}
-          TARGET: ${{ matrix.target }}
+          COMPONENT: ${{ matrix.component }}
           SPEC: ${{ matrix.spec }}
           NAME: ${{ matrix.name }}
-        run: >
-          docker build --file "${FILE}" --target "${TARGET}"
-          ${SPEC:+--build-arg "SPEC=${SPEC}"}
-          --tag "ragx/${NAME}:ci" .
+          API_HOST: api.example.invalid
+          TLS_ENABLED: 'true'
+          HTTPS_PORT: '443'
+        run: bash infra/src/main.sh image build "${COMPONENT}" "ragx/${NAME}:ci" "${SPEC}"
+      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.75.0
+          cache: false
+      - name: Scan image
+        env:
+          NAME: ${{ matrix.name }}
+        run: trivy image --config .trivy.yml --exit-code 1 "ragx/${NAME}:ci"
+
+  publish:
+    name: publish ${{ matrix.name }}
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write # Publish the scanned images only after an explicit manual dispatch.
+    runs-on: ubuntu-latest
+    needs: images
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: api
+            component: api
+            spec: ''
+          - name: admin
+            component: web
+            spec: admin
+          - name: client
+            component: web
+            spec: client
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build
+        env:
+          COMPONENT: ${{ matrix.component }}
+          SPEC: ${{ matrix.spec }}
+          NAME: ${{ matrix.name }}
+          API_HOST: api.example.invalid
+          TLS_ENABLED: 'true'
+          HTTPS_PORT: '443'
+        run: bash infra/src/main.sh image build "${COMPONENT}" "ragx/${NAME}:ci" "${SPEC}"
+      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.75.0
+          cache: false
+      - name: Scan image
+        env:
+          NAME: ${{ matrix.name }}
+        run: trivy image --config .trivy.yml --exit-code 1 "ragx/${NAME}:ci"
+      - name: Publish immutable references
+        env:
+          NAME: ${{ matrix.name }}
+          REGISTRY_DRIVER: ${{ vars.REGISTRY_DRIVER || 'ghcr' }}
+          REGISTRY_NAMESPACE: ${{ vars.REGISTRY_NAMESPACE || github.repository_owner }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ github.token }}
+          DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USER }}
+          DOCKERHUB_PUSH_TOKEN: ${{ secrets.DOCKERHUB_PUSH_TOKEN }}
+          REVISION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          case "${REGISTRY_DRIVER}" in
+            ghcr) export REGISTRY_USER="${GHCR_USER}" REGISTRY_TOKEN="${GHCR_TOKEN}" ;;
+            dockerhub) export REGISTRY_USER="${DOCKERHUB_USER:?Docker Hub user required}" REGISTRY_TOKEN="${DOCKERHUB_PUSH_TOKEN:?Docker Hub push token required}" ;;
+            *) exit 64 ;;
+          esac
+          export REGISTRY_NAMESPACE="${REGISTRY_NAMESPACE,,}"
+          host="$(bash infra/src/main.sh registry host)"
+          image="${host}/${REGISTRY_NAMESPACE}/ragx-${NAME}:${REVISION}"
+          trap 'bash infra/src/main.sh registry logout' EXIT
+          bash infra/src/main.sh registry login
+          docker tag "ragx/${NAME}:ci" "${image}"
+          bash infra/src/main.sh registry push "${image}"
+          bash infra/src/main.sh image digest "${image}" >> "${GITHUB_STEP_SUMMARY}"

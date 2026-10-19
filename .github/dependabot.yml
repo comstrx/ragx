@@ -30,7 +30,7 @@ updates:
       prefix: 'api(deps)'
 
   - package-ecosystem: docker
-    directories: ['/infra/src/template/docker']
+    directories: ['/infra/src/template/image']
     schedule:
       interval: weekly
       day: monday

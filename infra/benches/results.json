@@ -1,0 +1,130 @@
+{
+  "date": "2026-10-19",
+  "host": {
+    "machine": "GCP VM, Ubuntu 24.04, 4 vCPU, 16 GB",
+    "runtime": "rootless Docker 29.9.1, Compose 5.6.0, Bash 5.2.21",
+    "exposure": "edge bound to 127.0.0.1:28080/28443 (TCP) and 127.0.0.1:28443 (UDP); no public port opened"
+  },
+  "versions": {
+    "haproxy": "3.4.7 LTS, AWS-LC 4.0.0, +QUIC +PROMEX",
+    "portainer": "CE 2.45.2 LTS",
+    "client": "curl 8.23.0 with ngtcp2 1.22.1, nghttp3 1.15.0, GnuTLS 3.8.13 (benches/curl.Dockerfile)",
+    "application": "the RagX API image and the client and admin web images, pinned by digest in a loopback registry"
+  },
+  "protocols": {
+    "method": "benches/protocols.sh: 2000 requests per round, 16 parallel, one curl binary for both protocols, inside the apps network to edge:8443, API /health behind HAProxy, edge CPU from the container cgroup; wall time includes the client container start",
+    "rounds": [
+      {
+        "protocol": "h2",
+        "ok": 2000,
+        "rps": 1011.6,
+        "p50_ms": 10.37,
+        "p95_ms": 30.88,
+        "p99_ms": 41.7,
+        "edge_cpu_ms": 412
+      },
+      {
+        "protocol": "h3",
+        "ok": 2000,
+        "rps": 951.5,
+        "p50_ms": 10.78,
+        "p95_ms": 35.81,
+        "p99_ms": 53.17,
+        "edge_cpu_ms": 400
+      },
+      {
+        "protocol": "h2",
+        "ok": 2000,
+        "rps": 1050.4,
+        "p50_ms": 9.43,
+        "p95_ms": 34.86,
+        "p99_ms": 43.29,
+        "edge_cpu_ms": 395
+      },
+      {
+        "protocol": "h3",
+        "ok": 2000,
+        "rps": 964.3,
+        "p50_ms": 11.33,
+        "p95_ms": 26.69,
+        "p99_ms": 50.2,
+        "edge_cpu_ms": 394
+      }
+    ],
+    "reading": "On a loss-free sub-millisecond path HTTP/3 brings no edge advantage: about 7% lower throughput, equal CPU. Its value is on lossy, high-RTT client paths, which this lab does not model.",
+    "proof": [
+      "curl --http3-only through the published UDP port 127.0.0.1:28443 answered HTTP/3 200",
+      "HTTP/1.1 and HTTP/2 over TCP answered 200 with X-Release, Alt-Svc h3=\":28443\", HSTS, X-Request-ID, nosniff and no Server header",
+      "plain HTTP answered 308 to HTTPS; an unknown Host answered 404"
+    ]
+  },
+  "lifecycle": [
+    {
+      "scenario": "scale API 2 to 4 to 2 under load",
+      "requests": 40000,
+      "ok": 40000,
+      "max_s": 3.006,
+      "note": "before init-state fully-down the same run gave 5 x 503: new replicas received traffic before listening"
+    },
+    {
+      "scenario": "crash one of two replicas (SIGKILL) under load",
+      "requests": 30000,
+      "ok": 30000,
+      "max_s": 1.012,
+      "note": "with timeout connect 3s the failover tail was 3.007 s"
+    },
+    {
+      "scenario": "hang one of two replicas (paused 15 s) under load",
+      "requests": 30000,
+      "ok": 29999,
+      "max_s": 15.082,
+      "note": "one request stuck on the frozen replica; leastconn kept the rest away"
+    },
+    {
+      "scenario": "blue/green deploy r1 to r2 under load",
+      "requests": 150000,
+      "ok": 150000,
+      "max_s": 0.19,
+      "duration_s": 35
+    },
+    { "scenario": "rollback r2 to r1 under load", "requests": 60000, "ok": 60000, "max_s": 0.138, "duration_s": 7 },
+    {
+      "scenario": "candidate whose containers never become healthy",
+      "requests": 200000,
+      "ok": 200000,
+      "max_s": 0.102,
+      "result": "phase rejected after the 120 s health window, r1 kept serving"
+    },
+    {
+      "scenario": "web specs client and admin plus API, deploy under load",
+      "requests": 120000,
+      "ok": 120000,
+      "max_s": 0.13,
+      "result": "host routing for lab.test, admin.lab.test and api.lab.test, HTTP/3 for the web host"
+    }
+  ],
+  "guards": [
+    "redeploying inside the retention window refused: slot keeps the previous release for rollback",
+    "a live WebSocket on the retiring slot made the deploy wait 30 s and refuse; after the session closed the deploy succeeded",
+    "a concurrent deploy refused on the lock (exit 1) while the first completed",
+    "a stale lock with a dead owner blocked deploys until recover --force, which resumed idempotently",
+    "edge drift refused before any slot retirement until edge apply",
+    "edge apply hot-reloaded HAProxy (container kept, new worker) and kept the previous configuration for rollback",
+    "an unpinned API_IMAGE failed validation with exit 1"
+  ],
+  "data": {
+    "backup_restore": "50000 rows with $, quotes and newlines restored into a new database with an identical count and md5",
+    "refusals": ["restore into the live database", "a dump whose checksum does not match"],
+    "timer": "a user systemd timer installed from the release bundle ran the backup with Result=success, then stopped"
+  },
+  "control_plane": {
+    "portainer": "installed on loopback with a private CA whose key is deleted after issuance, verified TLS, an API key minted into a mode-600 secret, the pull registry registered through the API",
+    "export": "the desired Compose artifact keeps ${API_REPLICAS}, ${DEPLOY_SLOT} and ${RELEASE_ROOT}, carries no host path or secret, and validates with docker compose under Portainer-style variables"
+  },
+  "unverified": [
+    "GHCR push: the supplied fine-grained token logs in but lacks package write",
+    "Portainer reconcile from a private Git repository: the supplied token reaches no private repository",
+    "public UDP 443 through a cloud firewall, Let's Encrypt issuance, Cloudflare API, S3 backup upload",
+    "macOS host operations (CI runs the offline suite on macOS only)"
+  ]
+}

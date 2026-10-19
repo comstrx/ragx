@@ -1,250 +1,94 @@
-#!/usr/bin/env bash
+declare -gA CLI_FLAGS=()
+declare -ga CLI_ARGS=() CLI_OVERRIDES=() CLI_CONFIGS=()
 
-## the command line — flags, modules, dispatch, help
+cli-parse () {
 
-cli_modules () {
+    CLI_FLAGS=()
+    CLI_ARGS=()
+    CLI_OVERRIDES=()
+    CLI_CONFIGS=()
 
-    infra_code | sed -n 's/^# @module //p'
-
-}
-cli_section () {
-
-    infra_code | sed -n "/^# @module ${1}\$/,/^# @[a-z]/p"
-
-}
-cli_is_test () {
-
-    declare -F "${1}" >/dev/null && [[ -n "$(infra_code | sed -n '/^# @test /,/^# @entry/p' | grep -E "^${1} \(\)")" ]]
-
-}
-cli_has_module () {
-
-    [[ " $(cli_modules | paste -sd ' ' -) " == *" ${1} "* ]]
-
-}
-module_doc () {
-
-    cli_section "${1}" | sed -n '2,4{ s/^## //p; }' | head -1
-
-}
-commands_of () {
-
-    local name="${1}" indent="${2}" doc="" line="" fn=""
-
-    while IFS= read -r line; do
-
-        if [[ "${line}" == "## "* ]]; then doc="${line#\#\# }"; continue; fi
-
-        if [[ "${line}" =~ ^${name}_([a-z_]+)\ \(\) && -n "${doc}" ]]; then
-
-            fn="$(tr '_' '-' <<< "${BASH_REMATCH[1]}")"
-            printf "${indent}%-22s %s\n" "${fn}" "${doc}"
-
-        fi
-
-        doc=""
-
-    done < <(cli_section "${name}")
-
-}
-command_help () {
-
-    local name="${1}" command="${2}" fn="" section="" doc="" usage="" needs=""
-
-    fn="${name}_${command//-/_}"
-    section="$(cli_section "${name}" | sed -n "/^${fn} ()/,/^}/p")"
-
-    [[ -n "${section}" ]] || { printf '❌ Unknown command: %s %s\n' "${name}" "${command}" >&2; exit 1; }
-
-    doc="$(cli_section "${name}" | grep -B1 "^${fn} ()" | sed -n 's/^## //p' || true)"
-    usage="$(grep -oE 'Usage: [^}"]*' <<< "${section}" | head -1 || true)"
-    needs="$(grep -oE '\$\{[0-9]:\?[^}]*\}' <<< "${section}" | sed -E 's/^\$\{([0-9]):\?(Usage: )?([^}]*)\}$/\1: \3/' | paste -sd ';' - || true)"
-
-    printf 'infra %s %s — %s\n' "${name}" "${command}" "${doc:-undocumented}"
-
-    [[ -z "${usage}" ]] || printf '  %s\n' "${usage}"
-    [[ -z "${needs}" || -n "${usage}" ]] || printf '  arguments — %s\n' "${needs}"
-
-    exit 0
-
-}
-module_help () {
-
-    cli_has_module "${1}" || { printf '❌ Unknown module: %s\n' "${1}" >&2; exit 1; }
-
-    [[ -z "${2:-}" ]] || command_help "${1}" "${2}"
-
-    printf '%s\n\n' "infra ${1} — $(module_doc "${1}")"
-    commands_of "${1}" "  "
-
-    exit 0
-
-}
-usage () {
-
-    local name=""
-
-    printf '%s\n' \
-        "infra ${INFRA_VERSION} — infrastructure automation" \
-        "" \
-        "Usage: infra [options] <module> <command> [args...]" \
-        "" \
-        "Options:" \
-        "  -s, --stack <name>       the environment to act on (see STACKS)" \
-        "  -c, --config <file>      load this env file — repeatable, the last one wins" \
-        "  -r, --repo <dir>         the git repo to act on (default: the one around you)" \
-        "  -y, --yes                auto-approve every confirmation" \
-        "  -e, --env <KEY=VALUE>    override any config variable (repeatable)" \
-        "  -l, --list               every module with every command" \
-        "  -h, --help               this overview — 'infra help <module> [command]' goes deeper" \
-        "  -V, --version            show version" \
-        "" \
-        "Config precedence: flags > process env > JSON_ENV > --config files > built-in defaults" \
-        "" \
-        "Modules:"
-
-    for name in $(cli_modules); do
-
-        printf '  %-10s %s\n' "${name}" "$(module_doc "${name}")"
-
-    done
-
-    printf '%s\n' \
-        "" \
-        "Examples:" \
-        "  infra -s production ci release         build, prove, push, scan, converge the server and the names, wait for the edge" \
-        "  infra -s production -y server deploy   any linux over ssh becomes the platform — docker, nginx, postgres, rabbitmq, redis" \
-        "  infra -s production app run -- migrate one command on the release — same image, env, secrets" \
-        "  infra -s production audit all          every live production check in one sweep" \
-        "  infra self update                      the latest release, checksum verified"
-
-    exit "${1:-0}"
-
-}
-listing () {
-
-    local name=""
-
-    for name in $(cli_modules); do
-
-        printf '%s\n' "  ${name} — $(module_doc "${name}")"
-        commands_of "${name}" "    "
-        printf '\n'
-
-    done
-
-    exit 0
-
-}
-flags () {
-
-    while [[ $# -gt 0 ]]; do
-
-        if (( ${#ARGS[@]} )); then
-
-            ARGS+=( "${1}" )
-            shift
-            continue
-
-        fi
+    while (( $# > 0 )); do
 
         case "${1}" in
-
-            -- )
+            --config)
+                [[ -n "${2:-}" ]] || { err "Value required: ${1}"; return; }
+                CLI_CONFIGS+=( "${2}" )
+                shift 2
+            ;;
+            --project|--environment|--target)
+                [[ -n "${2:-}" ]] || { err "Value required: ${1}"; return; }
+                [[ -z "${CLI_FLAGS[${1}]+x}" ]] || { err "Repeated flag: ${1}"; return; }
+                CLI_FLAGS["${1}"]="${2}"
+                shift 2
+            ;;
+            -e)
+                [[ "${2:-}" =~ ^[A-Z][A-Z0-9_]*= ]] || { err "Expected KEY=VALUE after -e"; return; }
+                CLI_OVERRIDES+=( "${2}" )
+                shift 2
+            ;;
+            --force|--check|--list)
+                CLI_FLAGS["${1}"]=true
                 shift
-                ARGS+=( "$@" )
-                break ;;
-
-            -s | --stack )
-                [[ -n "${2:-}" ]] || { printf '❌ Missing stack name\n' >&2; exit 1; }
-                export STACK="${2}"
-                shift 2 ;;
-
-            -c | --config )
-                [[ -f "${2:-}" ]] || { printf '❌ Config file not found: %s\n' "${2:-}" >&2; exit 1; }
-                INFRA_CONFIG="${INFRA_CONFIG:+${INFRA_CONFIG}$'\n'}$(realpath "${2}")"
-                export INFRA_CONFIG
-                shift 2 ;;
-
-            -r | --repo )
-                [[ -d "${2:-}" ]] || { printf '❌ Repo directory not found: %s\n' "${2:-}" >&2; exit 1; }
-                REPO_ROOT="$(realpath "${2}")"
-                export REPO_ROOT
-                shift 2 ;;
-
-            -y | --yes )
-                export INFRA_YES=1
-                shift ;;
-
-            -e | --env )
-                [[ "${2:-}" == *=* ]] || { printf '❌ Invalid override: %s\n' "${2:-}" >&2; exit 1; }
-                export "${2?}"
-                export INFRA_FLAGS="${INFRA_FLAGS:-} ${2%%=*}"
-                shift 2 ;;
-
-            -l | --list )
-                listing ;;
-
-            -h | --help )
-                usage ;;
-
-            -V | --version )
-                printf 'infra %s\n' "${INFRA_VERSION}"
-                exit 0 ;;
-
-            -* )
-                printf '❌ Unknown option: %s\n' "${1}" >&2
-                usage 1 ;;
-
-            * )
-                ARGS+=( "${1}" )
-                shift ;;
-
+            ;;
+            -h|--help)
+                CLI_ARGS=( help )
+                shift
+            ;;
+            --)
+                shift
+                CLI_ARGS+=( "$@" )
+                break
+            ;;
+            -*)
+                err "Unknown flag: ${1}"
+                return
+            ;;
+            *)
+                CLI_ARGS+=( "${1}" )
+                shift
+            ;;
         esac
 
     done
 
 }
-main () {
+cli-flag () {
 
-    local module="" command="" fn=""
+    [[ "${CLI_FLAGS[${1}]:-false}" == true ]]
 
-    ARGS=()
-    flags "$@"
+}
+cli-dispatch () {
 
-    module="${ARGS[0]:-}"
-    command="${ARGS[1]:-}"
+    local prefix="${1}" action="${2}" allowed="${3}"
 
-    if [[ "${module}" == "help" ]]; then
+    shift 3
 
-        if [[ -n "${command}" ]]; then module_help "${command}" "${ARGS[2]:-}"; else usage; fi
+    [[ " ${allowed} " == *" ${action} "* ]] || { err "Unknown command: ${action} (expected: ${allowed})"; return; }
+    declare -F "${prefix}-${action}" >/dev/null || { err "Unsupported operation: ${action}"; return; }
 
-    fi
+    "${prefix}-${action}" "$@"
 
-    [[ -n "${module}" ]] || usage 1
+}
+cli-has () {
 
-    if cli_is_test "${module}"; then
+    local name="${1:-}" row=""
 
-        "${module}" "${ARGS[@]:1}"
-        return
+    shift
 
-    fi
+    for row in "$@"; do
+        [[ "${row%%|*}" != "${name}" ]] || return 0
+    done
 
-    cli_has_module "${module}" || die "Unknown module: ${module}"
+    return 1
 
-    if [[ "${module}" == "self" ]]; then config_light; else config_load; fi
+}
+cli-names () {
 
-    if [[ -z "${command}" ]]; then
+    local row=""
 
-        commands_of "${module}" "  "
-        exit 1
-
-    fi
-
-    fn="${module}_${command//-/_}"
-
-    declare -F "${fn}" >/dev/null || die "Unknown function: ${module} ${command}"
-
-    "${fn}" "${ARGS[@]:2}"
+    for row in "$@"; do
+        out "${row%%|*}"
+    done
 
 }

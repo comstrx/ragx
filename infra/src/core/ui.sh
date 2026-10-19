@@ -1,33 +1,32 @@
-#!/usr/bin/env bash
+ui-section () {
 
-input () {
-
-    local prompt="${1:-}" fallback="${2:-}" value=""
-
-    if is_ci || [[ ! -t 0 ]]; then
-
-        [[ -n "${fallback}" ]] || die "Non-interactive run needs a default for: ${prompt}"
-
-        printf '%s' "${fallback}"
-        return 0
-
-    fi
-
-    read -r -t "${INPUT_TIMEOUT}" -p "${prompt} [${fallback}]: " value || die "Input timed out: ${prompt}"
-
-    printf '%s' "${value:-${fallback}}"
+    printf '\n%s\n' "${1-}"
 
 }
-confirm () {
+ui-row () {
 
-    local prompt="${1:-Continue?}" value=""
+    if [[ -n "${2-}" ]]; then printf '  %-42s %s\n' "${1-}" "${2}"
+    else printf '  %s\n' "${1-}"
+    fi
 
-    [[ -n "${INFRA_YES:-}" ]] && return 0
+}
+ui-table () {
 
-    is_ci && die "Refusing '${prompt}' in CI without INFRA_YES=1"
+    local title="${1}" row="" name="" usage="" summary=""
 
-    read -r -t "${INPUT_TIMEOUT}" -p "${prompt} [y/N]: " value || die "Confirmation timed out"
+    shift
+    ui-section "${title}"
 
-    [[ "${value}" =~ ^[Yy]([Ee][Ss])?$ ]]
+    for row in "$@"; do
+        IFS='|' read -r name usage summary <<< "${row}"
+        ui-row "${usage:-${name}}" "${summary}"
+    done
+
+}
+ui-result () {
+
+    local action="${1}" changed="${2}" retry="${3}"
+
+    succ "${action}: changed=${changed} retry=${retry}"
 
 }

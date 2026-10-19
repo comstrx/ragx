@@ -1,87 +1,156 @@
-# Infra
+# Infrastructure
 
-One bash bundle under `infra/` that turns any Linux box reachable over ssh into the whole platform as a Docker Compose monolith. Gate: `bash src/main.sh test --check`.
+The infrastructure is a Bash 5 framework delivered as one self-contained executable. Its current stack is `native`: Docker Engine and Compose with a persistent HAProxy edge and a Portainer CE control plane. Kubernetes, Helm, Argo CD, Kustomize and OpenTofu are future stacks added through `module/`, `template/` and a new `app/<stack>/` folder only.
 
-## Shape
+## Layout and layers
 
-```
-infra/
-├── src/main.sh        the entry: sources core/{log,fs,sys}, module/tool and forge/*, then forge_main
-├── src/core/          cli config fs log proc secret sys template ui     (the runtime of the bundle)
-├── src/forge/         build check cli install meta payload release source test   (the build of the bundle)
-├── src/module/        app audit backup ci compose dns edge pg secrets self server tool   (the verbs)
-├── src/template/      compose/ nginx/ postgres/ rabbitmq/ redis/ systemd/ docker/   (rendered or copied onto the box)
-├── tests/             assert.sh + flat *.sh, functions test_* run one per process inside the dev bundle
-├── .env.example       every knob with its default; the only home of literals (urls, images, versions, limits)
-└── .secret.example    every secret the platform expects from outside (names only)
-```
+| Path                 | Owns                                                                                                                                                                                                         |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Bash.toml`          | Identity, `stack`, paths (`entrypoint source build tests templates cache`), tool versions, image digests, check policy, endpoints, download and package checksums, and the `[native]` engineering constants. |
+| `.env.example`       | The one environment schema: every key with its default, grouped in owner blocks with one comment line each.                                                                                                  |
+| `src/main.sh`        | Strict mode, then `bootstrap/index.sh`, then `bootstrap-main`.                                                                                                                                               |
+| `src/bootstrap/`     | The only entry. Loads core and config, assembles `app/<stack>/*.sh` from the manifest's stack, owns governance (`help build build-release checksum prepare check test run config`) and the laws.             |
+| `src/core/`          | Generic verbs, biased to no stack: `log ui sys parse fs config cli asset template state net git ssh package bundle test load`.                                                                               |
+| `src/config/`        | `index.sh`, the schema load, precedence, validation, derivation and release snapshots.                                                                                                                       |
+| `src/module/`        | One file per tool: `docker haproxy portainer registry postgresql rabbitmq redis tls cloudflare s3 gitops systemd launchd firewall`.                                                                          |
+| `src/app/native/`    | Orchestration of the native stack: `commands topology render deploy edge control scale gitops backup operations`.                                                                                            |
+| `src/template/`      | `native/` Compose, HAProxy, unit and plist templates; `image/` Dockerfiles.                                                                                                                                  |
+| `tests/`, `benches/` | Offline tests discovered by name; the HTTP/3 client image, the protocol bench and the lab evidence.                                                                                                          |
 
-- `bash src/main.sh build` assembles `target/dev/infra.sh` (tests included, templates read live) and `build-release` assembles `target/release/infra.sh` (tests stripped) + `SHA256SUMS`; the templates ride as a deterministic tar payload with a sha stamped in the header and verified on first use; `check` runs `bash -n`, shellcheck at the configured severity, payload integrity and the literals law; `test [glob] [--check]` runs the bash tests; `install` installs the checked release bundle; `self update` replaces a running bundle with a released one, checksum verified.
-- A module is a file `module/<name>.sh` emitted under a `# @module <name>` banner; a verb is `<name>_<verb> ()` preceded by one `## doc` line, called as `infra <name> <verb>`; `infra help <module> [verb]` and `infra -l` read the banners and the docs. A new module is one file; nothing else registers it.
-- Config precedence: flags (`-e KEY=VALUE`) > process env > `JSON_ENV` (a json object of repository secrets; only manifest keys load, local keys never) > `--config` files (last wins) > `.env.example` defaults; secrets default to empty strings so a render never dies on an unset secret. `-s <stack>` picks the stack (`STACKS=production staging`; staging uses the ACME staging directory). `config_derive` computes everything else (hosts, names, urls, profiles, tuning) and `config_reset` forgets it between loads.
-- Laws enforced by `secrets example` and the tests: the two examples are disjoint; every key they name is read by the code or a template; no literal url or shellcheck knob in `src/`; every template placeholder has a source; defaults are project-neutral.
+Laws enforced by `check` on every source and test file:
 
-## Verbs
+- Layer calls: core calls core; config calls core; a module calls core and the `docker` runtime module only; app calls core, config, modules and its own stack; bootstrap calls core, config and bootstrap. A tool combining two others belongs in app.
+- Names: `module/<tool>.sh` defines `<tool>-*`, `app/<stack>/` defines `<stack>-*`, config `config-*`, bootstrap `bootstrap-*`, tests `test-*` or `fixture-*`. A function is defined once.
+- Style: `name () {`, a blank line after the opening and before the closing brace, no consecutive blank lines, four-space indentation, no tabs, no trailing spaces, zero comments.
+- Errors: `err "message"` prints `[-]` on stderr, redacted, and returns 1; callers write `|| return`. No manual status codes outside signal traps.
+- Layout: flat `core config bootstrap module`, one folder per stack under `app/`.
 
-| Module    | Verbs                                                                                                                                                                                                                                                                                                              |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `server`  | `setup` (docker, compose, sysctl on the box), `deploy` (push the bundle and the resolved config, then `bootstrap` on the box: prepare, registry login, names, certificate, stack, units, verify), `ensure` (bootstrap or refresh), `refresh` (push + `compose deploy` + verify), `run`, `copy`, `status`, `verify` |
-| `compose` | `render` (the whole stack into `COMPOSE_DIR`), `config`, `pull`, `up`, `stop`, `down`, `ps`, `logs`, `restart`, `exec`, `roll <service>` (zero downtime), `deploy` (render → pull → data services → roll api and web → workers → reload the edge → record → prune), `rollback`, `releases`                         |
-| `edge`    | `issue` (dns-01 through Cloudflare when a token exists, http-01 through the running edge otherwise), `renew`, `reload` (tested first), `test`, `days`, `names`                                                                                                                                                     |
-| `pg`      | `shell` (superuser over the socket, args reach psql), `activity`, `size`, `slow` (pg_stat_statements from the maintenance database), `tune`                                                                                                                                                                        |
-| `backup`  | `now`, `list`, `fetch <stamp>`, `restore <stamp> [db]` (always into a side database, never over the live one)                                                                                                                                                                                                      |
-| `app`     | `run -- <bootstrap verb…>` (a one-off container on the release with the same image, env and secrets), `migrate`, `status`, `runbook`, `shell`                                                                                                                                                                      |
-| `dns`     | `sync`, `ensure`, `show`, `names` (Cloudflare only, only when `DNS_MANAGED` is true)                                                                                                                                                                                                                               |
-| `audit`   | `edge`, `tls`, `services`, `backup`, `all`, `watch` (external probe with a Telegram alarm when configured)                                                                                                                                                                                                         |
-| `ci`      | `release` (preflight → build → prove → push → scan → `server ensure` → wait for the edge), `images`, `build`, `prove`, `push`, `scan`, `setting <KEY>` (secrets refused), `verify` (the wall), `gate`, the laws `compose nginx loader templates workflows leaks`                                                   |
-| `secrets` | `check` (required keys grow with the features; a quote or a newline in any secret is refused), `drift`, `env`, `example`, `keys`                                                                                                                                                                                   |
-| `self`    | `version`, `where`, `keys`, `update`                                                                                                                                                                                                                                                                               |
-| `tool`    | `ensure <tool…>` (docker, jq, trivy, gitleaks, actionlint, …)                                                                                                                                                                                                                                                      |
+## Runtime and core
 
-Every box verb begins with `server_here || { server_forward <module> <verb> …; return; }`: on the box (the bundle lives at `SERVER_PATH`) or with no `SSH_HOST` at all (local, CI) it acts locally; anywhere else it travels over ssh to the bundle on the box with the same stack and overrides, attaching a tty when one is present.
+Linux and macOS with Bash 5.2/5.3. OS predicates read `OSTYPE` without forks; kernel, distribution and package manager are detected once and cached. The package table covers apt, apk, dnf, yum, pacman, zypper, xbps, brew, port and nix, and declares unsupported actions, such as nix refresh. `run-sudo` uses `sudo -n` and never prompts. `run-timeout` is portable, keeps stdin and reports the timeout. `run-until` polls with a deadline.
 
-## The stack it renders
+SSH supports agent, key, certificate and password authentication with `StrictHostKeyChecking=yes` and forwarding disabled. Passwords travel through an `sshpass -d` descriptor, and remote arguments are single-quote encoded. Uploads are checksum-verified, atomic and refuse symlinks. Tokens never enter argv:
 
-`compose render` writes into `COMPOSE_DIR` (`${BUILD_DIR}/compose/<stack>` locally, `${SERVER_PATH}/stack` on the box):
+- HTTP credentials reach curl through `--config -` on stdin.
+- Git credentials reach git through a temporary askpass vault.
+- S3 keys are exported only inside a subshell.
+- Registry passwords use `--password-stdin`.
 
-- `compose.yaml` with no placeholder left (compose would interpolate), the project named `<PROJECT>-<STACK>`; env files `api.env postgres.env rabbitmq.env redis.env backup.env` at `0600` with every value single-quoted (literal under compose), the api env extended by `ENV_FILE` extras that never override a rendered key; `nginx/` (`nginx.conf`, `proxy.inc`, `site.inc`, `tls.inc`, `conf.d/00-http.conf`, `05-realip.conf` when a shield is trusted, `10-tls.conf`, `20-api.conf`, `30-web.conf` when the web profile is on); `postgres/{postgresql.conf,pg_hba.conf,init.sh}`; `rabbitmq/platform.conf`; `redis/redis.conf`; `systemd/` units (the stack on boot, the nightly backup timer, the renewal timer, each calling the bundle); a `releases` ledger.
-- Secrets that a container reads as a file never touch the disk: the Redis users are declared on its command line from the container's own env; the Cloudflare token reaches certbot as a compose secret sourced from the environment that `compose_cmd` exports.
+Writes are atomic, through a staging file and `mv`. A failed producer leaves the destination untouched. All temporary files live in a per-run session directory that is removed on exit.
 
-Topology laws (pinned by `tests/stack.sh` and `tests/render.sh`):
+## Configuration
 
-- Every container: `restart: unless-stopped`, `no-new-privileges`, `cap_drop ALL`, rotated json logs, `read_only: true` with tmpfs where it must write, its own uid; `deploy.resources.limits` from knobs.
-- Networks: `edge` (nginx ↔ api ↔ web, egress) and `data` (`internal: true`: api/worker/scheduler ↔ postgres/rabbitmq/redis); no data port is ever published.
-- Profiles: `web` (one container per spec in `WEB_SPECS`), `worker` (`WORKER_REPLICAS > 0`, then the http process runs no workers), `scheduler` (then the http process runs no schedule), `ops` (backup sidecar and certbot: never started by themselves). Worker and scheduler depend on a healthy api (a migrated schema, no volume race).
-- nginx (unprivileged image, 8080/8443 inside, `HTTP_BIND`/`HTTPS_BIND` outside, tcp + udp): `server_tokens off`; lazy upstream resolution (`server api:8000 resolve` + a short resolver ttl) so a rolling api never breaks the edge; `limit_req` zones per client for api, auth and web with `429`; `limit_conn`; an edge cache for `/assets/` and `/storage/`; `location = /ws` upgrade with a long timeout; dotfiles denied; `X-Forwarded-For` set from the peer (never appended); the default http server serves the ACME webroot and redirects (tls) or drops (`444`); the default tls server rejects unknown names before the handshake; `tls.inc`: TLS 1.2 + 1.3, AEAD ciphers only, `X25519MLKEM768` first, tickets off, early data off, HSTS preload, `Alt-Svc h3`.
-- PostgreSQL 18 (uid 999, data under `/var/lib/postgresql`): tuned from `PG_MEMORY_MB` (`pg tune` prints it), scram only, `pg_hba`: `postgres` over the socket by peer and never over the network, the app role from the stack network only, everything else rejected; `init.sh` creates the app role `LOGIN NOSUPERUSER NOCREATEROLE NOBYPASSRLS CREATEDB`, the database owned by it with `REVOKE CONNECT FROM PUBLIC`, trusted extensions in the app database and `pg_stat_statements` in the maintenance database (a dump restored by the app role cannot recreate a superuser-only extension); `io_method = worker`, `wal_compression = zstd`, `jit = off`, idle-in-transaction and statement timeouts, slow statement logging.
-- RabbitMQ 4.2 (`loopback_users = none`, quorum queues by default, memory watermark and disk limit, user/pass/vhost from env) and Redis 8 (`save ""`, no volume, `allkeys-lru`, the default user disabled, an ACL-scoped app user, `REDISCLI_AUTH` feeding the healthcheck).
-- Health probes with `start_interval` so a roll completes in seconds; the api image's own `HEALTHCHECK` carries them.
+Resolution order: `.env.example` defaults, then the env file(s), then the process environment, then `-e KEY=VALUE`. Explicit CLI input wins, the order Docker Compose and Terraform document. File selection works as follows:
 
-## The release line
+- Development picks `.env.local`, otherwise `.env`.
+- A release bundle picks `.env.production` or `.env.pod`, otherwise `.env`. Both production files present is an error.
+- `--config FILE` repeated replaces the selection, in order.
 
-`ci release`:
+Unknown keys fail the whole load atomically. Values are data, never sourced or evaluated. Multiline values, quotes, `$` and backslashes round-trip.
 
-1. `ci preflight`: `secrets check` (required keys: project, domain, repository, token, ssh host, every data password, `AUTH_SECRET`; plus `SSL_EMAIL` with TLS, the Cloudflare token with managed names or dns-01, the S3 keys with S3 backups or S3 files; one way onto the box among `SSH_PRIVATE_KEY`, `SSH_KEY`, `SSH_PASSWORD`).
-2. `ci build`: the api image (`docker/Dockerfile --target app`), its backup sidecar (`--target backup`), one web image per spec (`docker/Dockerfile.web --target runtime --build-arg SPEC=<spec> SPEC_API_URL=<api origin>`), all tagged with the git sha under `<REGISTRY>/<repository>/{api,web}`.
-3. `ci prove`: the api imports with every runtime package, storage and assets in place; the sidecar carries `pg_dump`, `aws` and the script; each web image carries its compiled spec and build.
-4. `ci push` (immutable tags already in the registry are reused), `ci scan` (trivy, fixable CRITICAL blocks unless `CVE_ALLOW=true`).
-5. `server ensure`: a box that already runs the stack gets `refresh` (push + `compose deploy` + verify); a fresh box gets `deploy` (push + `server bootstrap`: `prepare` → `ci login` → `dns ensure` → `edge prepare` → `compose deploy` → `server units` → `server verify`).
-6. `ci deployed`: `curl --resolve <api host>:<port>:<box> …/health` until `data.release` equals the tag, independent of DNS propagation.
+`ENV_MODE` is fixed by the build: release means production. `--environment` and `--target` choose `DEPLOY_ENV` and `SSH_HOST` independently. Derived values:
 
-`compose roll <service>`: start the new containers beside the old (`up --no-deps --no-recreate --scale`), wait until every new one is healthy, retire the old, normalize the scale; verified with zero failed requests during a roll. `compose rollback` redeploys the previous recorded release.
+- `STACK`, plus every `Bash.toml` image as `IMAGE_*` and every `[<stack>]` constant upper-cased. A collision with the schema is an error.
+- `COMPOSE_PROJECT`, and `STATE_ROOT=<project root>/<paths.cache>/<project>-<env>`.
+- `WEB_ENABLED`, `API_URL` and `APP_ORIGINS`, with default ports omitted.
 
-## Tests
+The environment controls replicas, strategy, domains, health paths, secrets and integrations. Engineering constants live in `Bash.toml [native]`: ports, balance per service type, timeouts, warmup, drain, retention, memory, CPU and connection limits.
 
-`tests/{cli,config,payload,render,secret,stack,app,release,laws}.sh`, run one function per process inside the dev bundle: the module list, config precedence and neutral defaults, the ACME directory per stack, the payload (extract once, verify, refuse tampering, keep modes), a full render per stack with every service wired (encoded broker and cache urls, origins, profiles, worker and schedule switches), the edge in both tls states, the limits and the honest client address, the web and wildcard knobs, `docker compose config` and a real `nginx -t` against the rendered edge, the app env and the extras, refused quotes and placeholders, the required-secrets growth, the server env without the way in, the topology laws, the data service settings, the backup script, the image users, the postgres memory derivation, the roll order, every chain verb existing, the templates and loader laws, url encoding and origins. A new knob, template or verb lands with its assertion in the matching file.
+Validation reports every invalid key at once. The rules:
 
-## How to add
+- Ports, counts and paths must be well formed.
+- Images, `API_IMAGE` and every `WEB_IMAGES` entry must be pinned by digest. Host names follow RFC 1123.
+- Web specs, hosts and replica maps must agree.
+- `DB_USER` must not be `postgres`. Production requires TLS. `HTTP3_ENABLED=true` requires `TLS_ENABLED=true`, the only HTTP/3 rule.
+- A Cloudflare record managed with `CLOUDFLARE_PROXIED=true` while HTTP/3 is on warns and never blocks.
+- Deploys require the application secrets: passwords of at least 16 characters and `AUTH_SECRET` of at least 32.
 
-- **A knob**: `.env.example` (with a neutral default), read it in a script or a template, derive from it in `config_derive` when other keys follow, assert it in a test; the examples law refuses an unread key.
-- **A secret**: `.secret.example`, `secrets_required` when a feature makes it mandatory, consumed through `secret_get`/`secret_require`, never printed; `config_render` carries it to the box unless it is a local or ssh key.
-- **A template**: under `src/template/<area>/`, placeholders as `${KEY}` only for keys the config defines (nginx's own variables stay `$var`), listed in `compose_templates`, rendered in `compose_render` (`compose_file` for config, `compose_secret` for `0600`, `compose_copy` for scripts that carry their own `${}`), asserted in `tests/render.sh` or `tests/stack.sh`.
-- **A module**: `src/module/<name>.sh` with its `##` docs, verbs that forward from off-box, tests in a new flat file, a row in the table above.
-- **A service**: the compose template (hardened like its neighbors, on the right network, with a health probe and limits), its config template, its env file, its knobs, `compose deploy` ordering, the topology test, and the audit that proves it alive.
+## Native stack
 
-## Local verification
+Projects and boundaries:
 
-A lab on a developer machine: a config with `SSH_HOST=` (empty, so every verb acts locally), `TLS_ENABLED=false`, `WEB_ENABLED=false` or a built web image, high `HTTP_PORT`/`HTTPS_PORT` bound to `127.0.0.1`, `IMAGE_API` pointing at a locally built image, `IMAGE_TAG_OVERRIDE`, probe secrets and `COMPOSE_DIR` under a scratch folder; then `compose render`, `compose config`, `compose up`, the probes through nginx with a `Host` header (`/health`, `/v1/hello`, `/assets/…`, `/robots.txt`, `/ws`, an unknown host, a traversal, the auth limit), `app run status`, `backup now|list|fetch|restore`, `pg size|slow`, `compose roll api` under a request loop, `audit services`, and `compose down` (every profile) when done. Every claim about the platform in a report comes from such a run or from a real box.
+- `<project>-data`: PostgreSQL, RabbitMQ and Redis on an internal network, guarded by a fingerprint. Changed data settings need a planned migration.
+- `<project>-edge`: HAProxy. The edge and control plane are never recreated by an application deploy.
+- `<project>-<release>`: API, worker, scheduler and web specs.
+- `<project>-control`: Portainer.
+
+Networks and volumes carry an `io.infra.owner` label and are refused when another owner holds the name. Every container runs non-root (data services as uid 999), read-only, with `cap_drop: [ALL]`, `no-new-privileges`, pid and memory limits, `nofile 65536` where sockets matter, and local log rotation. No scalable service has `container_name` or a host port.
+
+The release Compose files interpolate `${API_REPLICAS}`, `${WORKER_REPLICAS}`, `${WEB_<SPEC>_REPLICAS}`, `${DEPLOY_SLOT}` and `${RELEASE_ROOT}` at run time. One rendered release therefore serves native Compose and Portainer, any slot and any replica count, and its snapshot (`release.env`) changes only when application inputs change.
+
+### Edge
+
+HAProxy 3.4.7 LTS (AWS-LC, QUIC) terminates TLS 1.2/1.3 with Mozilla intermediate ciphers, `X25519MLKEM768:X25519:P-256:P-384` curves, no session tickets and strict SNI.
+
+- **HTTP/1.1 and HTTP/2:** run on TCP 443 with ALPN `h2,http/1.1`.
+- **HTTP/3:** with `HTTP3_ENABLED=true` (the default), `bind quic4@:8443 … ssl-min-ver TLSv1.3 alpn h3` on the frontend only, `Alt-Svc h3=":<port>"; ma=86400`, and UDP published on the same port. Clients fall back to TCP. Backends stay HTTP/1.1, and 0-RTT is never enabled.
+- **Security behavior:** Host allowlist (404 otherwise), 308 HTTP to HTTPS, HSTS two years, overwritten `X-Forwarded-For`, a UUIDv7 `X-Request-ID`, `nosniff`, an `X-Release` header and no `Server` header, set through `http-after-response` so generated responses carry them too.
+- **Logs:** JSON log lines record the path without the query string (`%HP`).
+- **Discovery:** each service gets `server-template replica 1-32 <service>-<slot>:<port>` through the Docker resolver.
+- **Health:** active `GET <path>` checks expect 200 for the API and 200-399 for web front ends. Settings are `inter 2s fall 3 rise 2 slowstart 10s`.
+- **Never routing to unready replicas:** `init-state fully-down` keeps a discovered replica out until it passes `rise` checks.
+- **Failure handling:** `observe layer7 error-limit 10 on-error mark-down` is the passive circuit. `maxconn`/`maxqueue` per server provide fail-fast back-pressure. `retry-on conn-failure empty-response` with `option redispatch 1` and `timeout connect 1s` handles retries on the local bridge.
+- **Timeouts:** `tunnel 1h` for WebSockets, `client-fin` and `server-fin`, and `hard-stop-after 1h` with `expose-fd listeners` for seamless reloads.
+- **Admin surfaces:** the Runtime API listens on 127.0.0.1:9999 inside the container only. Prometheus `/metrics` and `/live` sit on :9090 on the apps network, and on host loopback when `METRICS_ENABLED=true`.
+
+The live map `active.map` selects `slot:release`, switched atomically through the Runtime API and persisted on disk. A candidate frontend (8081/8444, header `X-Slot`) reaches the inactive slot from the apps network only.
+
+### Deploy, rollback and draining
+
+`deploy` validates, locks `STATE_ROOT/lock` and records every phase in `phase` and `audit.log`. The sequence:
+
+1. Preflight edge drift; a changed edge needs `edge apply` first.
+2. Retire the inactive slot, but only after `RETENTION_SECONDS` since the active release went live and only when HAProxy reports zero sessions on it within `DRAIN_TIMEOUT`.
+3. Render or verify the immutable release.
+4. Pull digest-pinned images, check memory and disk capacity, then ensure networks, volumes and data.
+5. Migrate when `MIGRATION_POLICY=expand`. An interrupted migration refuses to rerun.
+6. Start the candidate front, wait for healthy containers with the right image, then pass HAProxy readiness and an HTTPS probe through the candidate frontend.
+7. Warm up and probe again.
+8. Switch the map, move worker and scheduler, and verify the public release header.
+
+Any failure restores the origin slot and background services and records `rejected`. An unrecoverable restore records `recovery-required` and keeps the pending state.
+
+`manual` stages without switching until `deploy --force`. Redeploying the current release is idempotent. `rollback` rejects a pending candidate, or switches back to the retained previous release after checking its slot was not reused. `scale` drains replicas above the target in HAProxy, waits for idle, then lets Compose remove them. Data services and the scheduler never scale. `recover --force` removes only a dead-owner lock. Long-lived WebSockets stay on the old slot after a switch, and retirement refuses while they live. Schema rollback is never attempted, so application rollback needs backward-compatible expansion migrations.
+
+### GitOps and control plane
+
+`export` writes a secret-free `application.yaml` with variables kept and no host path, plus `desired.env` (`RELEASE`, `API_IMAGE`, `WEB_IMAGES`, `MIGRATION_POLICY`, `COMPOSE_SHA256`, `RELEASE_REF`).
+
+`reconcile` reads the desired branch through the askpass vault, checks out the protected `refs/tags/release-*` tag, and requires the tagged desired state to match the branch and the Compose checksum. It then creates the Portainer Git stack with the replica and slot variables and verifies `GitConfig.ConfigHash` equals that commit before the gates and the switch. `watch` repeats it; a `timer` can too. Portainer auto-update and webhooks stay off, because a Compose update alone is no blue/green.
+
+`portainer install` runs CE 2.45.2 on loopback 9443 with `-H unix:///var/run/docker.sock`, so local environment 1 exists. It also:
+
+- mints a private CA and a `localhost`/`127.0.0.1` server certificate, then deletes the CA key;
+- feeds the admin password and the encryption key as files, and refuses a changed key;
+- creates an API key into `control/secrets/api-key`.
+
+Later commands fall back to that CA and key when `PORTAINER_CA`/`PORTAINER_TOKEN` are empty. `portainer registry` registers the pull credential (GHCR as custom type 3, Docker Hub type 6). The control plane holds the Docker socket and is a host administrator; reach it through SSH forwarding only.
+
+## Runbook
+
+1. Provision Docker 29.9.1 and Compose 5.6.0 (`docker install` covers Ubuntu 24.04 amd64 from checksummed packages and refuses to replace a runtime), plus Bash 5, curl, git, jq and openssl.
+2. Write the private env file: `PROJECT`, `RELEASE`, digest-pinned `API_IMAGE`/`WEB_IMAGES`, `API_HOST`/`WEB_HOSTS`, `BIND_ADDRESS`, TLS settings, application secrets, `REGISTRY_*` pull credentials, `GITOPS_*` read credentials and the `PORTAINER_ADMIN_PASSWORD`/`PORTAINER_SECRET_KEY` pair.
+3. From a checkout run `--config FILE server stage`, which uploads the release bundle and `.env.production` with modes 700 and 600. Then use `server run -- COMMAND`; remote flags follow `--`.
+4. Run `registry login`, `portainer install` and `portainer registry`. For TLS, DNS must point at the host before HTTP-01 (`tls issue`); alternatively use the Cloudflare DNS challenge or `tls import CERT KEY`. Open TCP 80/443 and UDP 443 in the cloud firewall; `firewall ports` lists them and `firewall apply --force` updates an active ufw/firewalld.
+5. Run `export DIR`, commit `deploy/application.yaml` and `deploy/desired.env`, and push a protected `release-<RELEASE>` tag. Then `reconcile`, or `deploy` with `DEPLOY_DRIVER=compose`.
+6. Operate with `status`, `scale`, `rollback`, `edge apply`, `backup`, `restore FILE NEWDB`, `monitor`, `timer install reconcile|backup|monitor|renew SECONDS` and `recover --force`.
+
+Images are built with `image build api|web TAG [SPEC]` and published by the manual Infra workflow (`publish=true` on main) to GHCR or Docker Hub.
+
+## Verification
+
+The gate is `bash src/main.sh test --check`: bash syntax, ShellCheck at the pinned version over the bundle, the laws above, and 44 isolated tests. The tests cover:
+
+- literal data, refusals and grammars;
+- precedence, schema and validation;
+- redaction in every output and secrets kept out of argv for SSH, curl, git, AWS and Docker;
+- atomic failures, locks and state;
+- bundle determinism and release isolation;
+- render immutability, edge protocols and stats parsing;
+- GitOps payloads, export relocation and the control-plane CA and API key.
+
+CI runs the gate on Ubuntu and macOS, then builds and scans the images.
+
+`benches/results.json` records the 2026-10-19 lab on a 4 vCPU rootless-Docker host. That covers HTTP/3 through the published UDP port, the HTTP/2 vs HTTP/3 measurements, scale, crash and hang under load, blue/green and rollback under load, a rejected candidate, web specs, the guards (retention, live-session draining, locks, stale lock, edge drift), backup and restore of 50,000 rows, timers and the control plane. It also lists what stays unverified: GHCR push and private-Git reconcile with the supplied token, public UDP through a cloud firewall, ACME, Cloudflare, S3 and macOS host operations. Claim a capability only after observing its success and failure paths.
+
+References: [HAProxy 3.4](https://docs.haproxy.org/3.4/configuration.html), [Portainer CLI](https://docs.portainer.io/advanced/cli), [Portainer Git stacks](https://docs.portainer.io/user/docker/stacks/add), [Compose interpolation](https://docs.docker.com/compose/how-tos/environment-variables/variable-interpolation/), [Docker packet filtering](https://docs.docker.com/engine/network/packet-filtering-firewalls/).

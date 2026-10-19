@@ -6,7 +6,7 @@ The hand style is the format. No code formatter runs on Python, TypeScript or Ba
 
 - Zero comments, zero docstrings, zero `noqa`/`eslint-disable`/`shellcheck disable` inline knobs in source. A line that needs a comment gets a better name or a smaller shape. Lint exceptions live in the manifest, per file, with a reason in the commit.
 - Very simple unified names: short, lowercase, one word where one word says it (`users`, `greet`, `settle`, `roll`). A name says what, never how. Private members `_name`; a dispatcher helper `_name_`.
-- One blank line is the only vertical separator; never two consecutive blank lines. A blank line after every definition line whose body has more than one statement, and before every closing of such a body in Bash and TypeScript.
+- One blank line is the only vertical separator; never two consecutive blank lines. In Python a blank line follows every definition line with a body; in Bash and TypeScript a blank line follows every definition line whose body has more than one statement and precedes the closing of such a body.
 - Column law: Python 120, TypeScript 150, Bash as wide as a readable line (shellcheck decides correctness, not width).
 - File law: 100–300 lines is the home of a file; above 400 only with a reason the reviewer accepts. A folder of flat files beats a deep tree.
 - Aligned groups: consecutive assignments align on `=`, consecutive dict/object entries align their values, consecutive imports group by origin. Alignment is for groups of related lines, never for a single line.
@@ -75,7 +75,7 @@ class Cache:
 ```
 
 - Definition sites get a space before `(` and inside the parentheses: `def get ( self, key: str ) -> str:`; `class Hit:` has no parentheses when it inherits nothing. Calls, literals and subscripts are tight: `found = store.get(key)`, `items[0]`, `{ "a": 1 }` is written `{"a": 1}` inline and aligned with spaces when multi-line.
-- A short branch is a one-liner: `if found is None: return None`. A body of one statement stays on the `def` line's next line without a blank line; a body of more than one statement starts after a blank line.
+- A short branch is a one-liner: `if found is None: return None`. Every `def` and `class` header with a body on its own lines is followed by one blank line, even when the body is a single statement (a law test enforces it); a stub whose body sits on the header line (`def get ( self ) -> int: ...`) stays inline.
 - A long signature puts its parameters on 8-space continuation lines and the closing `) -> T:` on its own line.
 - Constants are module-level upper case; module-level type aliases use `type X = …`; generics use the 3.12+ syntax.
 - A class is the namespace; a package's `__init__.py` does `from .x import X` then aligned lowercase singletons and an explicit `__all__`; constructors do no I/O (I/O happens in the lifespan).
@@ -138,49 +138,31 @@ export function headersFor ( path: string, status: number, security: Record<stri
 
 ## Bash
 
+- Bash 5+ with four-space indentation. Use lowercase, descriptive function names with hyphen-separated words; put a space before the empty parentheses and opening brace.
+- Leave one blank line after a function opens and before it closes. Keep related definitions together and separate logical groups with one blank line; never consecutive empty lines.
+- Declare initialized locals first. Preserve valid Bash assignment syntax; align short decision tables only where it improves reading.
+- Prefer early guards and compact branches for simple conditions; expand longer conditionals, cases and loops. Use Bash conditional/arithmetic forms and preserve argument vectors with quoted expansions.
+- Set strict error, unset-variable and pipeline handling at the entrypoint. Propagate failures explicitly and distinguish deliberate false predicates from command failures.
+- No explanatory source comments, purpose/help comments or inline ShellCheck suppressions. Shebangs are executable metadata. Env files alone allow one owner comment above each block; CLI help is structured data.
+- Data uses `out` (one literal line per argument); diagnostics use `info succ warn err`, which redact secret values. Predicates are silent. A failure prints one `err` line and returns: `[[ -n "${1:-}" ]] || { err "Value required"; return; }`. No manual status codes outside signal traps.
+- `check` enforces the layout, the layer calls (`module/<tool>.sh` calls core and `docker` only, `app/<stack>/` orchestrates), the name prefixes (`<tool>-*`, `<stack>-*`, `config-*`, `bootstrap-*`, `test-*`, `fixture-*`) and every rule of this section on sources and tests.
+- Tool metadata, versions, checksums and engineering constants belong to Bash.toml; runtime settings and secrets belong to the one env schema. No Bash formatter; checks enforce the agreed manual style.
+
 ```bash
-#!/usr/bin/env bash
+docker-network () {
 
-## the stack — one compose project carrying the edge, the api, the data services and the operations
+    local name="${1}" owner="${2}" label=""
 
-compose_cmd () {
-
-    [[ -f "${COMPOSE_DIR}/compose.yaml" ]] || die "No rendered stack at ${COMPOSE_DIR} — run: infra compose render"
-
-    COMPOSE_PROFILES="${COMPOSE_PROFILES}" compose_docker compose --project-directory "${COMPOSE_DIR}" "$@"
-
-}
-## true when the named profile is active on this stack
-compose_enabled () {
-
-    [[ ",${COMPOSE_PROFILES}," == *",${1:?Missing profile},"* ]]
-
-}
-## roll one service onto this release without downtime
-compose_roll () {
-
-    local service="${1:?Missing service}" id="" ok=0 left="${ROLL_TRIES}" count=0
-    local -a old=() fresh=()
-
-    mapfile -t old < <(compose_running "${service}")
-    count="${#old[@]}"
-
-    if (( count == 0 )); then
-
-        compose_up "${service}"
+    if docker network inspect "${name}" >/dev/null 2>&1; then
+        label="$(docker network inspect --format '{{index .Labels "io.infra.owner"}}' "${name}")" || return
+        [[ "${label}" == "${owner}" ]] || { err "Network ${name} belongs to ${label:-another owner}"; return; }
         return 0
-
     fi
 
-    step "Rolling ${service} — ${#fresh[@]} new beside ${count} old"
+    docker network create --label "io.infra.owner=${owner}" "${name}" >/dev/null || { err "Network creation failed: ${name}"; return; }
 
 }
 ```
-
-- `set -Eeuo pipefail` at the entry, `name () {` with a space, a blank line after `{` and before `}`, every `local` declared and initialized on the first lines, `[[ ]]` and `(( ))` never `[ ]`, every expansion quoted, `|| die "…"` on every call that can fail, `${VAR:?Missing VAR}` for required arguments.
-- A verb that users call is preceded by one `## doc` line; a file starts with one `## purpose` line after the shebang. No other comments.
-- No literal URL in a script: every endpoint, repository, image and version is a key in `.env.example`. No literal shellcheck knobs: severity and excludes are keys too.
-- Output through the log helpers (`info warn succ err step die`), never bare `echo` for messages; data goes to stdout, messages to stderr.
 
 ## CSS
 
@@ -195,6 +177,6 @@ compose_roll () {
 
 ## What the machine checks and what the hand checks
 
-| Checked by tools                                                                                                                                                                                                                                                                                                           | Checked by the hand and the reviewer                                                                                                                                                                                     |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| ruff (every rule), mypy strict, Biome, TypeScript strict, shellcheck, the api law tests (blank lines, comments, import direction, the core DAG, stdlib outside core, migrations without SQL, facades), the web analyzer (layers, imports, styles, 150 columns, 400 lines), the infra forge (literals, payload, shellcheck) | Spaces in definition parentheses, alignment of groups, one-liners for short branches, naming quality, file size, the shape of a module (types → constants → helpers → public), the thinness of the layers above the core |
+| Checked by tools                                                                                                                                                                                                                                                                                                             | Checked by the hand and the reviewer                                                                                                                                                                                     |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| ruff (every rule), mypy strict, Biome, TypeScript strict, shellcheck, the api law tests (blank lines, comments, import direction, the core DAG, stdlib outside core, migrations without SQL, facades), the web analyzer (layers, imports, styles, 150 columns, 400 lines), the infra bootstrap (layout, bundles, ShellCheck) | Spaces in definition parentheses, alignment of groups, one-liners for short branches, naming quality, file size, the shape of a module (types → constants → helpers → public), the thinness of the layers above the core |
