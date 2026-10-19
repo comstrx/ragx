@@ -128,3 +128,21 @@ test-render-template-failure () {
     expect-error 'Nested placeholder in API_IMAGE' template-text "${MANIFEST[paths.templates]}/native/application.yaml.tpl"
 
 }
+test-render-compose-without-secrets () {
+
+    local directory="${TMPDIR}/compose" text=""
+
+    cfg-set PROJECT shop
+    cfg-set RELEASE r1
+    cfg-set API_IMAGE "example/api@$(fixture-digest 1)"
+    cfg-set API_HOST api.shop.test
+    fixture-web
+
+    native-render-compose "${directory}"
+    expect-fail test -e "${directory}/api.env"
+    text="$(fs-read "${directory}/application.yaml")$(fs-read "${directory}/web.yaml")"
+    expect-contains "${text}" '  web-client:'
+    expect-absent "${text}" '{{'
+    expect-fail config-required
+
+}

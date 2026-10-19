@@ -150,3 +150,26 @@ test-operations-certbot () {
     expect-error 'Invalid certificate host' tls-issue 'bad host'
 
 }
+test-operations-retire-without-edge () {
+
+    local root=""
+
+    native-compose-app () { printf '%s\n' "$*" >> "${TMPDIR}/compose.log"; }
+    native-edge-alive () { [[ -f "${TMPDIR}/edge.alive" ]]; }
+
+    fixture-release
+    cfg-set DRAIN_TIMEOUT 1
+    root="${CONFIG[STATE_ROOT]}"
+    mkdir -p "${root}/releases/r1"
+    state-write "${root}" slot-blue r1
+
+    native-retire blue
+    expect-contains "$(fs-read "${TMPDIR}/compose.log")" 'r1 --profile worker --profile scheduler down'
+    expect-equal "$(state-read "${root}" slot-blue)" ''
+
+    : > "${TMPDIR}/edge.alive"
+    state-write "${root}" slot-blue r1
+    expect-error 'Slot blue still serves sessions' native-retire blue
+    expect-equal "$(state-read "${root}" slot-blue)" r1
+
+}

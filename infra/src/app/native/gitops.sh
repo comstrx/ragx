@@ -28,12 +28,18 @@ native-watch () {
 }
 native-export () {
 
-    local destination="${1:-${TOOL_ROOT}/${MANIFEST[paths.build]}/desired}" directory=""
+    local destination="${1:-${TOOL_ROOT}/${MANIFEST[paths.build]}/desired}" scratch="" status=0
 
-    directory="$(native-render)" || return
+    config-validate || return
+    cfg-require PROJECT RELEASE API_IMAGE API_HOST || return
+    scratch="$(fs-temp)" || return
 
-    gitops-export "${CONFIG[COMPOSE_PROJECT]}-${CONFIG[RELEASE]}" "${directory}" "${destination}" \
-        -f "${directory}/application.yaml" -f "${directory}/web.yaml" || return
+    native-render-compose "${scratch}" || status=$?
+    (( status != 0 )) || gitops-export "${CONFIG[COMPOSE_PROJECT]}-${CONFIG[RELEASE]}" "${scratch}" "${destination}" \
+        -f "${scratch}/application.yaml" -f "${scratch}/web.yaml" || status=$?
+
+    rm -rf -- "${scratch}"
+    (( status == 0 )) || return "${status}"
 
     succ "Desired state written to ${destination}; commit it and protect tag ${CONFIG[RELEASE_REF]}"
 

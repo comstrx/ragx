@@ -209,5 +209,26 @@
     "reading": "Without loss the protocols tie. Under loss HTTP/3 keeps its throughput and median while HTTP/2 suffers TCP head-of-line blocking: about 1.3x throughput at 1% loss and 1.7x at 3%, at roughly 15-25% more edge CPU."
   },
   "backup_s3": "GitHub Actions run 39218228393: SeaweedFS S3 gateway with enforced credentials (a wrong secret is refused); backup with BACKUP_DRIVER=s3 uploaded the dump and its checksum through the aws CLI, and the downloaded copy matched the local backup",
-  "acme_route": "GitHub Actions run 39218228393: a server with network alias acme on the apps network served /.well-known/acme-challenge/ over plain HTTP through the edge while every other path answered 308 to HTTPS"
+  "acme_route": "GitHub Actions run 39218228393: a server with network alias acme on the apps network served /.well-known/acme-challenge/ over plain HTTP through the edge while every other path answered 308 to HTTPS",
+  "production_rehearsal": {
+    "date": "2026-10-19",
+    "where": "the 4 vCPU rootless-Docker server, DEPLOY_ENV=production, release bundle staged over SSH, ports 28080/28443 because the cloud firewall and missing sudo block 80/443, public names under 8-228-211-196.sslip.io with a rehearsal CA",
+    "images": "the RagX API and the client and admin web specs built on the server from the current source with image build, pinned by digest in a loopback registry",
+    "checks": [
+      "first deploy ran the expand migration, passed readiness and switched; Docker 29.9.1 and Compose 5.6.0 matched Bash.toml",
+      "through the edge: register 201 over HTTP/2, login issued a token, /v1/auth/me 200 with it and 401 without it",
+      "the client site answered 307 (locale redirect) and the admin site 200; HTTP/3 through the published UDP port answered the API 200, the client 307 and the admin 200",
+      "the worker consumed the welcome mail queued by registration through RabbitMQ; worker and scheduler logs carried no error",
+      "backup, then monitor reported healthy",
+      "release r2 to r3 under load: 60000 of 60000 requests answered 200",
+      "rollback r3 to r2 under load: 40000 of 40000 requests answered 200"
+    ],
+    "fixed": [
+      "slot retirement checked HAProxy sessions even when no edge existed, which blocked every redeploy after a first deploy that failed before the edge started",
+      "the public probe needed hairpin NAT in production; without EXTERNAL_HEALTH_URL it now resolves the API host to the local bind address",
+      "export needed every application secret; it now renders only the Compose files",
+      "CI baked api.example.invalid into the web images; the API host and HTTPS port now come from repository variables"
+    ],
+    "left_for_the_real_host": "ports 80 and 443 with Let's Encrypt, public UDP 443 and browser access from the internet"
+  }
 }

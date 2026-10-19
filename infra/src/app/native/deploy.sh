@@ -175,7 +175,9 @@ native-retire () {
     now="$(date +%s)"
 
     (( now - demoted >= CONFIG[RETENTION_SECONDS] )) || { err "Slot ${slot} keeps ${release} for rollback for $(( CONFIG[RETENTION_SECONDS] - now + demoted ))s more"; return; }
-    run-until "${CONFIG[DRAIN_TIMEOUT]}" 2 haproxy-idle "$(native-edge-container)" "api_${slot}" || { err "Slot ${slot} still serves sessions; retry after they drain"; return; }
+    if native-edge-alive; then
+        run-until "${CONFIG[DRAIN_TIMEOUT]}" 2 haproxy-idle "$(native-edge-container)" "api_${slot}" || { err "Slot ${slot} still serves sessions; retry after they drain"; return; }
+    fi
 
     [[ ! -f "$(native-directory "${release}")/portainer-id" ]] || native-portainer-retire "${release}" || return
     native-compose-app "${release}" --profile worker --profile scheduler down -t "${CONFIG[DRAIN_TIMEOUT]}" || return

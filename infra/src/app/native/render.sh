@@ -30,7 +30,7 @@ native-render () {
 }
 native-render-files () {
 
-    local directory="${1}" templates="${MANIFEST[paths.templates]}/native" spec="" image="" body=""
+    local directory="${1}"
 
     fs-dir "${directory}" || return
     postgresql-render "${directory}" || return
@@ -38,7 +38,14 @@ native-render-files () {
     redis-render "${directory}" || return
     native-api-env "${directory}" || return
 
-    template-render "${templates}/data.yaml.tpl" "${directory}/data.yaml" || return
+    template-render "${MANIFEST[paths.templates]}/native/data.yaml.tpl" "${directory}/data.yaml" || return
+    native-render-compose "${directory}"
+
+}
+native-render-compose () {
+
+    local directory="${1}" templates="${MANIFEST[paths.templates]}/native" spec="" image="" body=""
+
     template-render "${templates}/application.yaml.tpl" "${directory}/application.yaml" || return
 
     body='services: {}'

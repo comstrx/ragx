@@ -106,7 +106,7 @@ The live map `active.map` selects `slot:release`, switched atomically through th
 5. Migrate when `MIGRATION_POLICY=expand`. An interrupted migration refuses to rerun.
 6. Start the candidate front, wait for healthy containers with the right image, then pass HAProxy readiness and an HTTPS probe through the candidate frontend.
 7. Warm up and probe again.
-8. Switch the map, move worker and scheduler, and verify the public release header.
+8. Switch the map, move worker and scheduler, and verify the release header on the public port. Without `EXTERNAL_HEALTH_URL` the probe resolves the API host to the local bind address, so it checks the real certificate and SNI without depending on hairpin NAT; set `EXTERNAL_HEALTH_URL` for a check through public DNS.
 
 Any failure restores the origin slot and background services and records `rejected`. An unrecoverable restore records `recovery-required` and keeps the pending state.
 
@@ -114,7 +114,7 @@ Any failure restores the origin slot and background services and records `reject
 
 ### GitOps and control plane
 
-`export` writes a secret-free `application.yaml` with variables kept and no host path, plus `desired.env` (`RELEASE`, `API_IMAGE`, `WEB_IMAGES`, `MIGRATION_POLICY`, `COMPOSE_SHA256`, `RELEASE_REF`).
+`export` needs no application secrets: it renders only the Compose files and writes a secret-free `application.yaml` with variables kept and no host path, plus `desired.env` (`RELEASE`, `API_IMAGE`, `WEB_IMAGES`, `MIGRATION_POLICY`, `COMPOSE_SHA256`, `RELEASE_REF`).
 
 `reconcile` reads the desired branch through the askpass vault, checks out the protected `refs/tags/release-*` tag, and requires the tagged desired state to match the branch and the Compose checksum. It then creates the Portainer Git stack with the replica and slot variables and verifies `GitConfig.ConfigHash` equals that commit before the gates and the switch. `watch` repeats it; a `timer` can too. Portainer auto-update and webhooks stay off, because a Compose update alone is no blue/green.
 

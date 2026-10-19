@@ -73,6 +73,7 @@ Every release of RagX, one section per tag, one block per part.
 - Portainer install mints a private CA (key deleted after issuance) for verified loopback TLS, registers the local environment with `-H`, and creates the API key into a mode-600 secret; the desired-state export no longer doubles the release root in `env_file`.
 - Replaced the Python benches with `benches/curl.Dockerfile` (curl 8.23.0 with ngtcp2 and nghttp3) and `benches/protocols.sh`; `benches/results.json` records the lab on a 4 vCPU rootless-Docker host and a GitHub Actions run in a private repository that proves private GHCR push and pull, Portainer GitOps from a private repository, launchd timers on macOS, S3 backup upload, the ACME challenge route, and HTTP/3 against HTTP/2 under emulated WAN loss.
 - Offline tests pin the Cloudflare create, update, IPv6 and proxied flows and the certbot HTTP-01 and DNS-01 arguments.
+- A production-mode rehearsal over SSH with the current API and web images (migrations, auth round trip, queue worker, both web specs, HTTP/3, release switch and rollback under load without a failed request) fixed three defects: slot retirement no longer waits on HAProxy when no edge exists, the public probe no longer depends on hairpin NAT, and `export` no longer needs application secrets. CI builds web images with the API host and HTTPS port from repository variables.
 - Worker and scheduler disable the image healthcheck, which probes a port only the API serves.
 
 ## v0.1.0 — 2026-10-17

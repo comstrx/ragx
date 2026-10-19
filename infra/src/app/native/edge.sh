@@ -235,11 +235,12 @@ native-probe-public () {
 
     [[ -z "${CONFIG[HEALTH_CA]}" ]] || arguments+=( --cacert "${CONFIG[HEALTH_CA]}" )
 
-    if [[ -z "${url}" && "${CONFIG[DEPLOY_ENV]}" == production ]]; then
-        url="${CONFIG[API_URL]}${CONFIG[API_READY_PATH]}"
-    elif [[ -z "${url}" ]]; then
+    if [[ -z "${url}" ]]; then
         [[ "${address}" != 0.0.0.0 ]] || address=127.0.0.1
-        cfg-true TLS_ENABLED && { scheme=https; port="${CONFIG[HTTPS_PORT]}"; }
+        if cfg-true TLS_ENABLED; then
+            scheme=https
+            port="${CONFIG[HTTPS_PORT]}"
+        fi
         url="${scheme}://${CONFIG[API_HOST]}:${port}${CONFIG[API_READY_PATH]}"
         arguments+=( --resolve "${CONFIG[API_HOST]}:${port}:${address}" )
     fi
