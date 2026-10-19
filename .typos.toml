@@ -100,5 +100,8 @@ check-file = false
 
 [default.extend-words]
 brin = "brin"
+hel = "hel"
 "JOD" = "JOD"
+juxt = "juxt"
+nd = "nd"
 "widnows" = "windows"
