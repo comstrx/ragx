@@ -20,7 +20,7 @@
     "bench": "set -e; for file in benches/*.bench.ts; do bun \"$file\"; done"
   },
   "dependencies": {
-    "lucide-static": "1.52.0",
+    "lucide-static": "1.55.0",
     "next": "16.4.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
