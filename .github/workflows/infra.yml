@@ -60,8 +60,10 @@ jobs:
           (cd target/release && shasum -a 256 -c SHA256SUMS)
           bundle=target/release/infra
           "${bundle}" --version
-          "${bundle}" help | grep -q '^Global flags'
-          "${bundle}" help restore | grep -q 'Required: replaces the live database'
+          manual="$("${bundle}" help)"
+          grep -q '^Global flags' <<< "${manual}"
+          manual="$("${bundle}" help restore)"
+          grep -q 'Required: replaces the live database' <<< "${manual}"
           if "${bundle}" deploy --list 2>/dev/null; then echo "::error::The bundle accepted a flag deploy does not take"; exit 1; fi
           printf '\nbundle sha256 %s\n' "$(bash src/main.sh checksum)" >> "${GITHUB_STEP_SUMMARY}"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
