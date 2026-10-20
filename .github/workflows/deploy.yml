@@ -1,0 +1,269 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag on main, such as v1.2.0
+        required: true
+        type: string
+      action:
+        description: deploy ships the tag; rollback returns to the retained previous release; backup dumps the database now; restore replaces it with a dump
+        type: choice
+        options: [deploy, rollback, backup, restore]
+        default: deploy
+      backup:
+        description: restore only; the dump name, empty restores the latest
+        type: string
+        default: ''
+      force:
+        description: deploy only; ship a release the server rejected before
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag on main
+        required: true
+        type: string
+    secrets:
+      ENV_FILE:
+        required: false
+      API_ENV_FILE:
+        required: false
+      WEB_ENV_FILE:
+        required: false
+      SSH_HOST:
+        required: false
+      SSH_USER:
+        required: false
+      SSH_KEY:
+        required: false
+      SSH_KNOWN_HOSTS:
+        required: false
+      DOCKERHUB_USER:
+        required: false
+      DOCKERHUB_PUSH_TOKEN:
+        required: false
+
+concurrency:
+  group: deploy-${{ inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    outputs:
+      tag: ${{ steps.plan.outputs.tag }}
+      version: ${{ steps.plan.outputs.version }}
+      action: ${{ steps.plan.outputs.action }}
+
+    steps:
+      - name: Plan
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          ACTORS: ${{ vars.DEPLOY_ACTORS || github.repository_owner }}
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          TAG: ${{ inputs.tag }}
+          ACTION: ${{ inputs.action || 'deploy' }}
+          BACKUP: ${{ inputs.backup }}
+        run: |
+          [[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "::error::${TAG} is not a semver tag"; exit 1; }
+          case "${EVENT}" in
+            workflow_dispatch) [[ "${REF}" == refs/heads/main ]] || { echo "::error::Run Deploy from main, not ${REF}"; exit 1; } ;;
+            push) [[ "${REF}" == "refs/tags/${TAG}" ]] || { echo "::error::Release ${REF} cannot deploy ${TAG}"; exit 1; } ;;
+            *) echo "::error::Deploy runs by hand or from Release, not on ${EVENT}"; exit 1 ;;
+          esac
+          for login in "${ACTOR}" "${TRIGGERING_ACTOR}"; do
+            [[ " ${ACTORS} " == *" ${login} "* ]] || { echo "::error::${login} is not allowed to deploy; the DEPLOY_ACTORS variable lists who is"; exit 1; }
+          done
+          [[ "${BACKUP}" =~ ^([A-Za-z0-9][A-Za-z0-9._-]*\.dump)?$ ]] || { echo "::error::backup must be a .dump name"; exit 1; }
+          printf 'tag=%s\nversion=%s\naction=%s\n' "${TAG}" "$(tr 'A-Z.' 'a-z-' <<< "${TAG}")" "${ACTION}" >> "${GITHUB_OUTPUT}"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ steps.plan.outputs.tag }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Tag on main
+        env:
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: git merge-base --is-ancestor HEAD origin/main || { echo "::error::${TAG} is not on main"; exit 1; }
+
+  images:
+    name: images ${{ needs.plan.outputs.tag }}
+    needs: plan
+    if: needs.plan.outputs.action == 'deploy'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: production
+
+    permissions:
+      contents: read
+      packages: write # builds, scans and pushes this deployment's images once per tag; the deploy job only reads them
+
+    outputs:
+      api: ${{ steps.images.outputs.api }}
+      web: ${{ steps.images.outputs.web }}
+
+    env:
+      REGISTRY_DRIVER: ${{ vars.REGISTRY_DRIVER || 'ghcr' }}
+      REGISTRY_NAMESPACE: ${{ vars.REGISTRY_NAMESPACE || github.repository_owner }}
+      WEB_SPECS: ${{ vars.WEB_SPECS }}
+      TAG: ${{ needs.plan.outputs.tag }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ needs.plan.outputs.tag }}
+          persist-credentials: false
+
+      - name: Address
+        id: address
+        env:
+          ENV_FILE: ${{ secrets.ENV_FILE }}
+        run: |
+          set -euo pipefail
+          infra () { bash infra/src/main.sh "$@"; }
+          [[ -n "${ENV_FILE}" ]] || { echo "::error::The ENV_FILE secret is required"; exit 1; }
+          for key in PROJECT API_HOST HTTP_PORT HTTPS_PORT TLS_ENABLED; do
+            printf '%s=%s\n' "${key,,}" "$(infra config "${key}")" >> "${GITHUB_OUTPUT}"
+          done
+
+      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.75.0
+          cache: false
+
+      - name: Build, scan and push
+        id: images
+        env:
+          PROJECT: ${{ steps.address.outputs.project }}
+          API_HOST: ${{ steps.address.outputs.api_host }}
+          HTTP_PORT: ${{ steps.address.outputs.http_port }}
+          HTTPS_PORT: ${{ steps.address.outputs.https_port }}
+          TLS_ENABLED: ${{ steps.address.outputs.tls_enabled }}
+          ACTOR: ${{ github.actor }}
+          GHCR_TOKEN: ${{ github.token }}
+          DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USER }}
+          DOCKERHUB_PUSH_TOKEN: ${{ secrets.DOCKERHUB_PUSH_TOKEN }}
+        run: |
+          set -euo pipefail
+          infra () { bash infra/src/main.sh "$@"; }
+          case "${REGISTRY_DRIVER}" in
+            ghcr) export REGISTRY_USER="${ACTOR}" REGISTRY_TOKEN="${GHCR_TOKEN}" ;;
+            dockerhub) export REGISTRY_USER="${DOCKERHUB_USER:?Docker Hub user required}" REGISTRY_TOKEN="${DOCKERHUB_PUSH_TOKEN:?Docker Hub push token required}" ;;
+            *) echo "::error::Unsupported REGISTRY_DRIVER ${REGISTRY_DRIVER}"; exit 1 ;;
+          esac
+          export REGISTRY_NAMESPACE="${REGISTRY_NAMESPACE,,}"
+          read -r -a specs <<< "${WEB_SPECS}"
+          address="$(infra config API_URL | sha256sum | cut -c1-8)"
+          trap 'infra registry logout' EXIT
+          infra registry login
+          web=""
+          for name in api "${specs[@]}"; do
+            tag="${TAG}"
+            [[ "${name}" == api ]] || tag="${TAG}-${address}"
+            reference="$(infra registry reference "${name}" "${tag}")"
+            if pinned="$(infra image remote "${reference}" 2>/dev/null)"; then
+              printf -- '- %s (reused)\n' "${pinned}" >> "${GITHUB_STEP_SUMMARY}"
+            else
+              if [[ "${name}" == api ]]; then infra image build api "${reference}"
+              else infra image build web "${reference}" "${name}"
+              fi
+              trivy image --config .trivy.yml --scanners vuln,secret,misconfig --exit-code 1 "${reference}"
+              infra registry push "${reference}"
+              pinned="$(infra image remote "${reference}")"
+              printf -- '- %s\n' "${pinned}" >> "${GITHUB_STEP_SUMMARY}"
+            fi
+            if [[ "${name}" == api ]]; then printf 'api=%s\n' "${pinned}" >> "${GITHUB_OUTPUT}"
+            else web+="${web:+,}${name}=${pinned}"
+            fi
+          done
+          printf 'web=%s\n' "${web}" >> "${GITHUB_OUTPUT}"
+
+  deploy:
+    name: ${{ needs.plan.outputs.action }} ${{ needs.plan.outputs.tag }}
+    needs: [plan, images]
+    if: always() && needs.plan.result == 'success' && (needs.images.result == 'success' || needs.images.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+
+    permissions:
+      contents: read
+      packages: read # hands the server a pull token for this run only
+
+    env:
+      REGISTRY_DRIVER: ${{ vars.REGISTRY_DRIVER || 'ghcr' }}
+      REGISTRY_NAMESPACE: ${{ vars.REGISTRY_NAMESPACE || github.repository_owner }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      ACTION: ${{ needs.plan.outputs.action }}
+      API_IMAGE: ${{ needs.images.outputs.api }}
+      WEB_IMAGES: ${{ needs.images.outputs.web }}
+      BACKUP: ${{ inputs.backup }}
+      FORCE: ${{ inputs.force || false }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ needs.plan.outputs.tag }}
+          persist-credentials: false
+
+      - name: Run
+        env:
+          ENV_FILE: ${{ secrets.ENV_FILE }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          API_ENV_FILE: ${{ secrets.API_ENV_FILE }}
+          WEB_ENV_FILE: ${{ secrets.WEB_ENV_FILE }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          infra () { bash infra/src/main.sh "$@"; }
+          [[ -n "${ENV_FILE}" ]] || { echo "::error::The ENV_FILE secret is required"; exit 1; }
+          export REGISTRY_NAMESPACE="${REGISTRY_NAMESPACE,,}"
+          if [[ -n "$(infra config GITOPS_URL)" ]]; then
+            [[ "${ACTION}" == deploy ]] || { echo "::error::With GitOps the server reconciles the desired state; deploy the previous tag to switch back"; exit 1; }
+            GITOPS_TOKEN="${GITHUB_TOKEN}" GITOPS_USER=x-access-token infra publish
+            exit 0
+          fi
+          [[ -n "${SSH_HOST}" && -n "${SSH_USER}" && -n "${SSH_KEY}" && -n "${SSH_KNOWN_HOSTS}" ]] || { echo "::error::SSH_HOST, SSH_USER, SSH_KEY and SSH_KNOWN_HOSTS secrets are required"; exit 1; }
+          case "${ACTION}" in
+            rollback) infra rollback ;;
+            backup) infra backup ;;
+            restore) infra restore ${BACKUP:+"${BACKUP}"} --force ;;
+            deploy)
+              flags=()
+              [[ "${FORCE}" != true ]] || flags=(--force)
+              infra deploy "${flags[@]}"
+            ;;
+          esac
+
+      - name: Notify
+        if: failure()
+        env:
+          ENV_FILE: ${{ secrets.ENV_FILE }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash infra/src/main.sh notify "${ACTION} ${TAG} failed; see ${RUN}" || echo "::warning::The failure notification did not reach every channel"

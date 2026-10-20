@@ -61,3 +61,14 @@ jobs:
 
       - name: Build
         run: bun run build
+
+      - name: Audit
+        run: bun run audit
+
+      - name: Build the indexed site
+        env:
+          NEXT_PUBLIC_SPEC: client
+        run: bun run build
+
+      - name: Audit the indexed site
+        run: bun run audit

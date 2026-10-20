@@ -166,7 +166,7 @@ docker-network () {
 
 ## CSS
 
-- `styles/tokens.css` is the only file with raw values; every other stylesheet uses tokens. One class per element, variants and states through `data-*` attributes, no utility frameworks, no inline styles.
+- `styles/tokens.css` is the only file with raw values; every other stylesheet uses tokens. Tailwind v4 utilities appear only inside `elements/` and `icons/`, built from `std/style` `variants` over the tokens (no arbitrary raw values, no opacity modifiers); states go through `data-*` and `aria-*` variants; no inline styles except custom properties a layout computes (`--cell-size`).
 - Light and dark are separate art directions sharing the tokens' names; RTL and LTR, reduced motion and keyboard focus are designed from the start.
 
 ## YAML, TOML, JSON, Markdown

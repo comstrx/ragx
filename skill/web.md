@@ -1,110 +1,123 @@
 # Web
 
-One Next.js engine on Bun under `web/`, spec-driven: a TypeScript standard library in `src/lib/std`, a spec DSL in `src/lib/spec`, a rendering tree in `src/app`, and declarative specs under `specs/` (`super` and `admin` panels, `client` site). Gate: `bun run check`, `bun run typecheck`, `bun test`, `bun run build` (`bun run gate` chains them).
+One Next.js engine on Bun under `web/`, spec-driven: a TypeScript standard library in `src/lib/std`, a spec DSL in `src/lib/spec`, a rendering tree in `src/app`, and declarative specs under `specs/` (`super` and `admin` panels, `client` site). Gate: `bun run check`, `bun run typecheck`, `bun test`, `bun run build`, `bun run audit` (`bun run gate` chains them).
 
 ## Layout and layering
 
 ```
 web/
 ├── src/
-│   ├── lib/std/      the engine: api array base cache client cookie device error file log net parse screen socket spec state storage string tooling translate validate world
-│   ├── lib/providers/  the only other place that imports third parties
-│   ├── api/core/     reasons and shared api facts        api/features/   feature endpoints (the catalogue)
-│   ├── types/        shared types
-│   ├── lib/spec/     the spec DSL and the validator (surface, config, runtime, browser, feature)
-│   ├── lib/seo/      pure metadata, structured data, robots, sitemap over a Site facts object
-│   ├── lib/observe/  observability
-│   ├── stores/       zustand stores          hooks/   shared hooks
-│   ├── elements/     the only files with HTML: document shell block heading button notice jsonld
-│   ├── icons/ styles/  tokens.css (raw values) globals.css elements.css (tokens only)
-│   ├── components/   one file each, composed of elements
-│   ├── features/<name>/{feature.ts, index.tsx, components/, hooks/}
-│   └── app/(root), app/(web)/[locale]/{layout.tsx, [[...path]]/{page.tsx, screen.tsx, blocks.tsx, mount.ts, warm.ts}}
+│   ├── lib/std/        the engine: api array base cache client cookie device error file interact log net parse screen socket spec state storage string style tooling translate validate world
+│   ├── lib/providers/  the only other place that imports third parties (device, storage)
+│   ├── api/core/       reasons and shared api facts        api/features/<name>.ts   one contract per feature
+│   ├── types/          shared types (spec.d.ts, view types shared by hooks and components)
+│   ├── lib/spec/       the spec DSL, the validator, routing facts (surface config runtime browser feature routes languages theme)
+│   ├── lib/seo/        pure metadata, structured data, robots, sitemap over a Site facts object
+│   ├── lib/observe/    observability
+│   ├── stores/  hooks/  elements/  icons/  styles/  components/  features/<name>/{index.tsx, components/, hooks/}
+│   ├── app/            [locale]/{layout, providers, error, not-found, [[...path]]/{page, screen, blocks, mount, warm, gate, boundary, client-only, missing}}  manifest robots sitemap
+│   └── proxy.server.ts the request door of the Next server (dev and standalone), never part of an export
 ├── specs/<spec>/{config/{index,contents,contracts,features,settings,themes}.ts, schema/{index,<screen>}.ts, brand/{images,fonts,videos,audios,messages}}
-├── tools/{core,compile,theme,security,serve}.ts
+├── tools/{core,compile,boot,theme,security,serve,audit}.ts
 ├── tests/  flat *.test.ts(x)      benches/  flat *.bench.ts
 ├── messages/  core dictionaries per locale
-└── package.json  biome.json  bunfig.toml  tsconfig.json  next.config.ts
+└── package.json  biome.json  bunfig.toml  tsconfig.json  next.config.ts  postcss.config.mjs
 ```
 
 Layer order, enforced by the analyzer in `tools/core.ts` (`bun run check`), lowest first:
 
 ```
 lib/std → lib/providers · api/core · types · specs → api/features → lib/spec → lib/seo → lib/observe → stores
-        → hooks · features/*/hooks → elements · icons · styles → components · features/*/components → features → app
+        → hooks · features/*/hooks → elements · icons · styles → components · features/*/components → features → app · proxy.server.ts
 ```
 
-- A layer imports only lower layers. Only `lib/providers/` and `lib/std/` import third parties; `react`, `next` and `server-only` are foundation and allowed everywhere they belong.
-- HTML lives only in `elements/`; a component is one file over elements; a feature is `features/<name>/{feature.ts, index.tsx, components/, hooks/}`; `@spec/*` virtual modules have one owner each (`lib/spec/config.ts` owns `routing settings build`; `runtime.ts` owns `config schema messages`; `browser.ts` owns `browser`; the layout owns `theme.css`; `mount.ts` owns `mount`; `warm.ts` owns `preload`; `blocks.tsx` owns `registry`).
-- Specs import the door as `@/lib/spec/surface`; relative reach into `src/` is refused. Spec strings avoid branching words (`for`, `if`, `=>`) because the analyzer scans compiled literals.
-- Styles law: `styles/tokens.css` is the only file with raw values; `globals.css` and `elements.css` use tokens only; one class per element; states through `data-*`; no Tailwind, no inline styles.
-- Line law 150 columns over `src tools tests benches specs`; Biome: no `any`, no `!`, no unused, no console, `import type`, `useConst`, a11y errors on, files ≤ 400 lines; the formatter is off (the hand style formats).
+- A layer imports only lower layers. Only `lib/providers/` and `lib/std/` import third parties; `react`, `next` and `server-only` are foundation.
+- **Elements** (`elements/`, flat, one file each) are the only files with HTML and classes. An element imports `icons/`, `lib/std/`, `lib/providers/` and `types/` only, never another element; its props are semantic (`size`, `tone`, `width`, `level`, states) and refuse `className`, `style` and HTML attribute bags (`ComponentProps`, `*Attributes`). It owns its interaction mechanics (focus, keyboard, overflow, dismissal) through `lib/std/interact`, never business or data fetching. Composition happens by slots the caller fills (`Notice` takes its `action`).
+- **Icons** (`icons/`) import `lib/std/` and `types/` only.
+- **Components** (`components/`, flat, one file each) compose elements, icons and other components (no cycles) and may import exactly one hook, their own `hooks/use-<component>.ts`; no HTML, no classes, no other import. Shared view-model types live in `types/`, so hooks and components never reach upward for them.
+- **Features** are `features/<name>/{index.tsx, components/, hooks/}`: the entry imports its own components only and declares `"use client"` or `server-only` as its contract says; feature components build on components, never elements; logic lives in `features/<name>/hooks`. A feature folder needs `api/features/<name>.ts`, and a contract that declares a view needs `features/<name>/index.tsx`.
+- **Hooks** rest on `lib/std`: a reusable mechanism sinks into the std, a business decision stays in the hook.
+- `@spec/*` virtual modules have one owner each (`lib/spec/config.ts`: `routing settings`; `runtime.ts`: `config schema messages`; `browser.ts`: `browser`; the layout: `theme.css`; `mount.ts`: `mount`; `warm.ts`: `preload`; `blocks.tsx`: `registry`). Specs import the door `@/lib/spec/surface` only, and spec strings avoid branching words because the analyzer scans compiled literals.
+- Line law 150 columns over `src tools tests benches specs`; Biome: no `any`, no `!`, no unused, no console, no shadowed globals, `import type`, `useConst`, a11y errors on, files ≤ 400 lines; the formatter is off.
+
+## Feature contracts
+
+`api/features/<name>.ts` is the feature's whole contract, in two separate sections:
+
+```ts
+export default contract({
+    transport: feature({ cache: 30 }, { read: get("/hello", { name }, greeting) }),
+    view: { owner: "client", options: { fallback: "", live: "", saved: "", loading: "", failed: "", offline: "", cached: "" }, ports: { greeting: { kind: "one", fields: ["message"] } } },
+});
+```
+
+- `transport` is the backend contract (endpoints, inputs, response shapes, permissions); `view` is presentation (owner, literal option defaults, ports, access, signals). Changing how a feature looks never touches its transport, and the reverse.
+- `api/features/index.ts` gathers `contracts` and derives `endpoints = transportsOf(contracts)` (the catalogue) and `views = viewsOf(contracts)` (the manifests the tooling validates with `viewFacts`). A transport-only contract (`site: document("content")`) has no feature folder.
+- A feature that reads names its `loading failed offline cached` texts (and `empty` when it lists); a query-, signal- or live-bound port needs a client-owned feature, because server pages are static.
 
 ## The std library
 
-`lib/std` is the web's core: every protocol, provider and browser/runtime detail lives there, the layers above compose its verbs.
+`lib/std` is the web's core: every protocol, provider and browser/runtime detail lives there; the layers above compose its verbs.
 
-| Member                                                                                                | Owns                                                                                                                                                                                                             |
-| ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `api`                                                                                                 | the typed client over the api envelope: connections, contracts, execution and encoding options, in-flight read dedupe by url + tenant + auth + language + currency, `browserConfig`, `connectionOrigins`         |
-| `client` `net` `socket`                                                                               | fetch, retries, timeouts, content security policy helpers, websocket frames                                                                                                                                      |
-| `cache` `storage` `cookie` `state`                                                                    | memory and persistent caches, browser storage adapters, zustand-backed state                                                                                                                                     |
-| `spec`                                                                                                | the generic surface compiler: `compileSurface`, `surfaceValidator`, `backendOf`, `transportIssues` (cleartext production urls need `options.insecure`), `mergeTheme`, settings resources                         |
-| `tooling`                                                                                             | `createTools` (the spec loader, architecture rules, messages, assets, feature facts, fonts, icons, build), `deployedContracts` (the `SPEC_API_URL` override)                                                     |
-| `translate` `validate` `parse` `string` `array` `base` `error` `log` `file` `device` `screen` `world` | i18n dictionaries and plural rules, zod adapters, parsers, verb sets, the unified error, structured logs, files, device facts, screen helpers, world data (countries, currencies, languages, emojis, icon names) |
+| Member                                                                           | Owns                                                                                                                                                                                                                            |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `api`                                                                            | the typed client over the api envelope: connections, contracts, execution and encoding options, in-flight read dedupe by url + tenant + auth + language + currency, `browserConfig`, `connectionOrigins`                        |
+| `client` `net` `socket`                                                          | fetch, retries, timeouts, content security policy helpers, websocket frames                                                                                                                                                     |
+| `cache` `storage` `cookie` `state`                                               | memory and persistent caches, web storage and cookie jars (`jarStore`, `preferenceNames`, `preferenceJar`), zustand-backed stores with whole-document or per-field (`persist.fields`) persistence that writes only what changed |
+| `spec`                                                                           | the generic surface compiler (`compileSurface`, `surfaceValidator`, `backendOf`, `transportIssues`, `mergeTheme`) and feature contracts (`contract transportsOf viewsOf`)                                                       |
+| `translate`                                                                      | dictionaries and plural rules, and the url contract (`Routing{localized}`, `splitLocale prefixed hrefOf chosenLocale routable routeOf switched`) shared by the proxy and the release server                                     |
+| `screen`                                                                         | the runtime (`defineRuntime`, `matchScreen`, `menuOf`, `linkedFeatures`, boundaries) and document verbs (`titleOf titled held isCurrent themeOn separator`)                                                                     |
+| `style`                                                                          | `variants(base, axes, defaults)` (memoized per combination, numeric keys allowed) and `classes(...parts)`                                                                                                                       |
+| `interact`                                                                       | DOM interaction mechanics for elements: `useOverflow` (edges in both writing directions, stride scrolling), `useDismiss` (outside press, Escape), `rove` (arrow keys, Home, End, wrap, RTL flip)                                |
+| `tooling`                                                                        | `createTools` (spec loader over `views`, architecture rules, messages, assets, fonts, icons, build), `deployedContracts`, `measured` and `breaches` (p99 budgets for benches)                                                   |
+| `validate` `parse` `string` `array` `base` `error` `log` `file` `device` `world` | zod adapters, parsers, verb sets, the unified error, structured logs, files, device facts, world data (countries, currencies, languages, emojis, icon names)                                                                    |
 
 A missing verb is added to its std member with a test in `tests/<member>.test.ts` and, when hot, a bench in `benches/<member>.bench.ts`; a feature never re-implements a std verb.
 
 ## Specs
 
-Each spec is data: `config/` (contents, contracts, features, settings as the delta over the defaults, themes), `schema/` (screens), `brand/` (assets and messages). Under `specs/`, a folder written `(name)` is a transparent group at any depth; the first plain folder is the spec; the identity is the leaf name; `NEXT_PUBLIC_SPEC` takes the identity or the on-disk path; an identity shared by two groups is an error; the first installed spec by identity is the default.
+Each spec is data: `config/` (contents, contracts, features, settings as the delta over the defaults, themes), `schema/` (screens), `brand/` (assets and messages). Under `specs/`, a folder written `(name)` is a transparent group at any depth; the first plain folder is the spec; the identity is the leaf name; `NEXT_PUBLIC_SPEC` takes the identity or the on-disk path.
 
-```ts
-export default {
-    output: "standalone",
-    mediaOrigins: ["https://media.example.com"],
-    screen: { render: "server", nav: false, sidebar: false },
-} satisfies SiteConfig["settings"];
+- `settings.output`: `export` (static files in `.next/out`, served by `tools/serve.ts`) or `standalone` (the Next server, launched by the same `bun run start`).
+- `settings.localization` (default `false`): `true` puts every locale in the url (`/en/…`, `/ar/…`, hreflang alternates, `/` sends a visitor to the saved, then the browser's, then the default language with `307` and `Vary: Accept-Language, Cookie`); `false` keeps one url per screen (`/items`), the language is a preference cookie, a locale in the url answers `308` to the bare path, and both the proxy and the release server rewrite to the chosen locale's static page. The validator refuses an indexed spec in several languages without localization.
+- `screen.render`: `server` or `client` (default). Indexing is behavior, never a flag: a screen is indexed when it renders on the server, is open and is not `index: false`; a spec is crawlable when it has an indexed screen and `contents.url`.
+- **Validator laws** (`tests/specs.test.ts`): an indexed screen needs `contents.url`; `index: true` on a client-rendered or gated screen is refused; robots rules without an indexable screen are refused; `contents.seo.sitemap` is always refused; an export cannot build `:param` paths nor server-render backend reads; a gated screen is always client and never indexed; server-owned features are refused on client screens; a cleartext production url needs `options.insecure: true`; localization as above.
+- `deployedContracts`: `SPEC_API_URL` at build time replaces `contracts.urls.production` (and `browser`) and closes the cleartext allowance for an https origin.
 
-export default screen({
-    contents: { name: "home", path: "/", title: t("hello.title"), description: t("hello.description"), icon: "house", kind: "page", priority: 1, frequency: "weekly" },
-    blocks: [
-        block({ width: "narrow", height: "screen", padding: 6, align: "center" }, [
-            feature("hello", { heading: true, options: { fallback: t("hello.fallback") }, ports: { greeting: read("hello.read") } }),
-        ]),
-    ],
-});
-```
+## Rendering, routing and the document
 
-- `settings.output`: `export` (static files in `.next/out`, served by `tools/serve.ts`: CSP, brotli/gzip, weak ETags) or `standalone` (`next build` server, launched by the same `bun run start`, which stages `public/` and `.next/out/static` beside `server.js` once and spawns `node`). `distDir` is always `.next/out`.
-- `screen.render`: `server` or `client` (default). A client screen renders inside `ClientOnly` after hydration; a server screen renders on the server; server-owned features (`owner: "server"`) read through the server client; client-owned features mount through `next/dynamic`.
-- **Indexing is behavior, never a flag.** A screen is indexed when it renders on the server, is open (`access: any`) and is not `index: false`; a spec is crawlable when it has at least one indexed screen and `contents.url`. Crawlable: per-screen metadata, canonical, hreflang for every enabled locale, Open Graph, Twitter card, `robots.txt`, `sitemap.xml` (indexed screens × locales), JSON-LD graph. Not crawlable: `noindex, nofollow`, `Disallow: /`, an empty sitemap. Both emit `manifest.webmanifest` and theme-color viewport.
-- **Validator laws** (compile time, `tests/specs.test.ts`): an indexed screen needs `contents.url`; `index: true` on a client-rendered or gated screen is refused; robots rules without an indexable screen are refused; `contents.seo.sitemap` is always refused (it derives from screens); an export cannot build `:param` paths nor server-render backend reads; a gated screen is always client and never indexed; server-owned features are refused on client screens; a cleartext production url needs `options.insecure: true`.
-- `deployedContracts`: at build time `SPEC_API_URL` replaces `contracts.urls.production` (and `browser` when named) and sets `insecure=false` for an https origin; the spec keeps its lab values when the variable is absent. The infra builds every web image with it.
+- `app/[locale]/layout.tsx` is the root layout (`<html lang dir>` from the locale, `generateStaticParams` over the enabled locales, `dynamicParams = false`, `siteMetadata`, viewport, the boot script) → `[[...path]]/page.tsx` (static: `generateStaticParams`, `generateMetadata`, `notFound()`, JSON-LD + `Screen`; it never reads search params, so every known page prerenders) → `screen.tsx` (shell parts, boundary, suspense, `ClientOnly` for client screens, the gate, and `elements/pending` as the default loader when `screen.loader` is on and no shell loader is placed) → `blocks.tsx`.
+- `/` has no page: in dev and standalone `src/proxy.server.ts` routes it (and every other path) with `routeOf`, marking its rewrites with `x-routed` because Next runs the proxy again on the rewritten path; an export ships a compiled `public/index.html` door when localized, and `tools/serve.ts` applies the same `routeOf` to every request (an export served elsewhere without that rewrite only works localized). `next.config.ts` drops `output` in dev and keeps `*.server.ts(x)` out of export builds through `pageExtensions`. Next's prerender cache rewrites `Vary` on pages it serves after a proxy rewrite; `tools/serve.ts` sets it correctly, so an unlocalized standalone site must not be shared-cached by url alone.
+- Titles read `action | page | project`: the metadata template is `%s | Name`, and a feature that switches tabs calls `useTitle(page, action)`, which holds the composed title (`held`) against Next's own head updates while mounted.
+- Preferences (`language currency theme`) are plain first-party cookies `<spec>.<key>` (`SameSite=Lax`, `Secure` on https, one year), readable by the proxy, the release server and the boot script, written only when changed; local storage keeps caches only, session storage per-tab drafts and the outbox, and tokens never enter web storage. The boot script sets `data-theme` from the cookie before paint.
 
-## Rendering tree
+## Styles
 
-`app/(web)/[locale]/layout.tsx` (static locale params, `metadata = siteMetadata()`, viewport, boot script) → `[[...path]]/page.tsx` (server: `generateStaticParams`, `generateMetadata`, `notFound()`, JSON-LD + `Screen`) → `screen.tsx` (shell parts, boundary, suspense, `ClientOnly` for client screens, the gate) → `blocks.tsx` (server features from `@spec/registry` or `Mount` for client features). `/` is a client redirect in export and a server 307 by `Accept-Language` in standalone. No middleware (unsupported in export); every locale lives under its prefix. Standalone production gets the same security headers and CSP as the export server through `next.config.ts` from the compiled `meta.security`.
+- Tailwind CSS v4 through `@tailwindcss/postcss`; Sass is not used (Tailwind v4 is its own preprocessor and does not support Sass). `styles/globals.css` is the only entry: `@import "tailwindcss" source(none)`, the tokens, `@source "../elements"` and `@source "../icons"` (classes are generated from the markup layers only), and a base layer for focus, selection, scrollbars, view transitions and reduced motion.
+- `styles/tokens.css` is the only file with raw values: `@theme { --*: initial; … }` replaces Tailwind's defaults with the product's scales (breakpoints; spacing with `control-*` and `glyph-*` sizes; containers `narrow prose wide`; type; weights; tracking; radius by category `control-*` (inputs and buttons), `panel-*`, `glyph-*` (icon containers and tabs), each `sm md lg xl`; easing; `enter exit reveal spin` animations) and `@theme inline` maps the spec palette (`--body --panel … --info`) to colors plus `hover press active glow` tints, edge colors and the `control panel-* overlay` shadows, whose shades and highlight are redefined for dark: light and dark are separate art directions.
+- Element classes may name tokens only: an arbitrary value with a raw literal (`w-[13px]`, `bg-[#f00]`) or an opacity modifier (`bg-primary/40`) is refused by `bun run check`. Variants come from `std/style` `variants`; states use `data-*` and `aria-*` variants.
+- Scrollbars are thin and appear only on `html` and on regions marked `data-scroll`; motion follows `--motion-*` tokens that drop to zero under reduced motion; logical properties (`start end ms me ps pe`) keep RTL exact. The icon font already draws direction-aware chevrons in RTL, so glyphs are never flipped by hand.
+- Virtualization, when a list needs it, is `virtua` behind `lib/providers/virtual.ts` (`@tanstack/react-virtual` is flagged incompatible with the React Compiler); the viewport sets `height: 100%` inline, so the element sizes its frame, not the list.
 
 ## Tooling
 
-- `bun run dev` / `bun run build` compile the spec first (`tools/compile.ts`): `mount.js`, `registry.js`, `preload.js`, `theme.css`, `build.json`, `meta.json` (`output indexed connect secure insecure media security aliases`), the boot script and the brand assets.
-- `bun run check` = `biome ci .` + `bun tools/core.ts` (architecture, messages, specs, styles, lines). `bun run typecheck` = compile + `next typegen` + `tsc --noEmit`. `bun test` runs the flat tests. `bun run bench` loops the benches.
-- `tools/serve.ts` is the release server; the production image bundles it with `bun build --target=bun` to one file so the runtime ships only `.next/out`, `public`, `tools/serve.js` and the compiled `meta.json`, runs read-only as uid 1000 with `/tmp` and the standalone cache on tmpfs.
+- `bun run dev` / `bun run build` compile the spec first (`tools/compile.ts`): `mount.js`, `registry.js`, `preload.js`, `theme.css`, `meta.json` (`output routing reserved language indexed connect secure insecure media security aliases`), `public/_generated/boot.js` and, for a localized export, `public/index.html`.
+- `bun run check` = `biome ci .` + `bun tools/core.ts` (architecture, messages, specs, styles and element classes, lines). `bun run typecheck` = compile + `next typegen` + `tsc --noEmit`. `bun test` runs the flat tests. `bun run audit` (after a build) weighs the first load of every locale page with brotli against the budgets in `tools/audit.ts` (export and standalone: html ≤ 4–5 KB, JavaScript ≤ 200 KB, CSS ≤ 12 KB) and checks what crawlers see: `lang`/`dir`, title, `index, follow` or `noindex`, canonical, hreflang for every locale and `x-default`, Open Graph, the Twitter card, the JSON-LD graph, robots and a sitemap with one url per indexed screen and locale. `bun run bench` runs every bench against its p99 budget (`BENCH_SCALE` scales them on a loaded machine).
+- `tools/serve.ts` is the release server; the production image bundles it with `bun build --target=bun`.
 
 ## Tests and benches
 
-- Flat `tests/*.test.ts(x)` (one per std member plus `specs`, `surface`, `screens`, `seo`, `serve`, `loader`, `elements`, `components`, `hygiene`); `bun test` with randomized order. A test compiles a real spec, renders a real element, serves a real folder; fixtures live beside the tests. A component is tested for every state it renders.
-- `benches/*.bench.ts` (mitata) cover the std hot paths (api client, cache, parse, validate, translate, spec compile); a bench fails on a regression beyond its budget; first-load JavaScript of the exports is measured and recorded in `README.md`.
+- Flat `tests/*.test.ts(x)` (one per std member plus `architecture`, `specs`, `surface`, `screens`, `seo`, `serve`, `loader`, `elements`, `components`, `style`, `interact`, `audit`, `hygiene`); `bun test` with randomized order. A test compiles a real spec, renders a real element, serves a real folder; an element is tested for every state it renders and its exact classes.
+- `benches/*.bench.ts` (mitata) end with `await measured({ name: p99Micros })`; a bench without a budget, a budget without a bench, a thrown bench or a p99 over budget exits 1.
 
 ## How to add
 
-- **An element**: `elements/<name>.tsx`, one class, `data-*` states, tokens only, a render test in `tests/elements.test.tsx` covering every state.
-- **A component**: one file over elements, no HTML, a test for each state.
-- **A feature**: `features/<name>/feature.ts` (owner, options, ports), `index.tsx`, components and hooks inside it; the endpoint in `api/features`; a spec places it with `feature("<name>", …)`; tests for the manifest, the ports and the rendered states.
-- **A screen**: `specs/<spec>/schema/<screen>.ts` with `screen({ contents, blocks })`, registered in `schema/index.ts`, messages in `brand/messages`; the validator and `tests/specs.test.ts` pin the indexing consequences.
-- **A spec**: `specs/<spec>/{config,schema,brand}`, settings as the delta over the defaults, its contracts naming the api urls (lab values; production is injected by `SPEC_API_URL`), its image built by the infra under `WEB_SPECS`.
-- **A std verb**: in its member, exported through the member's index, tested, benched when hot, then consumed; never a local helper in a feature.
+- **An element**: `elements/<name>.tsx`, semantic props, `variants` over tokens, `data-*`/`aria-*` states, interaction through `std/interact`, a render test for every state.
+- **A component**: one file over elements and components, its logic in `hooks/use-<name>.ts`, shared types in `types/`, a test for each state.
+- **A feature**: the contract `api/features/<name>.ts` (`transport` and `view`), registered in `api/features/index.ts`; `features/<name>/index.tsx`, `components/`, `hooks/`; a spec places it with `feature("<name>", …)`.
+- **A screen**: `specs/<spec>/schema/<screen>.ts` with `screen({ contents, blocks })`, registered in `schema/index.ts`, messages in the dictionaries; the validator and `tests/specs.test.ts` pin the indexing consequences.
+- **A spec**: `specs/<spec>/{config,schema,brand}`, settings as the delta over the defaults (`output`, `localization`, render), contracts naming the api urls, its image built by the infra under `WEB_SPECS`, and `bun run build && bun run audit` green.
+- **A std verb**: in its member, exported through the member's index, tested, benched when hot, then consumed.
 
 ## UI bar
 

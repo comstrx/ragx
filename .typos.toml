@@ -97,6 +97,9 @@ check-file = false
 "ERROR_FILENAME_EXCED_RANGE" = "ERROR_FILENAME_EXCED_RANGE"
 "ERROR_FILENAME_EXCEDE_RANGE" = "ERROR_FILENAME_EXCED_RANGE"
 "INVAILD" = "INVALID"
+"error_occured" = "error_occured"
+"Authorised" = "Authorised"
+"ba_123" = "ba_123"
 
 [default.extend-words]
 brin = "brin"
@@ -104,4 +107,5 @@ hel = "hel"
 "JOD" = "JOD"
 juxt = "juxt"
 nd = "nd"
+virtua = "virtua"
 "widnows" = "windows"

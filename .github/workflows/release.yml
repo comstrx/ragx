@@ -22,21 +22,31 @@ jobs:
     timeout-minutes: 5
 
     outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      release: ${{ steps.tag.outputs.release }}
       notes: ${{ steps.plan.outputs.notes }}
       prerelease: ${{ steps.plan.outputs.prerelease }}
 
     steps:
+      - name: Tag
+        id: tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          [[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "::error::${TAG} is not a semver tag"; exit 1; }
+          printf 'tag=%s\nrelease=%s\n' "${TAG}" "$(tr 'A-Z.' 'a-z-' <<< "${TAG}")" >> "${GITHUB_OUTPUT}"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: refs/tags/${{ steps.tag.outputs.tag }}
           persist-credentials: false
           fetch-depth: 0
 
       - name: Plan
         id: plan
         env:
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          [[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "::error::${TAG} is not a semver tag"; exit 1; }
           git merge-base --is-ancestor HEAD origin/main || { echo "::error::${TAG} is not on main"; exit 1; }
 
           notes="$(awk -v tag="${TAG}" '$1 == "##" { if ( found ) exit; found = ( $2 == tag ); next } found' CHANGELOG.md)"
@@ -61,30 +71,55 @@ jobs:
     name: infra
     needs: plan
     uses: $/.github/workflows/infra.yml
+    with:
+      images: false
 
   web:
     name: web
     needs: plan
     uses: $/.github/workflows/web.yml
 
-  publish:
-    name: publish
+  deploy:
+    name: deploy
+    needs: [plan, global, api, infra, web]
+    if: vars.DEPLOY_AUTO == 'true'
+    uses: $/.github/workflows/deploy.yml
+    with:
+      tag: ${{ needs.plan.outputs.tag }}
+    secrets:
+      ENV_FILE: ${{ secrets.ENV_FILE }}
+      API_ENV_FILE: ${{ secrets.API_ENV_FILE }}
+      WEB_ENV_FILE: ${{ secrets.WEB_ENV_FILE }}
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      SSH_KEY: ${{ secrets.SSH_KEY }}
+      SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+      DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USER }}
+      DOCKERHUB_PUSH_TOKEN: ${{ secrets.DOCKERHUB_PUSH_TOKEN }}
+
+    permissions:
+      contents: read
+      packages: write # lets Deploy build, scan and push the images of the tag before shipping it
+
+  release:
+    name: release
     needs: [plan, global, api, infra, web]
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     permissions:
-      contents: write # creates the release
+      contents: write # creates the GitHub release once the tag ships
 
     steps:
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ needs.plan.outputs.tag }}
           NOTES: ${{ needs.plan.outputs.notes }}
           PRERELEASE: ${{ needs.plan.outputs.prerelease }}
         run: |
+          ! gh release view "${TAG}" >/dev/null 2>&1 || { echo "Release ${TAG} already exists"; exit 0; }
           flags=(--verify-tag --title "RagX ${TAG}" --notes-file -)
           [[ "${PRERELEASE}" == true ]] && flags+=(--prerelease)
           printf '%s\n' "${NOTES}" | gh release create "${TAG}" "${flags[@]}"
