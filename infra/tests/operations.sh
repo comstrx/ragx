@@ -453,7 +453,7 @@ SSH
     cfg-set REMOTE_DIR app
 
     output="$(native-server-run first 2>&1)" || status=$?
-    expect-equal "${status}" 3 'the remote command status is returned'
+    expect-equal "${status}" 3 "the remote command status is returned: ${output}"
     expect-contains "${output}" 'step first'
     expect-contains "${output}" warned
     expect-contains "${output}" 'done'
@@ -463,7 +463,7 @@ SSH
     cli-parse restore one.dump --force
     status=0
     output="$(native-route restore one.dump 2>&1)" || status=$?
-    expect-equal "${status}" 3 'a routed command returns the remote status'
+    expect-equal "${status}" 3 "a routed command returns the remote status: ${output}"
     expect-contains "${output}" 'Running restore on deploy@203.0.113.10'
     expect-contains "${output}" 'step restore one.dump --force' 'positional arguments and flags reach the server'
     cli-parse
@@ -476,7 +476,7 @@ SSH
     rm -f -- "${TMPDIR}/calls"
     status=0
     output="$(native-server-run second 2>&1)" || status=$?
-    expect-equal "${status}" 3 'a dropped connection reattaches and keeps the job status'
+    expect-equal "${status}" 3 "a dropped connection reattaches and keeps the job status: ${output}"
     expect-contains "${output}" 'Connection lost; following remote job'
     expect-contains "${output}" 'step second'
     expect-contains "${output}" 'done'
@@ -650,6 +650,7 @@ test-operations-doctor () {
     config-derive
     root="${CONFIG[STATE_ROOT]}"
 
+    MANIFEST[requires.runtime]='bash awk'
     expect-contains "$(native-doctor-runtime)" 'ok bash'
     MANIFEST[requires.runtime]='bash definitely-missing-tool'
     expect-equal "$(native-doctor-runtime)" 'fail missing: definitely-missing-tool'
