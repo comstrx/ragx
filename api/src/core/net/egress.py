@@ -1,4 +1,5 @@
 from collections.abc import Awaitable, Callable, Iterable, Sequence
+from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import override
 
@@ -10,7 +11,8 @@ import asyncio, httpx, ipaddress, socket
 type Resolver = Callable[[str, int], Awaitable[Sequence[str]]]
 type Address = ipaddress.IPv4Address | ipaddress.IPv6Address
 
-PORTS = { "https": 443, "http": 80 }
+PORTS     = { "https": 443, "http": 80 }
+UNREACHED = (httpx.ConnectError, httpx.ConnectTimeout)
 
 async def lookup ( host: str, port: int ) -> list[str]:
 
@@ -96,13 +98,21 @@ class Pinned(httpx.AsyncBaseTransport):
     @override
     async def handle_async_request ( self, request: httpx.Request ) -> httpx.Response:
 
-        host, port = self._egress._target_(request.url)
-        chosen     = unmapped((await self.addresses(host, port))[0])
-        default    = port == PORTS.get(request.url.scheme)
+        host, port    = self._egress._target_(request.url)
+        *others, last = await self.addresses(host, port)
+        target        = request.url
+        default       = port == PORTS.get(target.scheme)
 
-        request.url                        = request.url.copy_with(host=str(chosen))
         request.headers["host"]            = host if default else f"{host}:{port}"
         request.extensions["sni_hostname"] = host
+
+        for address in others:
+
+            request.url = target.copy_with(host=str(unmapped(address)))
+
+            with suppress(*UNREACHED): return await self._inner.handle_async_request(request)
+
+        request.url = target.copy_with(host=str(unmapped(last)))
 
         return await self._inner.handle_async_request(request)
 

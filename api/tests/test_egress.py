@@ -161,3 +161,19 @@ class TestEgress:
             expect((fetched.path, await store.text(fetched.path), len(hits))).equals(
                 ("downloads/x.txt", PAYLOAD.decode(), 2),
             )
+
+    async def test_a_name_falls_through_to_its_next_checked_address_when_one_refuses ( self ) -> None:
+
+        async def lookup ( host: str, port: int ) -> list[str]:
+
+            return ["127.0.0.2", "127.0.0.1"]
+
+        async with served() as (port, hits):
+
+            policy = Egress.of(("http",), private=True)
+            client = Egress(policy.schemes, policy.hosts, frozenset({ port }), private=True).client(resolver=lookup)
+
+            expect((await client.get(f"http://service.test:{port}/file.txt")).body).equals(PAYLOAD)
+            expect(len(hits)).equals(1)
+
+            await client.close()
