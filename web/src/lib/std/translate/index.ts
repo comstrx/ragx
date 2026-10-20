@@ -16,17 +16,11 @@ export {
     directionOf,
     isTimeZone,
     type Language,
-    type Located,
     languageFacts,
     languageName,
     languagesOf,
-    localePath,
     negotiate,
-    preferredPath,
-    prefixed,
-    type Routing,
     regionOf,
-    splitLocale,
 } from "./locale.ts";
 export {
     isMessageKey,
@@ -49,3 +43,17 @@ export {
     type Translate,
     translator,
 } from "./messages.ts";
+export {
+    chosenLocale,
+    hrefOf,
+    type Located,
+    prefixed,
+    type Reserved,
+    type Routing,
+    routable,
+    routeOf,
+    splitLocale,
+    switched,
+    type Visit,
+    type Way,
+} from "./route.ts";

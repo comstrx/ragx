@@ -1,4 +1,5 @@
 export { type BoundaryParts, type BoundaryProps, defineBoundary } from "./boundary.ts";
+export { held, isCurrent, type Part, separator, type Themed, type Titled, themeOn, titled, titleOf, type Watched } from "./document.ts";
 export { type FeatureProps, type Placement, placementOf, type Route } from "./feature.ts";
 export {
     defineRuntime,

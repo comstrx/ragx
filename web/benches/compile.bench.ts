@@ -1,10 +1,10 @@
 import { catalogueFacts } from "@/lib/std/spec";
-import { bench, featureFacts, identityOf, run } from "@/lib/std/tooling";
-import { endpoints } from "../src/api/features/index.ts";
+import { bench, identityOf, measured, viewFacts  } from "@/lib/std/tooling";
+import { endpoints, views } from "../src/api/features/index.ts";
 import { validateSpec } from "../src/lib/spec/surface.ts";
 import { composeMessages, installedSpecs, root } from "../tools/core.ts";
 
-const facts = await featureFacts(`${root}/src/features`);
+const facts = viewFacts(views);
 const catalogue = catalogueFacts(endpoints);
 
 for ( const path of installedSpecs() ) {
@@ -22,4 +22,11 @@ for ( const path of installedSpecs() ) {
 
 }
 
-await run();
+await measured({
+    "compile the admin spec": 20000,
+    "compose the admin messages": 2500,
+    "compile the client spec": 8500,
+    "compose the client messages": 3000,
+    "compile the super spec": 15000,
+    "compose the super messages": 2000,
+});

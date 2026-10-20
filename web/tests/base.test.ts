@@ -6,6 +6,7 @@ import {
     deepMerge,
     identifier,
     includes,
+    isPlain,
     kindOf,
     lanes,
     mapValues,
@@ -31,6 +32,13 @@ describe("object", () => {
         expect(target).toEqual({ a: { b: 1 } });
         expect(() => pathSet(target, "__proto__.x", 1)).toThrow(TypeError);
         expect(safeKey("__proto__")).toBe(false);
+
+    });
+    test("only a literal object or a null-prototype record is plain; dates, maps, arrays and class instances are not", () => {
+
+        expect(isPlain({ a: 1 })).toBe(true);
+        expect(isPlain(Object.create(null))).toBe(true);
+        expect([new Date(0), new Map(), [], new (class Shape {})(), null, "x"].map(isPlain)).toEqual([false, false, false, false, false, false]);
 
     });
     test("merge is deep for records and replaces everything else", () => {

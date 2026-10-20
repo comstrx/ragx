@@ -3,6 +3,7 @@ import { get, many, post } from "@/lib/std/api";
 import {
     catalogueFacts,
     compileBlock,
+    contract,
     createWalk,
     data,
     type Features,
@@ -10,8 +11,11 @@ import {
     read,
     type SiteFeature,
     site,
+    transportsOf,
+    viewsOf,
     write,
 } from "@/lib/std/spec";
+import { viewFacts } from "@/lib/std/tooling";
 import { z } from "@/lib/std/validate";
 
 type Block = { gap: number };
@@ -125,6 +129,41 @@ describe("ports", () => {
         expect(
             compile([feature("cards", { options: { rows: 1 }, ports: { items: data([{ title: "a" }]) } })]).issues,
         ).toContain("has no option rows");
+
+    });
+
+});
+describe("feature contracts", () => {
+
+    const list = get("/products", {}, many(item));
+    const view = { owner: "client", options: { columns: 3 }, ports: { items: { kind: "list" } } } as const;
+    const contracts = {
+        site: contract({ transport: { read: list } }),
+        shelf: contract({ transport: { list }, view }),
+        banner: contract({ view: { owner: "server" } }),
+    };
+
+    test("a contract keeps its transport and its view apart, and the catalogue sees the transports only", () => {
+
+        expect(Object.keys(transportsOf(contracts))).toEqual(["site", "shelf"]);
+        expect(Object.keys(viewsOf(contracts))).toEqual(["shelf", "banner"]);
+        expect(transportsOf(contracts).shelf.list).toBe(list);
+        expect(viewsOf(contracts).shelf).toBe(view);
+        expect(() => contract({})).toThrow("declares a transport, a view or both");
+
+    });
+    test("views become typed manifests, and a broken view names its contract file", () => {
+
+        const facts = viewFacts(viewsOf(contracts));
+
+        expect(Object.keys(facts)).toEqual(["banner", "shelf"]);
+        expect(facts.banner).toEqual({ owner: "server", options: {}, ports: {}, access: [], signals: [] });
+        expect(facts.shelf?.options).toEqual({ columns: 3 });
+        expect(() => viewFacts({ odd: { owner: "edge" } })).toThrow("api/features/odd.ts view: owner");
+        expect(() => viewFacts({ odd: { owner: "client", options: { empty: null } } })).toThrow(
+            "api/features/odd.ts view options.empty: null defaults are not typed",
+        );
+        expect(() => viewFacts({ odd: { owner: "client", options: { at: new Date(0) } } })).toThrow("options are literal values only");
 
     });
 

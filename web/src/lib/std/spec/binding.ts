@@ -43,7 +43,7 @@ export function consumesSignal ( entry: SiteFeature<unknown> ): boolean {
         ( binding ) =>
             ("live" in binding && binding.live !== undefined) ||
             ("input" in binding &&
-                Object.values(binding.input ?? {}).some(( value ) => isRecord(value) && "signal" in value)),
+                Object.values(binding.input ?? {}).some(( value ) => isRecord(value) && ("signal" in value || "query" in value))),
     );
 
 }

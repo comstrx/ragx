@@ -1,22 +1,28 @@
-import Button from "@/elements/button";
+import type { ReactNode } from "react";
+import { variants } from "@/lib/std/style";
 
 type Props = {
     tone: "missing" | "failed" | "offline";
     message: string;
-    action?: string | undefined;
-    onAction?: (() => void) | undefined;
+    action?: ReactNode | undefined;
     digest?: string | undefined;
 };
 
-export default function Notice ({ tone, message, action, onAction, digest }: Props) {
+const look = variants(
+    "mx-auto my-6 flex w-full max-w-narrow animate-enter flex-col items-center gap-3 rounded-panel-lg border bg-panel p-4 shadow-panel-sm",
+    { tone: { missing: "border-line", failed: "border-danger-edge", offline: "border-warning-edge" } },
+    { tone: "missing" },
+);
+
+export default function Notice ({ tone, message, action, digest }: Props) {
 
     return (
 
-        <section className="notice" data-tone={tone} data-digest={digest} role={tone === "failed" ? "alert" : "status"}>
+        <section className={look({ tone })} data-tone={tone} data-digest={digest} role={tone === "failed" ? "alert" : "status"}>
 
-            <p className="notice-message">{message}</p>
+            <p className="m-0 text-center text-ink">{message}</p>
 
-            {action && onAction ? <Button tone="ghost" size="sm" onClick={onAction}>{action}</Button> : null}
+            {action ?? null}
 
         </section>
 

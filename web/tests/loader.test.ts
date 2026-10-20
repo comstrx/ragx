@@ -10,6 +10,7 @@ const specTools = ( root: string ) =>
         variable: "SPEC",
         locales: ["en"],
         catalogue: { operations: [], features: [] } as never,
+        views: {},
         validate: (( input: unknown ) => input) as never,
         assets: [],
         architecture: { foundation: /^engine\//, html: true, owners: {}, layers: [] },

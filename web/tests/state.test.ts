@@ -57,5 +57,44 @@ describe("store", () => {
         expect(instance.getState().ready).toBe(true);
 
     });
+    test("field persistence keeps one raw entry per field, writes only what changed from the defaults and refuses a bad saved value", async () => {
+
+        const store = memoryStore();
+        const prefs = defineStore({
+            name: "prefs",
+            initial: { language: "en", theme: "light" },
+            actions: ( set ) => ({ choose: ( language: string ) => set({ language }) }),
+            persist: {
+                store,
+                keys: ["language", "theme"],
+                fields: true,
+                parse: ( saved ) => ((saved as { theme?: string }).theme === "sepia" ? { language: "en" } : (saved as { language: string })),
+            },
+        });
+        const first = prefs.create();
+        const settle = () => new Promise(( resolve ) => setTimeout(resolve, 0));
+
+        await first.hydrate();
+        await settle();
+        expect(await store.keys()).toEqual([]);
+
+        first.getState().choose("ar");
+        await settle();
+        expect(await store.keys()).toEqual(["language"]);
+        expect(await store.get("language")).toBe("ar");
+
+        const second = prefs.create();
+
+        await second.hydrate();
+        expect(second.getState().language).toBe("ar");
+
+        await store.set("theme", "sepia");
+
+        const third = prefs.create();
+
+        await third.hydrate();
+        expect(third.getState()).toMatchObject({ language: "en", theme: "light" });
+
+    });
 
 });

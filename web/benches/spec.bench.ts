@@ -1,7 +1,7 @@
 import { feature, get, many } from "@/lib/std/api";
 import { matchScreen } from "@/lib/std/screen";
 import { catalogueFacts, compileBlock, createWalk } from "@/lib/std/spec";
-import { bench, do_not_optimize, run } from "@/lib/std/tooling";
+import { bench, do_not_optimize, measured  } from "@/lib/std/tooling";
 import { localizeTree } from "@/lib/std/translate";
 import { z } from "@/lib/std/validate";
 
@@ -62,4 +62,8 @@ bench("matchScreen over 200 screens (last, parameterised)", () =>
 );
 bench("localizeTree: 50 blocks", () => do_not_optimize(localizeTree(tree, messages, "en")));
 
-await run();
+await measured({
+    "compileBlock: 20 features with read ports": 2500,
+    "matchScreen over 200 screens (last, parameterised)": 400,
+    "localizeTree: 50 blocks": 600,
+});

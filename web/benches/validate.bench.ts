@@ -1,4 +1,4 @@
-import { bench, do_not_optimize, run } from "@/lib/std/tooling";
+import { bench, do_not_optimize, measured  } from "@/lib/std/tooling";
 import { fieldFacts, parse, z } from "@/lib/std/validate";
 
 const row = z.object({
@@ -23,4 +23,9 @@ bench("parse one row", () => do_not_optimize(parse(row, data[0])));
 bench("refuse a bad row into keyed rules", () => do_not_optimize(parse(row, bad)));
 bench("fieldFacts", () => do_not_optimize(fieldFacts(row)));
 
-await run();
+await measured({
+    "parse 1000 rows": 20000,
+    "parse one row": 6,
+    "refuse a bad row into keyed rules": 200,
+    "fieldFacts": 65,
+});

@@ -1,5 +1,5 @@
 import { expiring, lru, rateLimiter } from "@/lib/std/cache";
-import { bench, do_not_optimize, run } from "@/lib/std/tooling";
+import { bench, do_not_optimize, measured  } from "@/lib/std/tooling";
 
 const recent = lru<string, number>(1000);
 const timed = expiring<number>(60_000);
@@ -16,4 +16,8 @@ bench("lru.get (touch)", () => do_not_optimize(recent.get("k500")));
 bench("expiring.get", () => do_not_optimize(timed.get("k500")));
 bench("rateLimiter.take", () => do_not_optimize(limiter.take("ip")));
 
-await run();
+await measured({
+    "lru.get (touch)": 7,
+    "expiring.get": 1,
+    "rateLimiter.take": 1,
+});

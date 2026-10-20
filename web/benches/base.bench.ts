@@ -1,6 +1,6 @@
 import { deepMerge, pathGet } from "@/lib/std/base";
 import { matchPattern } from "@/lib/std/parse";
-import { bench, do_not_optimize, run } from "@/lib/std/tooling";
+import { bench, do_not_optimize, measured  } from "@/lib/std/tooling";
 
 const document = { meta: { pagination: { page: 3 } } };
 
@@ -10,4 +10,8 @@ bench("matchPattern", () =>
 bench("pathGet", () => do_not_optimize(pathGet(document, "meta.pagination.page")));
 bench("deepMerge", () => do_not_optimize(deepMerge(document, { meta: { pagination: { size: 20 } } })));
 
-await run();
+await measured({
+    "matchPattern": 5,
+    "pathGet": 1,
+    "deepMerge": 5,
+});

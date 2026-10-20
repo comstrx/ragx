@@ -132,7 +132,7 @@ describe("screens", () => {
 
         const served: Features = { ...features, hero: { ...heroManifest, owner: "server" } };
         const schema = { screens: [home(hero())] };
-        const server = { screen: { render: "server" } };
+        const server = { localization: true, screen: { render: "server" } };
 
         const site = { ...contents, url: "https://site.test" };
         const client = validateSpec("site", { contents: site, contracts: backend, settings: server }, schema, messages, served, catalogue);
@@ -146,7 +146,7 @@ describe("screens", () => {
         const first = home(hero());
         const schema = { screens: [first] };
         const site = { ...contents, url: "https://site.test" };
-        const served = { screen: { render: "server" } };
+        const served = { localization: true, screen: { render: "server" } };
         const robots = { ...contents, seo: { robots: { allow: ["/"] } } };
         const listed = { ...site, seo: { sitemap: ["*"] } };
         const insisted = { screens: [{ ...first, contents: { ...first.contents, index: true } }] };
@@ -164,7 +164,7 @@ describe("screens", () => {
     test("a gated or unlisted screen is never indexed, and an export cannot server-render a backend read", () => {
 
         const site = { ...contents, url: "https://site.test" };
-        const settings = ( output: string ) => ({ output, screen: { render: "server" } });
+        const settings = ( output: string ) => ({ output, localization: true, screen: { render: "server" } });
         const cards = feature("cards", { ports: { items: read("products.list") } });
         const page = { title: t("nav.home"), description: t("nav.home") };
         const gated = { contents: { name: "account", path: "/account", ...page }, access: "user", redirect: "/", blocks: [] };
@@ -212,6 +212,19 @@ describe("screens", () => {
         const schema = { screens: [home(hero()), { contents: detail, blocks: [] }] };
 
         expect(issues(schema)).toContain("parameterised paths");
+
+    });
+    test("localization is off by default, and an indexed site in several languages is refused without it", () => {
+
+        const schema = { screens: [home(hero())] };
+        const site = { ...contents, url: "https://site.test" };
+        const served = { screen: { render: "server" } };
+        const refusal = "settings.localization: an indexed site in several languages needs localization: true";
+
+        expect(compile(schema).config.settings.localization).toBe(false);
+        expect(() => build(site, served, schema)).toThrow(refusal);
+        expect(build(site, { ...served, localization: true }, schema).schema.indexed).toBe(1);
+        expect(issues(schema, backend, { localization: "yes" })).toContain("localization");
 
     });
     test("the output mode is a setting: export by default, standalone on request, nothing else", () => {

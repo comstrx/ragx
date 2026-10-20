@@ -1,6 +1,4 @@
 export type Direction = "ltr" | "rtl";
-export type Routing = { locales: readonly string[]; defaultLocale: string };
-export type Located = { locale: string; path: string; explicit: boolean };
 export type Language = { label: string; direction: Direction; openGraph: string };
 
 const rtl = ["ar", "he", "fa", "ur", "ps", "sd", "ug", "yi", "dv", "ku"];
@@ -26,37 +24,6 @@ function ranked ( header: string | null | undefined ): string[] {
 export function directionOf ( locale: string ): Direction {
 
     return rtl.includes(locale.split("-")[0] ?? "") ? "rtl" : "ltr";
-
-}
-export function splitLocale ( pathname: string, routing: Routing ): Located {
-
-    const [, first = "", ...rest] = pathname.split("/");
-
-    if ( !routing.locales.includes(first) )
-        return { locale: routing.defaultLocale, path: pathname || "/", explicit: false };
-
-    return { locale: first, path: `/${rest.join("/")}`, explicit: true };
-
-}
-export function prefixed ( locale: string, path: string ): string {
-
-    return path === "/" ? `/${locale}` : `/${locale}${path}`;
-
-}
-export function localePath ( locale: string, path: string, routing: Routing ): string {
-
-    return locale === routing.defaultLocale ? path : prefixed(locale, path);
-
-}
-export function preferredPath (
-    { path, explicit }: Located,
-    preferred: string | undefined,
-    routing: Routing,
-): string | undefined {
-
-    if ( explicit || !preferred || preferred === routing.defaultLocale ) return undefined;
-
-    return routing.locales.includes(preferred) ? prefixed(preferred, path) : undefined;
 
 }
 export function negotiate ( header: string | null | undefined, locales: readonly string[] ): string | undefined {

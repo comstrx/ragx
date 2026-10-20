@@ -1,9 +1,12 @@
 import { document, type Endpoint } from "@/lib/std/api";
+import { contract, transportsOf, viewsOf } from "@/lib/std/spec";
 import hello from "./hello.ts";
 
 type Entity = { parameter: string; list?: string };
 
-export const endpoints = { site: document("content"), hello } as const;
+export const contracts = { site: contract({ transport: document("content") }), hello } as const;
+export const endpoints = transportsOf(contracts);
+export const views = viewsOf(contracts);
 export const entities = {} as const satisfies Record<string, Entity>;
 
 export type Endpoints = typeof endpoints;

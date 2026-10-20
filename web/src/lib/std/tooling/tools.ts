@@ -1,11 +1,12 @@
 import { resolve } from "node:path";
 import process from "node:process";
 import { ruleNames } from "@/lib/std/validate";
-import { inspect, layoutIssues, type Rules, readSources, type SurfaceRules } from "./architecture.ts";
+import { inspect, type Rules, readSources, type SurfaceRules } from "./architecture.ts";
 import { type AssetFolder, assetFiles, composeAssets, type Files, type Skip } from "./assets.ts";
 import { type Buildable, type BuildPlan, type Compile, defineBuild } from "./build.ts";
 import { generatedRoot } from "./compile.ts";
 import { type Core, createCore, report, tally } from "./core.ts";
+import { layoutIssues, viewIssues } from "./layout.ts";
 import { composeMessages, type Dictionaries, messageIssues } from "./messages.ts";
 import { defineRules } from "./rules.ts";
 import { createLoader, type Loader, type LoaderOptions } from "./specs.ts";
@@ -65,7 +66,7 @@ export function createTools<
 
     const checkArchitecture = ( chosen: Rules ): void => {
 
-        const problems = [...inspect(readSources(chosen), chosen), ...layoutIssues(chosen)];
+        const problems = [...inspect(readSources(chosen), chosen), ...layoutIssues(chosen), ...viewIssues(options.views, chosen.source)];
 
         report(problems.length ? problems.join("\n") : "Architecture: layers, imports and cycles passed.");
         process.exitCode = problems.length ? 1 : 0;

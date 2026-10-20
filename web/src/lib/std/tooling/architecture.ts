@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { unique } from "@/lib/std/array";
 import { specGroup } from "@/lib/std/validate";
@@ -15,7 +15,6 @@ export type Rules = {
     markupFiles: RegExp;
     hookFiles: RegExp;
     featureEntry: RegExp;
-    featureManifest: RegExp;
     featureComponent: RegExp;
     extensions: readonly string[];
     helpers: readonly string[];
@@ -51,8 +50,9 @@ type Scope = {
     api: boolean;
     free: boolean;
     entry?: string | undefined;
-    manifest?: string | undefined;
     component?: string | undefined;
+    leaf?: "element" | "icon" | "component" | undefined;
+    name?: string | undefined;
 };
 type Graph = Map<string, string[]>;
 
@@ -68,7 +68,24 @@ const rendering = /\bjsx(?:s|DEV)?(?:_\w+)?\(/;
 const call = /(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(/g;
 const branching = /\b(?:if|for|while|switch|function|await|class)\b|\bnew\s+[A-Za-z_$]|=>|\?[^.?]/;
 const fetching = /(?<![\w$.])fetch\s*\(/;
+const bags = new RegExp([
+    /\bComponentProps(?:WithRef|WithoutRef)?\b/.source,
+    /\b(?:All|Input|Button|Anchor|Html|HTML)\w*Attributes\b/.source,
+    /\b(?:className|style)\??\s*:\s*(?:string|CSSProperties|React\.CSSProperties)\b/.source,
+].join("|"));
+const leaves = {
+    element: /^(?:icons\/|lib\/std\/|lib\/providers\/|types\/)/,
+    icon: /^(?:lib\/std\/|types\/)/,
+} as const;
 
+function leafOf ( path: string ): Scope["leaf"] {
+
+    if ( path.startsWith("elements/") ) return "element";
+    if ( path.startsWith("icons/") ) return "icon";
+
+    return path.startsWith("components/") ? "component" : undefined;
+
+}
 function scopeOf ( path: string, rules: Rules ): Scope {
 
     return {
@@ -79,8 +96,9 @@ function scopeOf ( path: string, rules: Rules ): Scope {
         api: path.startsWith("api/"),
         free: rules.free.some(( folder ) => path.startsWith(`${folder}/`)) || rules.vendor.some(( folder ) => path.startsWith(folder)),
         entry: rules.featureEntry.exec(path)?.[1],
-        manifest: rules.featureManifest.exec(path)?.[1],
         component: rules.featureComponent.exec(path)?.[1],
+        leaf: leafOf(path),
+        name: /^(?:elements|icons|components)\/([^/.]+)\.tsx?$/.exec(path)?.[1],
     };
 
 }
@@ -92,9 +110,25 @@ function specHome ( path: string ): string {
     return segments.slice(0, leaf + 1).join("/");
 
 }
+function leafIssues ( { leaf, name: own }: Scope, name: string, standard: string ): string[] {
+
+    if ( !leaf || !(name.startsWith(".") || name.startsWith("@/")) ) return [];
+    if ( leaf === "component" ) {
+
+        const allowed = /^(?:elements|icons|components|types)\//.test(standard) || standard === `hooks/use-${own}`;
+
+        return allowed ? [] : [`A component composes elements, icons, components and its own hook hooks/use-${own} only, not ${name}`];
+
+    }
+
+    const reach = leaf === "element" ? "icons, lib/std, lib/providers and types" : "lib/std and types";
+
+    return leaves[leaf].test(standard) ? [] : [`An ${leaf} stands alone: it imports ${reach} only, not ${name}`];
+
+}
 function dependencyIssues ( scope: Scope, name: string, rules: Rules ): string[] {
 
-    const { path, spec, vendor, entry, manifest, component, free } = scope;
+    const { path, spec, vendor, entry, component, free } = scope;
     const selected = name.startsWith("@spec/");
     const target = name.startsWith(".") ? relative(rules.source, resolve(rules.source, dirname(path), name)) : "";
     const standard = name.startsWith("@/") ? relative(rules.source, resolve(rules.source, name.slice(2))) : target;
@@ -121,10 +155,10 @@ function dependencyIssues ( scope: Scope, name: string, rules: Rules ): string[]
         ...(entry !== undefined && !own
             ? [`A feature entry is thin: it imports its own components only, not ${name}`]
             : []),
-        ...(manifest !== undefined ? ["A feature manifest is data: it imports types only."] : []),
         ...(component !== undefined && standard.startsWith("elements/")
             ? [`Features build on components, not elements: ${name}`]
             : []),
+        ...leafIssues(scope, name, standard.replace(/\.tsx?$/, "")),
     ];
 
 }
@@ -147,6 +181,7 @@ function markupIssues ( { element, api, vendor }: Scope, code: string, compiled:
     const issues: string[] = [];
 
     if ( fetching.test(code) && !api && !vendor ) issues.push("Backend transport belongs in src/api.");
+    if ( element && bags.test(code) ) issues.push("Elements take semantic props only: className, style and HTML attribute bags are refused.");
     if ( element ) return issues;
 
     const tags = rules.html ? unique([...compiled.matchAll(tag)].map(( match ) => match[1] ?? "")) : [];
@@ -188,8 +223,8 @@ function ownershipIssues (
     const server = imports.includes("server-only");
 
     if ( !client && !server ) return ["Feature entries declare client or server ownership."];
-    if ( owner === "client" && !client ) return ['The manifest says client; the entry must start with "use client".'];
-    if ( owner === "server" && !server ) return ["The manifest says server; the entry must import server-only."];
+    if ( owner === "client" && !client ) return ['The contract view says client; the entry must start with "use client".'];
+    if ( owner === "server" && !server ) return ["The contract view says server; the entry must import server-only."];
 
     return [];
 
@@ -231,49 +266,6 @@ export function readSources ( rules: Rules ): Map<string, string> {
     return new Map(paths.map(( path ) => [relative(rules.source, path), readFileSync(path, "utf8")]));
 
 }
-function featureIssues ( tree: string, name: string, rules: Rules ): string[] {
-
-    const folder = `src/features/${name}/`;
-    const parts = readdirSync(resolve(tree, "features", name), { withFileTypes: true }).filter(
-        ( entry ) => !entry.name.startsWith("."),
-    );
-    const strangers = parts.filter(
-        ( entry ) => !rules.featureParts.includes(entry.name) || entry.isDirectory() === entry.name.includes("."),
-    );
-
-    return [
-        ...(parts.some(( entry ) => entry.name === "feature.ts") ? [] : [`${folder} declares itself in feature.ts`]),
-        ...(parts.some(( entry ) => entry.name === "index.tsx") ? [] : [`${folder} needs its entry index.tsx`]),
-        ...strangers.map(( entry ) => `${folder} holds ${rules.featureParts.join(", ")} only: ${entry.name}`),
-    ];
-
-}
-export function layoutIssues ( rules: Rules, tree: string = rules.source ): string[] {
-
-    const layers = readdirSync(tree)
-        .filter(( entry ) => !rules.structure.includes(entry))
-        .map(( entry ) => `src/ holds the fixed layers only: ${entry}`);
-    const nesting = rules.flat.flatMap(( folder ) =>
-        (existsSync(resolve(tree, folder)) ? readdirSync(resolve(tree, folder), { withFileTypes: true }) : [])
-            .filter(( entry ) => entry.isDirectory())
-            .map(( entry ) => `src/${folder}/ must stay flat: ${entry.name}`),
-    );
-    const features = existsSync(resolve(tree, "features"))
-        ? readdirSync(resolve(tree, "features"), { withFileTypes: true })
-              .filter(( entry ) => !entry.name.startsWith("."))
-              .flatMap(( entry ) =>
-                  entry.isDirectory()
-                      ? featureIssues(tree, entry.name, rules)
-                      : [`src/features/ contains feature directories only: ${entry.name}`],
-              )
-        : [];
-    const api = readdirSync(resolve(tree, "api"), { withFileTypes: true })
-        .filter(( entry ) => !entry.isDirectory() || !rules.apiParts.includes(entry.name))
-        .map(( entry ) => `src/api/ holds ${rules.apiParts.join(", ")} only: ${entry.name}`);
-
-    return [...layers, ...nesting, ...features, ...api];
-
-}
 function targetOf ( path: string, name: string, sources: Sources, rules: Rules ): string | undefined {
 
     const local = name.startsWith(".") ? relative(rules.source, resolve(rules.source, dirname(path), name)) : null;
@@ -286,7 +278,7 @@ function targetOf ( path: string, name: string, sources: Sources, rules: Rules )
 }
 function edgeIssues ( path: string, to: string, rules: Rules ): string[] {
 
-    const inner = /^features\/([^/]+)\/(?:hooks|components|feature\.ts)/.exec(to);
+    const inner = /^features\/([^/]+)\/(?:hooks|components)/.exec(to);
     const door = path.startsWith("../specs/") && to === "lib/spec/surface.ts";
 
     return [
@@ -320,7 +312,7 @@ function cycle ( graph: Graph, path: string, chain: string[], seen: Set<string>,
 function ownerOf ( path: string, sources: Sources ): string | undefined {
 
     const name = /^features\/([^/]+)\/index\.tsx$/.exec(path)?.[1];
-    const manifest = name ? sources.get(`features/${name}/feature.ts`) : undefined;
+    const manifest = name ? sources.get(`api/features/${name}.ts`) : undefined;
 
     return manifest ? /owner:\s*["'](server|client)["']/.exec(manifest)?.[1] : undefined;
 

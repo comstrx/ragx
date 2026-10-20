@@ -1,20 +1,25 @@
+import { rmSync } from "node:fs";
 import { resolve } from "node:path";
+import { views } from "@/api/features";
+import { reserved } from "@/lib/spec/routes";
 import { browserConfig, connectionOrigins } from "@/lib/std/api";
 import { unique } from "@/lib/std/array";
+import { preferenceNames } from "@/lib/std/cookie";
 import { settingsResource } from "@/lib/std/spec";
-import { featureEntry, featureFacts, iconFont, registryModule } from "@/lib/std/tooling";
+import { featureEntry, iconFont, registryModule, routingOf, viewFacts } from "@/lib/std/tooling";
 import { emojis, iconAliases, iconNames } from "@/lib/std/world";
+import { bootScript, doorPage } from "./boot.ts";
 import { root, tools, writeFile } from "./core.ts";
 import { securityHeaders } from "./security.ts";
-import { bootScript, themeCss } from "./theme.ts";
+import { themeCss } from "./theme.ts";
 
 type Reach = { path: string; features: readonly string[] };
 
 function mountModule ( folder: string, names: readonly string[] ): string {
 
-    const views = names.map(( name ) => `    ${JSON.stringify(name)}: dynamic(() => import(${featureEntry(root, folder, name)})),`);
+    const loads = names.map(( name ) => `    ${JSON.stringify(name)}: dynamic(() => import(${featureEntry(root, folder, name)})),`);
 
-    return `import dynamic from "next/dynamic";\n\nexport default {\n${views.join("\n")}\n};\n`;
+    return `import dynamic from "next/dynamic";\n\nexport default {\n${loads.join("\n")}\n};\n`;
 
 }
 function preloadModule ( folder: string, names: readonly string[], screens: readonly Reach[] ): string {
@@ -25,23 +30,33 @@ function preloadModule ( folder: string, names: readonly string[], screens: read
 
 }
 
+function door ( page: string | null ): void {
+
+    if ( page ) writeFile("public/index.html", page);
+    else rmSync(resolve(root, "public/index.html"), { force: true });
+
+}
+
 export const compileSpec = tools.build(import.meta.url, {
     brand: ( config ) => [config.content.logo, config.content.logo_dark, config.content.icon],
     engine: { flags: true, emoji: emojis.files, fonts: true },
     emit: async ({ spec, config, assets, folder }) => {
 
         const icons = await iconFont(iconNames, iconAliases, "woff2");
-        const facts = await featureFacts(resolve(root, "src", "features"));
+        const facts = viewFacts(views);
         const owned = ( owner: "client" | "server" ) => spec.schema.features.filter(( name ) => facts[name]?.owner === owner);
         const site = spec.config.content.url;
         const origins = connectionOrigins(spec.config.api);
         const media = unique([...origins, ...spec.config.settings.mediaOrigins]);
+        const routing = routingOf(config.settings);
+        const entrance = config.settings.output === "export" && routing.localized;
+
         writeFile("public/_generated/boot.js", bootScript(spec.identity, config.settings.theme.default));
+        door(entrance ? doorPage({ identity: spec.identity, name: config.content.name, routing }) : null);
 
         return {
             data: {
                 settings: settingsResource(config.settings),
-                build: { output: config.settings.output },
                 browser: config.api ? { ...browserConfig(config.api, config.contract), realtime: config.realtime } : null,
             },
             registry: owned("server"),
@@ -52,6 +67,9 @@ export const compileSpec = tools.build(import.meta.url, {
             },
             meta: {
                 output: config.settings.output,
+                routing,
+                reserved,
+                language: preferenceNames(spec.identity).language,
                 indexed: spec.schema.indexed,
                 connect: origins,
                 secure: typeof site === "string" && site.startsWith("https://"),

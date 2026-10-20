@@ -7,6 +7,7 @@ export {
     type Dictionary,
     deepMerge,
     includes,
+    isPlain,
     isRecord,
     isScalar,
     kindOf,

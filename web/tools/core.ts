@@ -1,7 +1,7 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { reasons } from "@/api/core";
-import { endpoints } from "@/api/features";
+import { endpoints, views } from "@/api/features";
 import { type Locale, supportedLocales } from "@/lib/spec/languages";
 import { type Compiled, validateSpec } from "@/lib/spec/surface";
 import { catalogueFacts } from "@/lib/std/spec";
@@ -14,6 +14,9 @@ const sources = ["src", "tools", "tests", "benches", "specs"];
 const measured = /\.(?:ts|tsx|css)$/;
 const literal = /#[0-9a-f]{3,8}\b|\b(?:rgb|hsl|oklch|color)a?\(|(?<![\w-])(?!0(?:\.0+)?(?![.\d]))\d*\.?\d+(?:px|rem|em|ms|s)\b/i;
 const free = ["tokens.css"];
+const arbitrary = /[\w:-]*\[[^\]\s]*\]/g;
+const faded = /\b(?:bg|text|border|ring|outline|fill|stroke|from|via|to|shadow|decoration|caret|accent|divide|placeholder)-[\w-]+\/\d+/g;
+const marked = ["elements", "icons"];
 
 export const tools = createTools<Compiled, Locale>({
     root: new URL("..", import.meta.url),
@@ -21,6 +24,7 @@ export const tools = createTools<Compiled, Locale>({
     origin: "SPEC_API_URL",
     locales: supportedLocales,
     catalogue: catalogueFacts(endpoints),
+    views,
     reasons,
     validate: validateSpec,
     assets: [
@@ -33,14 +37,15 @@ export const tools = createTools<Compiled, Locale>({
         foundation: /^(react(?:\/|$)|next(?:\/|$)|server-only$)/,
         vendor: ["lib/providers/", "lib/std/"],
         html: true,
+        structure: ["proxy.server.ts"],
         owners: {
-            "lib/spec/config.ts": ["@spec/routing", "@spec/settings", "@spec/build"],
+            "lib/spec/config.ts": ["@spec/routing", "@spec/settings"],
             "lib/spec/runtime.ts": ["@spec/config", "@spec/schema", "@spec/messages"],
             "lib/spec/browser.ts": ["@spec/browser"],
-            "app/(web)/[locale]/layout.tsx": ["@spec/theme.css"],
-            "app/(web)/[locale]/[[...path]]/mount.ts": ["@spec/mount"],
-            "app/(web)/[locale]/[[...path]]/warm.ts": ["@spec/preload"],
-            "app/(web)/[locale]/[[...path]]/blocks.tsx": ["@spec/registry"],
+            "app/[locale]/layout.tsx": ["@spec/theme.css"],
+            "app/[locale]/[[...path]]/mount.ts": ["@spec/mount"],
+            "app/[locale]/[[...path]]/warm.ts": ["@spec/preload"],
+            "app/[locale]/[[...path]]/blocks.tsx": ["@spec/registry"],
         },
         layers: [
             ["lib/std/"],
@@ -54,7 +59,7 @@ export const tools = createTools<Compiled, Locale>({
             ["elements/", "icons/", "styles/"],
             ["components/", /^features\/[^/]+\/components\//],
             ["features/"],
-            ["app/"],
+            ["app/", "proxy.server.ts"],
         ],
     },
 });
@@ -76,6 +81,24 @@ export function styleIssues ( folder: string, files: readonly string[] ): string
         });
 
     });
+
+}
+export function classIssues ( folder: string ): string[] {
+
+    const files = marked.filter(( layer ) => existsSync(resolve(folder, layer))).flatMap(( layer ) =>
+        walk(resolve(folder, layer))
+            .filter(( item ) => item.name.endsWith(".tsx"))
+            .map(( item ) => ({ ...item, layer })),
+    );
+
+    return files.flatMap(({ path, name, layer }) => readFileSync(path, "utf8").split("\n").flatMap(( line, index ) => {
+
+        const raw = [...line.matchAll(arbitrary)].map(( found ) => found[0]).filter(( found ) => literal.test(found));
+        const tinted = [...line.matchAll(faded)].map(( found ) => found[0]);
+
+        return [...raw, ...tinted].map(( found ) => `src/${layer}/${name}:${index + 1}: a raw value belongs in tokens.css, not in a class: ${found}`);
+
+    }));
 
 }
 export function lineIssues ( folder: string, prefix: string, limit = columns ): string[] {
@@ -100,11 +123,11 @@ export function checkLines (): void {
 }
 export function checkStyles (): void {
 
-    const problems = styleIssues(resolve(root, "src", "styles"), ["globals.css", "elements.css"]);
+    const problems = [...styleIssues(resolve(root, "src", "styles"), ["globals.css"]), ...classIssues(resolve(root, "src"))];
 
     if ( problems.length ) throw new Error(problems.join("\n"));
 
-    report("Styles: every value outside tokens.css is a token.");
+    report("Styles: every value outside tokens.css is a token, in stylesheets and in element classes.");
 
 }
 

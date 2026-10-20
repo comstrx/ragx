@@ -1,6 +1,6 @@
 import type { Locale } from "@/lib/spec/languages";
 import type { CompiledConfig, CompiledScreen } from "@/lib/spec/surface";
-import { type MessageText, prefixed, type Routing } from "@/lib/std/translate";
+import { hrefOf, type MessageText, type Routing } from "@/lib/std/translate";
 
 export type Site = {
     config: CompiledConfig;
@@ -18,7 +18,7 @@ export function absolute ( site: Site, path: string ): string | undefined {
 }
 export function pageUrl ( site: Site, locale: string, path: string ): string | undefined {
 
-    return absolute(site, prefixed(locale, path));
+    return absolute(site, hrefOf(locale, path, site.routing));
 
 }
 export function languageLinks ( site: Site, path: string ): Record<string, string> {

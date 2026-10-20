@@ -122,7 +122,7 @@ export function compileFeature<B extends object> (
     if ( consumesSignal(entry) && manifest.owner !== "client" ) {
 
         walk.issues.push(
-            `${where}: a signal-driven or live port needs a client-owned feature; ${entry.name} is server-owned.`,
+            `${where}: a signal-driven, live or query-bound port needs a client-owned feature; ${entry.name} is server-owned.`,
         );
 
     }

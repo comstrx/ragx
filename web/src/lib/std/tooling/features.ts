@@ -1,9 +1,5 @@
-import { existsSync, readdirSync } from "node:fs";
-import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
-import { isRecord } from "@/lib/std/base";
+import { isPlain } from "@/lib/std/base";
 import { type Manifest, manifestShape } from "@/lib/std/spec";
-import { failure } from "./core.ts";
 
 export type Features = Record<string, Manifest>;
 
@@ -19,7 +15,7 @@ function literal ( value: unknown, where: string ): void {
 
         });
 
-    } else if ( isRecord(value) ) {
+    } else if ( isPlain(value) ) {
 
         for ( const [key, item] of Object.entries(value) ) literal(item, `${where}.${key}`);
 
@@ -30,56 +26,26 @@ function literal ( value: unknown, where: string ): void {
     }
 
 }
-export function featureNames ( folder: string ): string[] {
+function manifestOf ( name: string, view: unknown ): Manifest {
 
-    if ( !existsSync(folder) ) return [];
-
-    return readdirSync(folder, { withFileTypes: true })
-        .filter(( entry ) => entry.isDirectory())
-        .map(( entry ) => entry.name)
-        .sort();
-
-}
-async function manifestOf ( folder: string, name: string ): Promise<Manifest> {
-
-    const path = resolve(folder, name, "feature.ts");
-
-    if ( !existsSync(path) ) throw new Error(`features/${name}: a feature declares itself in feature.ts.`);
-
-    const loaded = ((await import(pathToFileURL(path).href)) as { default?: unknown }).default;
-    const parsed = manifestShape.safeParse(loaded);
+    const where = `api/features/${name}.ts view`;
+    const parsed = manifestShape.safeParse(view);
 
     if ( !parsed.success ) {
 
-        const issues = parsed.error.issues.map(( issue ) => `${issue.path.join(".") || "manifest"} ${issue.message}`);
+        const issues = parsed.error.issues.map(( issue ) => `${issue.path.join(".") || "view"} ${issue.message}`);
 
-        throw new Error(`features/${name}/feature.ts: ${issues.join("; ")}`);
+        throw new Error(`${where}: ${issues.join("; ")}`);
 
     }
 
-    literal(parsed.data.options, `features/${name}/feature.ts options`);
+    literal(parsed.data.options, `${where} options`);
 
     return parsed.data;
 
 }
-export async function featureFacts ( folder: string ): Promise<Features> {
+export function viewFacts ( views: Readonly<Record<string, unknown>> ): Features {
 
-    const facts: Features = {};
-
-    for ( const name of featureNames(folder) ) {
-
-        try {
-
-            facts[name] = await manifestOf(folder, name);
-
-        } catch ( error ) {
-
-            throw new Error(failure(error));
-
-        }
-
-    }
-
-    return facts;
+    return Object.fromEntries(Object.keys(views).sort().map(( name ) => [name, manifestOf(name, views[name])]));
 
 }

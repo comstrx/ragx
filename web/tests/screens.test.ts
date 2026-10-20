@@ -102,7 +102,7 @@ describe("linked features", () => {
             { path: "/login", features: ["login"] },
             { path: "/catalog/:id/edit", features: ["form", "catalogue"] },
         ];
-        const routing = { locales: ["en", "ar"], defaultLocale: "en" };
+        const routing = { locales: ["en", "ar"], defaultLocale: "en", localized: true };
         const paths = ["/login", "/ar/catalog/7/edit", "/missing", "/", "/ar/login"];
 
         expect(linkedFeatures(paths, screens, routing)).toEqual(["login", "form", "catalogue", "search"]);

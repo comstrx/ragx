@@ -15,6 +15,8 @@ type Meta = {
 };
 
 const root = import.meta.dirname;
+const pages = ["tsx", "ts"];
+const served = ["server.tsx", "server.ts", ...pages];
 
 function compiled ( mode: "development" | "production" ): Meta {
     const path = resolve(root, "node_modules/.cache/spec", mode, "meta.json");
@@ -34,10 +36,12 @@ export default function nextConfig ( phase: string ): NextConfig {
     const development = phase === PHASE_DEVELOPMENT_SERVER;
     const spec = compiled(development ? "development" : "production");
     const devOrigins = (process.env.NEXT_DEV_ORIGINS ?? "").split(/[\s,]+/).filter(Boolean);
+    const exported = spec.output === "export" && !development;
 
     return {
-        output: spec.output,
+        ...(development ? {} : { output: spec.output }),
         distDir: ".next/out",
+        pageExtensions: exported ? pages : served,
         trailingSlash: false,
         productionBrowserSourceMaps: false,
         reactCompiler: true,

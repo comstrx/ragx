@@ -1,6 +1,7 @@
 export { bench, do_not_optimize, run } from "mitata";
 export { type Analysis, analyze, type Layer, type Rules, type Sources, type SurfaceRules } from "./architecture.ts";
 export type { AssetFolder, Files, Skip } from "./assets.ts";
+export { type Budgets, breaches, measured, type Trial } from "./bench.ts";
 export { type Buildable, type BuildPlan, type Built, type Compile, type Emitted, type Meta, type Prepared, prepareSpec } from "./build.ts";
 export {
     assetHash,
@@ -17,6 +18,7 @@ export {
     type Routing,
     registryModule,
     requireModule,
+    routingOf,
     selectConnection,
     specAliases,
     syncEngineAssets,
@@ -32,7 +34,7 @@ export {
     walk,
     within,
 } from "./core.ts";
-export { type Features, featureFacts } from "./features.ts";
+export { type Features, viewFacts } from "./features.ts";
 export { type StaticFont, staticFonts } from "./fonts.ts";
 export { type IconFont, type IconFormat, iconFont } from "./icons.ts";
 export { composeMessages, type Dictionaries, type MessageContracts, type MessageSources, messageIssues } from "./messages.ts";

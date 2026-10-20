@@ -13,7 +13,7 @@ declare module "@spec/routing" {
 
     import type { Locale } from "@/lib/spec/languages";
 
-    const routing: { locales: Locale[]; defaultLocale: Locale };
+    const routing: { locales: Locale[]; defaultLocale: Locale; localized: boolean };
 
     export default routing;
 
@@ -25,13 +25,6 @@ declare module "@spec/settings" {
     const settings: SettingsResource;
 
     export default settings;
-
-}
-declare module "@spec/build" {
-
-    const build: { output: "export" | "standalone" };
-
-    export default build;
 
 }
 declare module "@spec/schema" {

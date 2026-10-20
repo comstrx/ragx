@@ -1,4 +1,4 @@
-import { bench, do_not_optimize, run } from "@/lib/std/tooling";
+import { bench, do_not_optimize, measured  } from "@/lib/std/tooling";
 import { countries, cssVariables, currencies, defineTokens, defineWorld, emojis, keys } from "@/lib/std/world";
 
 const mine = defineWorld({ countries: ["EG", "SA", "AE"], currencies: ["EGP", "SAR", "USD"] });
@@ -26,4 +26,18 @@ bench("emojis.get", () => do_not_optimize(emojis.get("❤")));
 bench("emojis.imageOf", () => do_not_optimize(emojis.imageOf("🇪🇬")));
 bench("cssVariables", () => do_not_optimize(cssVariables(tokens, "light", ":root")));
 
-await run();
+await measured({
+    "defineWorld (all)": 6000,
+    "countries.search arabic": 2500,
+    "countries.search latin prefix": 2000,
+    "countries.search two words": 2000,
+    "currencies.search by country": 8000,
+    "keys.search digits": 800,
+    "keys.search area": 450,
+    "filtered countries.search": 40,
+    "emojis.search arabic": 80000,
+    "emojis.search latin prefix": 150000,
+    "emojis.get": 60,
+    "emojis.imageOf": 20,
+    "cssVariables": 500,
+});

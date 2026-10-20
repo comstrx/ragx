@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { type Locale, languages } from "@/lib/spec/languages";
+import { separator } from "@/lib/std/screen";
 import { crawlable, languageLinks, type Page, pageUrl, pictureOf, type Site } from "./site.ts";
 
 type Robots = NonNullable<Metadata["robots"]>;
@@ -73,7 +74,7 @@ export function siteMetadata ( site: Site ): Metadata {
 
     return {
         ...(content.url ? { metadataBase: new URL(content.url) } : {}),
-        title: { default: content.seo.title ?? content.name, template: `%s · ${content.name}` },
+        title: { default: content.seo.title ?? content.name, template: `%s${separator}${content.name}` },
         description: content.seo.description ?? content.description ?? undefined,
         applicationName: content.name,
         ...(indexed && content.seo.keywords.length ? { keywords: content.seo.keywords } : {}),

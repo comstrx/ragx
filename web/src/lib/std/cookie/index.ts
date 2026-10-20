@@ -3,6 +3,7 @@ export {
     documentJar,
     headerJar,
     type Jar,
+    jarStore,
     parseCookies,
     type ReadableDocument,
     type SameSite,
@@ -17,4 +18,5 @@ export {
     type PreferenceReader,
     type Preferences,
     preferenceJar,
+    preferenceNames,
 } from "./preferences.ts";

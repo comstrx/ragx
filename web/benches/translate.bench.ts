@@ -1,5 +1,5 @@
 import { interpolate } from "@/lib/std/parse";
-import { bench, do_not_optimize, run } from "@/lib/std/tooling";
+import { bench, do_not_optimize, measured  } from "@/lib/std/tooling";
 import { formatDate, formatMoney, negotiate, plural, translator } from "@/lib/std/translate";
 
 const t = translator({ cart: { items: "{count} items for {total}" } });
@@ -12,4 +12,11 @@ bench("formatMoney", () => do_not_optimize(formatMoney("ar", 1234.5, "USD")));
 bench("formatDate", () => do_not_optimize(formatDate("en", at, "day", "UTC")));
 bench("plural", () => do_not_optimize(plural("ar", 3, { other: "{n} items", few: "{n} items" })));
 
-await run();
+await measured({
+    "negotiate": 15,
+    "translator.interpolate": 7,
+    "interpolate dotted": 4,
+    "formatMoney": 65,
+    "formatDate": 30,
+    "plural": 7,
+});

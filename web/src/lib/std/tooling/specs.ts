@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import type { Catalogue } from "@/lib/std/spec";
 import { specGroup, specName } from "@/lib/std/validate";
 import { compare, directories, entries, failure, guard } from "./core.ts";
-import { type Features, featureFacts } from "./features.ts";
+import { type Features, viewFacts } from "./features.ts";
 import { composeMessages, type Dictionaries } from "./messages.ts";
 
 export type Validate<C, L extends string> = (
@@ -22,6 +22,7 @@ export type LoaderOptions<C, L extends string> = {
     locales: readonly L[];
     brandFolders: readonly string[];
     catalogue: Catalogue;
+    views: Readonly<Record<string, unknown>>;
     validate: Validate<C, L>;
     origin?: string | undefined;
 };
@@ -110,9 +111,8 @@ function brandIssues ( folder: string, brandFolders: readonly string[] ): void {
 }
 export function createLoader<C, L extends string> ( options: LoaderOptions<C, L> ): Loader<C, L> {
 
-    const { root, variable, locales, brandFolders, catalogue, validate, origin } = options;
+    const { root, variable, locales, brandFolders, catalogue, views, validate, origin } = options;
     const specs = resolve(root, "specs");
-    const features = resolve(root, "src", "features");
     const messages = resolve(root, "messages");
     const installedSpecs = ( directory = specs ): string[] =>
         discover(directory).sort(( a, b ) => compare(identityOf(a), identityOf(b)) || compare(a, b));
@@ -146,11 +146,8 @@ export function createLoader<C, L extends string> ( options: LoaderOptions<C, L>
     };
     const load = async ( identity: string, folder: string, directory: string ): Promise<Loaded<C, L>> => {
 
-        const [config, schema, facts] = await Promise.all([
-            definition(folder, "config", directory),
-            definition(folder, "schema", directory),
-            featureFacts(features),
-        ]);
+        const [config, schema] = await Promise.all([definition(folder, "config", directory), definition(folder, "schema", directory)]);
+        const facts = viewFacts(views);
 
         brandIssues(folder, brandFolders);
 

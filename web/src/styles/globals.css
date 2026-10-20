@@ -1,40 +1,60 @@
-:root {
-    color-scheme: light dark;
+@import "tailwindcss" source(none);
+@import "./tokens.css";
+
+@source "../elements";
+@source "../icons";
+
+@layer base {
+    :root {
+        color-scheme: light dark;
+    }
+
+    html, body {
+        min-height: var(--spacing-screen);
+        background: var(--color-body);
+        color: var(--color-ink);
+    }
+
+    body {
+        font-family: var(--font-sans);
+        font-size: var(--text-md);
+        line-height: var(--text-md--line-height);
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+    }
+
+    :focus-visible {
+        outline: var(--focus-width) solid var(--color-focus);
+        outline-offset: var(--focus-offset);
+    }
+
+    ::selection {
+        background: var(--color-glow);
+    }
+
+    * {
+        scrollbar-width: none;
+    }
+
+    html, [data-scroll] {
+        scrollbar-width: thin;
+        scrollbar-color: var(--color-strong) transparent;
+    }
+
+    ::view-transition {
+        pointer-events: none;
+    }
+
+    ::view-transition-old(*), ::view-transition-new(*) {
+        animation-duration: var(--motion-base);
+        animation-timing-function: var(--ease-standard);
+    }
 }
-*, *::before, *::after {
-    box-sizing: border-box;
-}
-html, body {
-    margin: 0;
-    min-height: var(--height-screen);
-    background: var(--body);
-    color: var(--ink);
-}
-body {
-    font-family: var(--font-sans, system-ui, sans-serif);
-    font-size: var(--type-md-size);
-    line-height: var(--type-md-line);
-    -webkit-font-smoothing: antialiased;
-    text-rendering: optimizeLegibility;
-}
-button, input, select, textarea {
-    font: inherit;
-    color: inherit;
-}
-:focus-visible {
-    outline: var(--focus-width) solid var(--focus);
-    outline-offset: var(--focus-offset);
-}
-::selection {
-    background: color-mix(in srgb, var(--primary) var(--tint-strong), transparent);
-}
-[hidden] {
-    display: none;
-}
+
 @media (prefers-reduced-motion: reduce) {
-    *, *::before, *::after {
+    *, *::before, *::after, ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) {
         animation-duration: var(--motion-instant);
-        animation-iteration-count: 1;
+        animation-delay: var(--motion-instant);
         transition-duration: var(--motion-instant);
     }
 }

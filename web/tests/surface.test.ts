@@ -226,15 +226,22 @@ describe("signals in the compiler", () => {
             { name: "box", heading: true },
             { name: "shelf", ports: { items: { read: "products.list", input: { search: { signal: "search" } } } } },
         ]);
+        const queried = plan([
+            { name: "box", heading: true },
+            { name: "shelf", ports: { items: { read: "products.list", input: { search: { query: "q" } } } } },
+        ]);
+        const placed = "home.blocks[0].features[1]";
+        const rendered = `${placed}: a client-rendered screen needs client-owned features; shelf is server-owned.`;
+        const refusal = `${placed}: a signal-driven, live or query-bound port needs a client-owned feature; shelf is server-owned.`;
 
         compileScreen(good);
         compileScreen(orphan);
         compileScreen(server);
+        compileScreen(queried);
         expect(good.issues).toEqual([]);
         expect(orphan.issues).toEqual(["home: signal search is read but no feature on the screen emits it."]);
-        expect(
-            server.issues.some(( issue ) => issue.includes("signal-driven or live port needs a client-owned feature")),
-        ).toBe(true);
+        expect(server.issues).toEqual([rendered, refusal]);
+        expect(queried.issues).toEqual([rendered, refusal]);
 
     });
     test("a live port needs a realtime contract and a client-owned feature, and compiles its channel", () => {
@@ -261,7 +268,10 @@ describe("signals in the compiler", () => {
             live: { channel: "catalog.1", events: ["catalog.event"] },
         });
         compileScreen(server);
-        expect(server.issues.some(( issue ) => issue.includes("live port needs a client-owned feature"))).toBe(true);
+        expect(server.issues).toEqual([
+            "home.blocks[0].features[1]: a client-rendered screen needs client-owned features; shelf is server-owned.",
+            "home.blocks[0].features[1]: a signal-driven, live or query-bound port needs a client-owned feature; shelf is server-owned.",
+        ]);
 
     });
 

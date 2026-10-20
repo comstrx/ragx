@@ -2,17 +2,23 @@ import { cpSync, existsSync, readFileSync, type Stats, statSync } from "node:fs"
 import { extname, normalize, resolve, sep } from "node:path";
 import process from "node:process";
 import { brotliCompressSync, constants, gzipSync } from "node:zlib";
+import { parseCookies } from "@/lib/std/cookie";
 import { task } from "@/lib/std/tooling";
+import { type Reserved, type Routing, routable, routeOf } from "@/lib/std/translate";
 import { securityHeaders } from "./security.ts";
 
 export type Served = { path: string; status: number } | null;
 export type Built = {
     identity: string;
     output: "export" | "standalone";
+    routing?: Routing | undefined;
+    reserved?: Reserved | undefined;
+    language?: string | undefined;
     connect?: string[] | undefined;
     media?: string[] | undefined;
     security?: Record<string, string> | undefined;
 };
+export type Address = { path: string } | { redirect: string; status: 307 | 308 };
 export type Encoding = "br" | "gzip" | null;
 export type Staged = { server: string; copied: string[] };
 
@@ -22,6 +28,7 @@ const meta = resolve(root, "node_modules/.cache/spec/production/meta.json");
 const year = "public, max-age=31536000, immutable";
 const hour = "public, max-age=3600";
 const fresh = "no-cache";
+const varying = "Accept-Language, Cookie";
 const packable = new Set([".html", ".js", ".css", ".json", ".svg", ".txt", ".xml", ".map", ".webmanifest"]);
 const packFloor = 512;
 const packCeiling = 4 * 1024 * 1024;
@@ -133,6 +140,21 @@ function packedBody ( path: string, stats: Stats, encoding: "br" | "gzip" ): Uin
     return bytes;
 
 }
+export function addressOf ( pathname: string, asked: Headers, built: Built ): Address {
+
+    const { routing, reserved, language } = built;
+
+    if ( !routing || !reserved || !routable(pathname, reserved) ) return { path: pathname };
+
+    const saved = language ? parseCookies(asked.get("cookie"))[language] : undefined;
+    const way = routeOf({ path: pathname, language: saved, accept: asked.get("accept-language") }, routing);
+
+    if ( way.kind === "redirect" ) return { redirect: way.path, status: way.status };
+    if ( way.kind === "pass" ) return { path: pathname };
+
+    return { path: way.path.endsWith("/index.txt") ? `${way.path.slice(0, -"/index.txt".length)}.txt` : way.path };
+
+}
 export function respond ( folder: string, pathname: string, asked: Headers = new Headers(), security?: Record<string, string> ): Response {
 
     const found = locate(folder, pathname);
@@ -197,8 +219,28 @@ function serve ( built: Built, port: number, hostname: string ): void {
     if ( !existsSync(out) ) throw new Error("There is no exported build to serve; run bun run build first.");
 
     const security = headersOf(built);
+    const fetch = ( request: Request ): Response => {
 
-    Bun.serve({ port, hostname, fetch: ( request ) => respond(out, new URL(request.url).pathname, request.headers, security) });
+        const url = new URL(request.url);
+        const address = addressOf(url.pathname, request.headers, built);
+
+        if ( "redirect" in address ) {
+
+            const headers = { ...security, Location: `${address.redirect}${url.search}`, Vary: varying };
+
+            return new Response(null, { status: address.status, headers });
+
+        }
+
+        const response = respond(out, address.path, request.headers, security);
+
+        if ( address.path !== url.pathname ) response.headers.append("Vary", varying);
+
+        return response;
+
+    };
+
+    Bun.serve({ port, hostname, fetch });
     process.stdout.write(`Serving ${built.identity} from ${out} on http://${hostname}:${port}\n`);
 
 }

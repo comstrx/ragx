@@ -8,6 +8,15 @@ export function isRecord ( value: unknown ): value is Dictionary {
     return value !== null && typeof value === "object" && !Array.isArray(value);
 
 }
+export function isPlain ( value: unknown ): value is Dictionary {
+
+    if ( !isRecord(value) ) return false;
+
+    const prototype = Object.getPrototypeOf(value);
+
+    return prototype === Object.prototype || prototype === null;
+
+}
 export function isScalar ( value: unknown ): value is string | number | boolean {
 
     return typeof value === "string" || typeof value === "number" || typeof value === "boolean";

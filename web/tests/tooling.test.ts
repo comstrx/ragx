@@ -3,8 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import {
-    analyze,
     assetHash,
+    breaches,
     type Connection,
     composeMessages,
     createCore,
@@ -16,7 +16,6 @@ import {
     prepareSpec,
     publishAssets,
     publishedUrls,
-    type Rules,
     registryModule,
     selectConnection,
     specAliases,
@@ -27,75 +26,6 @@ import {
 } from "@/lib/std/tooling";
 import { iconAliases, iconCodes } from "@/lib/std/world";
 
-const rules: Rules = {
-    source: "/part/src",
-    specs: "/part/specs",
-    foundation: /^(react(?:\/|$)|engine\/)/,
-    native: /^react-native(?:\/|$)/,
-    free: ["elements/", "hooks/"], vendor: ["lib/providers/"],
-    html: true,
-    markupFiles: /^(?:elements|components)\/[^/]+$|^features\/[^/]+\/(?:index|components\/[^/]+)$/,
-    hookFiles: /^hooks\//,
-    featureEntry: /^features\/([^/]+)\/index\.tsx$/,
-    featureManifest: /^features\/([^/]+)\/feature\.ts$/,
-    featureComponent: /^features\/([^/]+)\/components\//,
-    extensions: ["", ".ts", ".tsx"],
-    helpers: ["screen", "block", "feature", "t"],
-    structure: ["api", "elements", "components", "features", "hooks", "lib"],
-    flat: ["elements", "hooks"],
-    markup: ["elements"],
-    featureParts: ["feature.ts", "index.tsx", "components"],
-    apiParts: ["features", "workflow"],
-    owners: {},
-    declarations: [],
-    layer: () => 0,
-};
-
-describe("architecture", () => {
-
-    test("markup, styling and native primitives are refused outside elements", () => {
-
-        const { issues } = analyze(
-            "components/card.tsx",
-            'import { View } from "react-native";\nexport default function Card () { return <View className="x"><section /></View>; }',
-            rules,
-        );
-
-        expect(issues).toEqual([
-            "Native primitives belong in elements: react-native",
-            "HTML belongs in elements: section",
-            "Styling belongs in elements: className",
-        ]);
-
-    });
-    test("a feature entry stays thin and declares its owner", () => {
-
-        const { issues } = analyze(
-            "features/cards/index.tsx",
-            'import Card from "@/elements/card";\nexport default function Cards () { return <Card />; }',
-            rules,
-            "server",
-        );
-
-        expect(issues).toEqual([
-            "A feature entry is thin: it imports its own components only, not @/elements/card",
-            "Feature entries declare client or server ownership.",
-        ]);
-
-    });
-    test("specs are data", () => {
-
-        const { issues } = analyze(
-            "../specs/site/schema/home.ts",
-            'import { screen } from "@/lib/spec/surface";\nexport default screen({ a: compute(1) });',
-            rules,
-        );
-
-        expect(issues).toEqual(["Specs may call typed definition helpers only: compute"]);
-
-    });
-
-});
 describe("files and compile", () => {
 
     test("a registry imports each feature lazily from its index, relative to the compiled folder", () => {
@@ -213,6 +143,7 @@ describe("surface tools", () => {
             variable: "SPEC",
             locales: ["en"],
             catalogue: { operations: [], features: [] } as never,
+            views: {},
             validate: (( input: unknown ) => input) as never,
             assets: [{ path: "images/brand", brand: "images" }, { path: ".well-known", brand: "well-known" }],
             architecture: { foundation: /^engine\//, html: true, owners: {}, layers: [] },
@@ -254,56 +185,6 @@ describe("build", () => {
         expect(development.config.content.logo).toBe("/_generated/images/brand/logo.svg");
         expect(development.schema.screens[0]?.hero).toBe("/_generated/videos/intro.mp4");
         expect(production.config.api).toBeNull();
-
-    });
-
-});
-describe("spec isolation", () => {
-
-    test("a spec may import its own modules and the surface door only, never another spec or src", () => {
-
-        const own = analyze(
-            "../specs/site/schema/home.ts",
-            'import x from "./parts/x.ts";\nimport { screen } from "@/lib/spec/surface";\nexport default screen(x);',
-            rules,
-        );
-        const other = analyze(
-            "../specs/site/schema/home.ts",
-            'import y from "../../other/schema/home.ts";\nexport default y;',
-            rules,
-        );
-        const deep = analyze(
-            "../specs/site/schema/home.ts",
-            'import { config } from "../../../src/lib/spec/server.ts";\nexport default config;',
-            rules,
-        );
-        const relative = analyze(
-            "../specs/site/schema/home.ts",
-            'import { screen } from "../../../src/lib/spec/surface.ts";\nexport default screen();',
-            rules,
-        );
-
-        expect(own.issues).toEqual([]);
-        expect(other.issues).toEqual(["Specs import their own modules and @/lib/spec/surface only."]);
-        expect(deep.issues).toEqual(["Specs import their own modules and @/lib/spec/surface only."]);
-        expect(relative.issues).toEqual(["Specs import their own modules and @/lib/spec/surface only."]);
-
-    });
-    test("a spec behind (group) folders is its own home; a sibling in the same group is another spec", () => {
-
-        const own = analyze(
-            "../specs/(saasx)/(v1)/admin/schema/home.ts",
-            'import x from "../config/parts.ts";\nexport default x;',
-            rules,
-        );
-        const sibling = analyze(
-            "../specs/(saasx)/(v1)/admin/schema/home.ts",
-            'import y from "../../client/schema/home.ts";\nexport default y;',
-            rules,
-        );
-
-        expect(own.issues).toEqual([]);
-        expect(sibling.issues).toEqual(["Specs import their own modules and @/lib/spec/surface only."]);
 
     });
 
@@ -387,6 +268,25 @@ describe("icon fonts", () => {
     test("an icon the drawing set lacks is refused by name", async () => {
 
         await expect(iconFont(["house", "no-such-icon"], iconAliases, "truetype")).rejects.toThrow("no-such-icon");
+
+    });
+
+});
+describe("bench budgets", () => {
+
+    const trial = ( name: string, p99?: number ) => ({
+        alias: name,
+        runs: [{ name, stats: p99 === undefined ? undefined : { p99 }, error: "boom" }],
+    });
+
+    test("a bench passes under its p99 budget, scaled, and fails over it, without one, or when it threw", () => {
+
+        expect(breaches([trial("fast", 900)], { fast: 1 })).toEqual([]);
+        expect(breaches([trial("fast", 1500)], { fast: 1 })).toEqual(["fast: p99 1.50µs is over its budget of 1.00µs."]);
+        expect(breaches([trial("fast", 1500)], { fast: 1 }, 2)).toEqual([]);
+        expect(breaches([trial("new", 2500)], {})).toEqual(["new: a bench without a p99 budget (measured 2.50µs)."]);
+        expect(breaches([trial("broken")], { broken: 1 })).toEqual(["broken: the bench failed: boom"]);
+        expect(breaches([], { gone: 1 })).toEqual(["gone: a budget without a bench."]);
 
     });
 

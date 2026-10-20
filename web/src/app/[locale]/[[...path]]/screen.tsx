@@ -1,4 +1,5 @@
 import { type ReactNode, Suspense } from "react";
+import Pending from "@/elements/pending";
 import Shell from "@/elements/shell";
 import type { Screen as Facing, Route } from "@/lib/spec/feature";
 import type { Locale } from "@/lib/spec/languages";
@@ -27,7 +28,8 @@ async function part ( name: keyof Parts, screen: Facing, route: Route ): Promise
 export async function Screen ({ screen, route }: Props) {
 
     const locale = route.locale as Locale;
-    const [nav, sidebar, footer, loader] = await Promise.all(parts.map(( name ) => part(name, screen, route)));
+    const [nav, sidebar, footer, chosen] = await Promise.all(parts.map(( name ) => part(name, screen, route)));
+    const loader = chosen ?? (screen.options.loader ? <Pending label={text({ key: "state.loading" }, locale)} /> : null);
     const facts: Facts = { screen, route, loader };
 
     const blocks = (

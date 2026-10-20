@@ -1,6 +1,4 @@
-import "@/styles/tokens.css";
 import "@/styles/globals.css";
-import "@/styles/elements.css";
 import "@spec/theme.css";
 
 import Script from "next/script";

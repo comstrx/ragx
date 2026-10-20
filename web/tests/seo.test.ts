@@ -30,7 +30,7 @@ const features: Features = {
     },
 };
 const backend = { urls: { production: "https://api.site.test", local: null, browser: null }, options: {} as Record<string, never> };
-const routing = { locales: ["en", "ar"], defaultLocale: "en" };
+const routing = { locales: ["en", "ar"], defaultLocale: "en", localized: true };
 const aboutLinks = { en: "https://site.test/en/about", ar: "https://site.test/ar/about", "x-default": "https://site.test/en/about" };
 const page = ( name: string, path: string, extra: Record<string, unknown> = {}, access?: string ) => screen({
     contents: { name, path, title: t(`nav.${name}`), description: t(`nav.${name}`), ...extra },
@@ -55,8 +55,9 @@ function siteOf ( settings: Record<string, unknown>, seo: Record<string, unknown
 
 }
 
-const indexed = siteOf({ output: "standalone", screen: { render: "server" } }, { title: "Site, the product", keywords: ["ai", "chat"] });
-const silent = siteOf({ screen: { render: "server" } }, {}, false);
+const served = { localization: true, screen: { render: "server" } };
+const indexed = siteOf({ ...served, output: "standalone" }, { title: "Site, the product", keywords: ["ai", "chat"] });
+const silent = siteOf(served, {}, false);
 const [home, about, team] = indexed.screens as [CompiledScreen, CompiledScreen, CompiledScreen];
 
 describe("page metadata", () => {
@@ -97,7 +98,7 @@ describe("page metadata", () => {
         const open = siteMetadata(indexed);
         const closed = siteMetadata(silent);
 
-        expect(open.title).toEqual({ default: "Site, the product", template: "%s · Site" });
+        expect(open.title).toEqual({ default: "Site, the product", template: "%s | Site" });
         expect(String(open.metadataBase)).toBe("https://site.test/");
         expect(open.keywords).toEqual(["ai", "chat"]);
         expect(open.manifest).toBe("/manifest.webmanifest");
@@ -141,7 +142,7 @@ describe("robots, sitemap and manifest", () => {
     test("robots open the site and point at the sitemap when indexed, and close everything otherwise", () => {
 
         expect(robots(indexed)).toEqual({ rules: { userAgent: "*", allow: ["/"] }, sitemap: "https://site.test/sitemap.xml" });
-        expect(robots(siteOf({ screen: { render: "server" } }, { robots: { allow: ["/", "/about"], disallow: ["/private"] } })).rules)
+        expect(robots(siteOf(served, { robots: { allow: ["/", "/about"], disallow: ["/private"] } })).rules)
             .toEqual({ userAgent: "*", allow: ["/", "/about"], disallow: ["/private"] });
         expect(robots(silent)).toEqual({ rules: { userAgent: "*", disallow: "/" } });
 

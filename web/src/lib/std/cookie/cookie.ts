@@ -178,3 +178,13 @@ export function storageJar ( store: Store ): Jar {
     };
 
 }
+export function jarStore ( jar: Jar, options: CookieOptions = {} ): Store {
+
+    return {
+        get: async ( key ) => (await jar.get(key)) ?? null,
+        set: ( key, value ) => jar.set(key, value, options),
+        delete: ( key ) => jar.delete(key, { path: options.path, domain: options.domain }),
+        keys: async () => Object.keys(await jar.all()),
+    };
+
+}

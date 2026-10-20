@@ -9,6 +9,7 @@ export type Persist<S> = {
     store: Persistence;
     keys?: readonly (keyof S & string)[] | undefined;
     version?: number | undefined;
+    fields?: boolean | undefined;
     parse?: (( saved: unknown ) => Partial<S> | undefined) | undefined;
 };
 export type Definition<S extends object, A extends object> = {
@@ -29,7 +30,60 @@ export type Defined<S extends object, A extends object> = {
 };
 
 type Saved<S> = { version: number; state: Partial<S> };
+type Keeper<S> = { read: () => Promise<Partial<S> | undefined>; write: ( state: Partial<S> ) => Promise<void> };
 
+function whole<S> ( store: Persistence, name: string, version: number ): Keeper<S> {
+
+    const saved = typed<Saved<S>>(store);
+
+    return {
+        read: async () => {
+
+            const found = await saved.read(name);
+
+            return found && found.version === version ? found.state : undefined;
+
+        },
+        write: ( state ) => saved.write(name, { version, state }),
+    };
+
+}
+function fields<S> ( store: Persistence, keys: readonly (keyof S & string)[], initial: S ): Keeper<S> {
+
+    const present = keys.filter(( key ) => initial[key] !== undefined && initial[key] !== null);
+    const written = new Map(present.map(( key ) => [key, String(initial[key])] as const));
+
+    return {
+        read: async () => {
+
+            const found = await Promise.all(keys.map(async ( key ) => [key, await store.get(key)] as const));
+
+            const present = found.filter(( entry ): entry is readonly [keyof S & string, string] => entry[1] !== null);
+
+            for ( const [key, value] of present ) written.set(key, value);
+
+            return Object.fromEntries(present) as Partial<S>;
+
+        },
+        write: async ( state ) => {
+
+            for ( const key of keys ) {
+
+                const value = state[key];
+                const text = value === undefined || value === null ? undefined : String(value);
+
+                if ( text === undefined || written.get(key) === text ) continue;
+
+                written.set(key, text);
+
+                await store.set(key, text);
+
+            }
+
+        },
+    };
+
+}
 export function defineStore<S extends object, A extends object> ( definition: Definition<S, A> ): Defined<S, A> {
 
     const { name, initial, actions, persist } = definition;
@@ -51,10 +105,10 @@ export function defineStore<S extends object, A extends object> ( definition: De
                 return { ...initial, ready: !persist, ...actions(setter, getter) };
 
             });
-            const saved = persist ? typed<Saved<S>>(persist.store) : undefined;
             const keys = persist?.keys ?? (Object.keys(initial) as (keyof S & string)[]);
+            const saved = persist && (persist.fields ? fields<S>(persist.store, keys, initial) : whole<S>(persist.store, name, version));
             let writing = false;
-            let queued: Saved<S> | undefined;
+            let queued: Partial<S> | undefined;
             const flush = (): void => {
 
                 if ( writing || !queued || !saved ) return;
@@ -64,7 +118,7 @@ export function defineStore<S extends object, A extends object> ( definition: De
                 queued = undefined;
                 writing = true;
                 void saved
-                    .write(name, next)
+                    .write(next)
                     .catch(() => undefined)
                     .finally(() => {
 
@@ -81,7 +135,7 @@ export function defineStore<S extends object, A extends object> ( definition: De
 
                     if ( !state.ready ) return;
 
-                    queued = { version, state: pick(state, keys) as Partial<S> };
+                    queued = pick(state, keys) as Partial<S>;
                     flush();
 
                 });
@@ -93,9 +147,7 @@ export function defineStore<S extends object, A extends object> ( definition: De
 
                     if ( persist && saved ) {
 
-                        const found = await saved.read(name).catch(() => undefined);
-
-                        const state = found && found.version === version ? found.state : undefined;
+                        const state = await saved.read().catch(() => undefined);
                         const accepted = state && persist.parse ? persist.parse(state) : state;
 
                         if ( accepted ) store.setState(accepted as Partial<State<S, A>>);

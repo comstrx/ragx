@@ -6,7 +6,6 @@ const shared = {
     markupFiles: /^(?:elements|icons|components)\/[^/]+$|^features\/[^/]+\/(?:index|components\/[^/]+)$/,
     hookFiles: /^(?:hooks|features\/[^/]+\/hooks)\//,
     featureEntry: /^features\/([^/]+)\/index\.tsx$/,
-    featureManifest: /^features\/([^/]+)\/feature\.ts$/,
     featureComponent: /^features\/([^/]+)\/components\//,
     extensions: ["", ".ts", ".tsx", "/index.ts", "/index.tsx"],
     helpers: [
@@ -41,7 +40,7 @@ const shared = {
     ],
     flat: ["styles", "elements", "icons", "components", "hooks", "types"],
     markup,
-    featureParts: ["feature.ts", "index.tsx", "components", "hooks"],
+    featureParts: ["index.tsx", "components", "hooks"],
     apiParts: ["core", "features", "workflow"],
     declarations: ["types/", "../specs/", "lib/spec/surface.ts"],
 } as const;

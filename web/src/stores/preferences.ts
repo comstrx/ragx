@@ -1,6 +1,8 @@
-import { persistent } from "@/lib/providers/storage";
-import { preferences } from "@/lib/spec/config";
+import { cookies } from "@/lib/providers/storage";
+import { identity, preferences } from "@/lib/spec/config";
+import { acceptPreferences } from "@/lib/std/cookie";
 import { defineStore } from "@/lib/std/state";
+import { namespaced } from "@/lib/std/storage";
 
 export type Theme = "light" | "dark" | "system";
 export type Preferences = { language: string; currency: string; theme: Theme };
@@ -10,7 +12,7 @@ const allowed = <T extends string>( value: T, choices: readonly string[], fallba
     (choices.includes(value) ? value : fallback);
 
 export const preferenceStore = defineStore<Preferences, PreferenceActions>({
-    name: preferences.keys.theme.replace(/\.theme$/, ".preferences"),
+    name: `${identity}.preferences`,
     initial: {
         language: preferences.defaults.language,
         currency: preferences.defaults.currency,
@@ -30,5 +32,10 @@ export const preferenceStore = defineStore<Preferences, PreferenceActions>({
 
         },
     }),
-    persist: { store: persistent, keys: ["language", "currency", "theme"] },
+    persist: {
+        store: namespaced(cookies, identity),
+        keys: ["language", "currency", "theme"],
+        fields: true,
+        parse: ( saved ) => acceptPreferences(saved, preferences.choices) as Partial<Preferences>,
+    },
 });

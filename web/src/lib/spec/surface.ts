@@ -14,6 +14,7 @@ import { z } from "@/lib/std/validate";
 import { iconNames } from "@/lib/std/world";
 import english from "../../../messages/en.json" with { type: "json" };
 import { supportedLocales } from "./languages.ts";
+import { reserved } from "./routes.ts";
 import { currency, themeDefaults } from "./theme.ts";
 
 type Leaves<T, P extends string = ""> = T extends string
@@ -28,6 +29,8 @@ const picture = z.string().regex(/^(?:\/images\/brand\/[a-zA-Z0-9/_-]+\.(?:png|w
 export const screenKinds = ["page", "about", "contact", "faq", "collection", "article"] as const;
 
 const ABSOLUTE = "an indexed screen needs contents.url: canonical links, the sitemap and the social cards are absolute.";
+const SHARED =
+    "settings.localization: an indexed site in several languages needs localization: true, so every language has its own url for hreflang.";
 const UNLISTED =
     "contents.seo.robots: no screen is indexable (every screen renders on the client or is gated); drop the rules or server-render a public screen.";
 export const changeFrequencies = ["always", "hourly", "daily", "weekly", "monthly", "yearly", "never"] as const;
@@ -72,10 +75,11 @@ export const surface = createSpecSurface({
         priority: z.number().min(0).max(1).optional(),
         frequency: z.enum(changeFrequencies).optional(),
     },
-    settings: { output: z.enum(["export", "standalone"]) },
+    settings: { output: z.enum(["export", "standalone"]), localization: z.boolean() },
     themeDefaults,
     settingsDefaults: {
         output: "export",
+        localization: false,
         currency,
         screen: { render: "client", title: true, nav: true, footer: false, sidebar: true, loader: true },
         block: {
@@ -110,7 +114,7 @@ export function read ( operation: Operation, ...rest: Parameters<typeof surface.
 
 }
 export const validateSpec = surface.validator({
-    reserved: new RegExp(`^/(?:_next|_generated|images|fonts|videos|audios|${supportedLocales.join("|")})(?:/|$)`),
+    reserved: new RegExp(`^/(?:${[...reserved.roots, ...supportedLocales].map(( root ) => root.replace(".", "\\.")).join("|")})(?:/|$)`),
     endpoints,
     core,
     walk: ( screen, options ) => ({ client: options.render === "client" || (screen.access ?? "any") !== "any", session: false }),
@@ -146,6 +150,7 @@ export const validateSpec = surface.validator({
         const { allow, disallow } = config.content.seo.robots;
 
         if ( !indexed && (allow.length || disallow.length) ) issues.push(UNLISTED);
+        if ( indexed && !config.settings.localization && config.settings.locale.enabled.length > 1 ) issues.push(SHARED);
 
         return { indexed };
 

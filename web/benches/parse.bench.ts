@@ -1,5 +1,5 @@
 import { expandTemplate, matchPattern, parseQuery, queryString, segmentsOf } from "@/lib/std/parse";
-import { bench, do_not_optimize, run } from "@/lib/std/tooling";
+import { bench, do_not_optimize, measured  } from "@/lib/std/tooling";
 
 const segments = segmentsOf("/en/catalog/427-walk-hotel");
 
@@ -8,4 +8,9 @@ bench("expandTemplate", () => do_not_optimize(expandTemplate("/catalogs/{id}/tra
 bench("queryString nested", () => do_not_optimize(queryString({ filters: { type: ["hotel", "room"], trashed: false }, page: 2 })));
 bench("parseQuery nested", () => do_not_optimize(parseQuery("filters[type][]=hotel&filters[type][]=room&page=2")));
 
-await run();
+await measured({
+    "matchPattern": 4,
+    "expandTemplate": 6,
+    "queryString nested": 20,
+    "parseQuery nested": 9,
+});

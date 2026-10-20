@@ -24,6 +24,7 @@ export {
     siteUrl,
     stepShape,
 } from "./contract.ts";
+export { type Contract, contract, type Transport, type Transports, transportsOf, type Views, viewsOf } from "./contracts.ts";
 export { type Brand, type Contracts, createSpecSurface, type Vocabulary } from "./create.ts";
 export { type Motion, sharedSettingsDefaults, type ThemeName } from "./defaults.ts";
 export {

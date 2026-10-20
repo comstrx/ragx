@@ -1,5 +1,5 @@
 import { applyPatch, createForm } from "@/lib/std/client";
-import { bench, do_not_optimize, run } from "@/lib/std/tooling";
+import { bench, do_not_optimize, measured  } from "@/lib/std/tooling";
 import type { FieldFact } from "@/lib/std/validate";
 
 const rows = Array.from({ length: 500 }, ( _, i ) => ({ id: i, name: `Row ${i}`, updated_at: "2026-10-13T00:00:00+00:00" }));
@@ -18,4 +18,8 @@ bench("applyPatch into 500 rows", () => do_not_optimize(applyPatch(rows, true, "
 bench("form.set", () => form.getState().set("name", "Walk Hotel"));
 bench("form.submit (nested)", async () => do_not_optimize(await form.getState().submit()));
 
-await run();
+await measured({
+    "applyPatch into 500 rows": 450,
+    "form.set": 15,
+    "form.submit (nested)": 300,
+});

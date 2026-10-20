@@ -28,7 +28,7 @@ function family ( locale: string, locales: string[] ): string {
 
     const stack = [locale, ...locales.filter(( other ) => other !== locale)].map(( name ) => `Web-${name}`);
 
-    return `:root[lang="${locale}"] { --font-sans: ${fontStack(stack)}; }`;
+    return `:root[lang="${locale}"] { --font-face: ${fontStack(stack)}; }`;
 
 }
 function worldFamily ( locale: string ): string {
@@ -36,7 +36,7 @@ function worldFamily ( locale: string ): string {
     const first = fontOf(languages.get(locale)?.script ?? "").family;
     const stack = [first, ...worldFonts.map(( font ) => font.family).filter(( family ) => family !== first)];
 
-    return `:root[lang="${locale}"] { --font-sans: ${fontStack(stack)}; }`;
+    return `:root[lang="${locale}"] { --font-face: ${fontStack(stack)}; }`;
 
 }
 export function themeCss ( config: CompiledConfig, assets: ReadonlyMap<string, Uint8Array>, icons: Uint8Array ): string {
@@ -53,23 +53,6 @@ export function themeCss ( config: CompiledConfig, assets: ReadonlyMap<string, U
         cssVariables(tokens, "dark", '[data-theme="dark"]'),
         `@media (prefers-color-scheme: dark) {\n${cssVariables(tokens, "dark", ':root:not([data-theme="light"])')}\n}`,
         ...(fonts.length ? locales.map(( locale ) => family(locale, locales)) : config.settings.locale.enabled.map(worldFamily)),
-        "",
-    ].join("\n");
-
-}
-export function bootScript ( identity: string, fallback: string ): string {
-
-    const key = JSON.stringify(`${identity}.theme`);
-    const themes = JSON.stringify(["light", "dark"]);
-
-    return [
-        "(function () {",
-        `    var saved = null;`,
-        `    try { saved = JSON.parse(localStorage.getItem(${key}) || "null"); } catch (error) { saved = null; }`,
-        `    var theme = saved && saved.state ? saved.state.theme : saved;`,
-        `    if (${themes}.indexOf(theme) === -1) theme = ${JSON.stringify(fallback)};`,
-        `    if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;`,
-        "})();",
         "",
     ].join("\n");
 

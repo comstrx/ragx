@@ -1,63 +1,150 @@
-:root {
-    --space-0: 0;
-    --space-1: 0.25rem;
-    --space-2: 0.5rem;
-    --space-3: 0.75rem;
-    --space-4: 1rem;
-    --space-5: 1.25rem;
-    --space-6: 1.5rem;
-    --space-8: 2rem;
-    --space-10: 2.5rem;
-    --space-12: 3rem;
-    --space-16: 4rem;
+@theme {
+    --*: initial;
 
-    --radius-none: 0;
-    --radius-sm: 0.375rem;
-    --radius-md: 0.625rem;
-    --radius-lg: 0.875rem;
-    --radius-xl: 1.25rem;
-    --radius-full: 999rem;
+    --breakpoint-sm: 40rem;
+    --breakpoint-md: 48rem;
+    --breakpoint-lg: 64rem;
+    --breakpoint-xl: 80rem;
 
-    --line-width: 1px;
-    --line-width-strong: 2px;
-    --focus-width: 2px;
-    --focus-offset: 2px;
+    --spacing: 0.25rem;
+    --spacing-control-sm: 2rem;
+    --spacing-control-md: 2.5rem;
+    --spacing-control-lg: 3rem;
+    --spacing-control-xl: 3.5rem;
+    --spacing-glyph-sm: 1rem;
+    --spacing-glyph-md: 1.25rem;
+    --spacing-glyph-lg: 1.5rem;
+    --spacing-glyph-xl: 2rem;
+    --spacing-aside: 16rem;
+    --spacing-screen: 100dvh;
 
-    --type-xs-size: 0.75rem;
-    --type-xs-line: 1rem;
-    --type-sm-size: 0.875rem;
-    --type-sm-line: 1.25rem;
-    --type-md-size: 1rem;
-    --type-md-line: 1.5rem;
-    --type-lg-size: 1.25rem;
-    --type-lg-line: 1.75rem;
-    --type-xl-size: 1.75rem;
-    --type-xl-line: 2.25rem;
-    --type-2xl-size: 2.5rem;
-    --type-2xl-line: 3rem;
+    --container-narrow: 28rem;
+    --container-prose: 45rem;
+    --container-wide: 80rem;
 
-    --weight-regular: 400;
-    --weight-medium: 500;
-    --weight-semibold: 600;
-    --weight-bold: 700;
+    --text-xs: 0.75rem;
+    --text-xs--line-height: 1rem;
+    --text-sm: 0.875rem;
+    --text-sm--line-height: 1.25rem;
+    --text-md: 1rem;
+    --text-md--line-height: 1.5rem;
+    --text-lg: 1.25rem;
+    --text-lg--line-height: 1.75rem;
+    --text-xl: 1.75rem;
+    --text-xl--line-height: 2.25rem;
+    --text-2xl: 2.5rem;
+    --text-2xl--line-height: 3rem;
+    --text-glyph-sm: 1rem;
+    --text-glyph-md: 1.25rem;
+    --text-glyph-lg: 1.5rem;
+    --text-glyph-xl: 2rem;
+
+    --font-weight-regular: 400;
+    --font-weight-medium: 500;
+    --font-weight-semibold: 600;
+    --font-weight-bold: 700;
 
     --tracking-tight: -0.01em;
     --tracking-normal: 0;
     --tracking-wide: 0.08em;
 
-    --motion-instant: 0ms;
-    --motion-fast: 120ms;
-    --motion-base: 200ms;
-    --motion-slow: 320ms;
-    --motion-expressive: 600ms;
+    --radius-none: 0;
+    --radius-control-sm: 0.375rem;
+    --radius-control-md: 0.5rem;
+    --radius-control-lg: 0.625rem;
+    --radius-control-xl: 0.75rem;
+    --radius-panel-sm: 0.625rem;
+    --radius-panel-md: 0.875rem;
+    --radius-panel-lg: 1.125rem;
+    --radius-panel-xl: 1.5rem;
+    --radius-glyph-sm: 0.375rem;
+    --radius-glyph-md: 0.5rem;
+    --radius-glyph-lg: 0.75rem;
+    --radius-glyph-xl: 1rem;
+    --radius-full: 999rem;
+
     --ease-standard: cubic-bezier(0.2, 0, 0, 1);
     --ease-enter: cubic-bezier(0, 0, 0, 1);
     --ease-exit: cubic-bezier(0.3, 0, 1, 1);
     --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 
-    --shadow-sm: 0 1px 2px color-mix(in srgb, var(--ink) 8%, transparent);
-    --shadow-md: 0 4px 12px color-mix(in srgb, var(--ink) 10%, transparent);
-    --shadow-lg: 0 12px 32px color-mix(in srgb, var(--ink) 14%, transparent);
+    --animate-enter: enter var(--motion-base) var(--ease-enter) both;
+    --animate-exit: exit var(--motion-fast) var(--ease-exit) both;
+    --animate-reveal: enter var(--motion-base) var(--ease-enter) var(--motion-slow) both;
+    --animate-spin: spin 0.9s linear infinite;
+
+    @keyframes enter {
+        from { opacity: 0; translate: 0 var(--travel); scale: var(--settle); }
+    }
+
+    @keyframes exit {
+        to { opacity: 0; translate: 0 var(--travel); scale: var(--settle); }
+    }
+
+    @keyframes spin {
+        to { rotate: 1turn; }
+    }
+}
+
+@theme inline {
+    --color-body: var(--body);
+    --color-panel: var(--panel);
+    --color-raised: var(--raised);
+    --color-sunken: var(--sunken);
+    --color-ink: var(--ink);
+    --color-muted: var(--muted);
+    --color-line: var(--line);
+    --color-strong: var(--strong);
+    --color-focus: var(--focus);
+    --color-primary: var(--primary);
+    --color-onprimary: var(--onprimary);
+    --color-accent: var(--accent);
+    --color-success: var(--success);
+    --color-warning: var(--warning);
+    --color-danger: var(--danger);
+    --color-info: var(--info);
+    --color-hover: color-mix(in oklab, var(--ink) var(--tint-hover), transparent);
+    --color-press: color-mix(in oklab, var(--ink) var(--tint-press), transparent);
+    --color-active: color-mix(in oklab, var(--primary) var(--tint-active), transparent);
+    --color-glow: color-mix(in oklab, var(--primary) var(--tint-glow), transparent);
+    --color-danger-edge: color-mix(in oklab, var(--danger) var(--tint-strong), var(--line));
+    --color-warning-edge: color-mix(in oklab, var(--warning) var(--tint-strong), var(--line));
+    --color-success-edge: color-mix(in oklab, var(--success) var(--tint-strong), var(--line));
+
+    --font-sans: var(--font-face, system-ui, sans-serif);
+    --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+    --shadow-none: 0 0 #0000;
+    --shadow-control: 0 1px 2px var(--shade-soft), var(--highlight);
+    --shadow-panel-sm: 0 1px 2px var(--shade-soft), var(--highlight);
+    --shadow-panel-md: 0 4px 12px var(--shade-soft), 0 1px 2px var(--shade-soft), var(--highlight);
+    --shadow-panel-lg: 0 12px 32px var(--shade), 0 2px 6px var(--shade-soft), var(--highlight);
+    --shadow-panel-xl: 0 24px 64px var(--shade-deep), 0 4px 12px var(--shade-soft), var(--highlight);
+    --shadow-overlay: 0 16px 48px var(--shade), 0 2px 8px var(--shade-soft), var(--highlight);
+}
+
+:root {
+    --motion-instant: 0ms;
+    --motion-fast: 140ms;
+    --motion-base: 220ms;
+    --motion-slow: 360ms;
+    --motion-expressive: 600ms;
+    --travel: 0.375rem;
+    --settle: 0.98;
+
+    --tint-hover: 6%;
+    --tint-press: 10%;
+    --tint-active: 12%;
+    --tint-glow: 24%;
+    --tint-weak: 8%;
+    --tint-soft: 14%;
+    --tint-strong: 40%;
+
+    --line-width: 1px;
+    --line-width-strong: 2px;
+    --focus-width: 2px;
+    --focus-offset: 2px;
+    --dim-disabled: 0.55;
 
     --layer-base: 0;
     --layer-raised: 10;
@@ -65,31 +152,41 @@
     --layer-overlay: 1000;
     --layer-toast: 1100;
 
-    --width-narrow: 28rem;
-    --width-prose: 45rem;
-    --width-wide: 80rem;
-    --width-aside: 16rem;
-    --height-screen: 100dvh;
-
-    --control-height: 2.5rem;
-    --control-height-sm: 2rem;
-    --icon-size: 1.25rem;
-    --icon-size-sm: 1rem;
-    --spinner-size: 1.25rem;
-
-    --tint-weak: 8%;
-    --tint-soft: 14%;
-    --tint-strong: 40%;
-
-    --dim-disabled: 0.6;
-
-    --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    --shade-soft: color-mix(in oklab, var(--ink) 6%, transparent);
+    --shade: color-mix(in oklab, var(--ink) 10%, transparent);
+    --shade-deep: color-mix(in oklab, var(--ink) 16%, transparent);
+    --highlight: 0 0 #0000;
 }
+
+:root[data-theme="dark"] {
+    --tint-hover: 8%;
+    --tint-press: 14%;
+    --tint-active: 18%;
+    --shade-soft: color-mix(in oklab, #000 32%, transparent);
+    --shade: color-mix(in oklab, #000 44%, transparent);
+    --shade-deep: color-mix(in oklab, #000 56%, transparent);
+    --highlight: inset 0 1px 0 color-mix(in oklab, #fff 5%, transparent);
+}
+
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        --tint-hover: 8%;
+        --tint-press: 14%;
+        --tint-active: 18%;
+        --shade-soft: color-mix(in oklab, #000 32%, transparent);
+        --shade: color-mix(in oklab, #000 44%, transparent);
+        --shade-deep: color-mix(in oklab, #000 56%, transparent);
+        --highlight: inset 0 1px 0 color-mix(in oklab, #fff 5%, transparent);
+    }
+}
+
 @media (prefers-reduced-motion: reduce) {
     :root {
         --motion-fast: 0ms;
         --motion-base: 0ms;
         --motion-slow: 0ms;
         --motion-expressive: 0ms;
+        --travel: 0;
+        --settle: 1;
     }
 }

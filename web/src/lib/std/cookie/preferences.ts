@@ -22,6 +22,11 @@ function text ( value: unknown ): string | undefined {
     return typeof value === "string" ? value : undefined;
 
 }
+export function preferenceNames ( identity: string ): { language: string; currency: string; theme: string } {
+
+    return { language: `${identity}.language`, currency: `${identity}.currency`, theme: `${identity}.theme` };
+
+}
 export function acceptPreferences ( input: unknown, { languages, currencies, themes = [] }: PreferenceChoices ): Preferences {
 
     if ( !isRecord(input) ) return {};

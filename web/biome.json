@@ -90,9 +90,9 @@
         "src/lib/spec/runtime.ts",
         "src/lib/spec/browser.ts",
         "src/types/spec.d.ts",
-        "src/app/(web)/\\[locale\\]/layout.tsx",
-        "src/app/(web)/\\[locale\\]/\\[\\[...path\\]\\]/mount.ts",
-        "src/app/(web)/\\[locale\\]/\\[\\[...path\\]\\]/warm.ts"
+        "src/app/\\[locale\\]/layout.tsx",
+        "src/app/\\[locale\\]/\\[\\[...path\\]\\]/mount.ts",
+        "src/app/\\[locale\\]/\\[\\[...path\\]\\]/warm.ts"
       ],
       "linter": {
         "rules": {
@@ -146,5 +146,10 @@
         }
       }
     }
-  ]
+  ],
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  }
 }

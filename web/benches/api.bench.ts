@@ -1,5 +1,5 @@
 import { createApi, feature, get, many, post, requestContext, resolveApi } from "@/lib/std/api";
-import { bench, do_not_optimize, run } from "@/lib/std/tooling";
+import { bench, do_not_optimize, measured  } from "@/lib/std/tooling";
 import { z } from "@/lib/std/validate";
 
 const item = z.object({ id: z.number(), title: z.string(), price: z.string().nullish() });
@@ -54,4 +54,8 @@ bench("resolveApi (2 operations)", () => do_not_optimize(resolveApi(endpoints, i
 bench("requestContext", () => do_not_optimize(requestContext(api.context, { language: "en", host: "shop.test" })));
 bench("client round trip, 50 rows decoded", async () => do_not_optimize(await client.products.list({ limit: 50 })));
 
-await run();
+await measured({
+    "resolveApi (2 operations)": 2500,
+    "requestContext": 55,
+    "client round trip, 50 rows decoded": 1500,
+});

@@ -3,6 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, wri
 import { dirname, relative, resolve } from "node:path";
 import process from "node:process";
 import { generatedPath, isRecord, mapValues } from "@/lib/std/base";
+import type { Routing } from "@/lib/std/translate";
 import { emojiFolder, flagFolder, fontFolder, fonts } from "@/lib/std/world";
 import type { Files } from "./assets.ts";
 
@@ -11,7 +12,7 @@ export type Connection = {
     baseUrl: string | null;
     development?: { baseUrl: string | null; browserBaseUrl: string | null } | undefined;
 };
-export type Routing = { locales: string[]; defaultLocale: string };
+export type { Routing };
 
 export function modeOf ( asked: string | undefined ): Mode {
 
@@ -35,9 +36,9 @@ export function selectConnections<T extends Connection> (
     return mapValues(connections, ( value ) => selectConnection(value, mode));
 
 }
-export function routingOf ( settings: { locale: { enabled: string[]; default: string } } ): Routing {
+export function routingOf ( settings: { locale: { enabled: string[]; default: string }; localization?: boolean | undefined } ): Routing {
 
-    return { locales: settings.locale.enabled, defaultLocale: settings.locale.default };
+    return { locales: settings.locale.enabled, defaultLocale: settings.locale.default, localized: settings.localization === true };
 
 }
 export function assetHash ( assets: ReadonlyMap<string, Uint8Array> ): string {

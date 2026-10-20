@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Failure } from "@/lib/std/error";
 import {
+    chosenLocale,
     dictionary,
     directionOf,
     failureMessage,
@@ -10,13 +11,13 @@ import {
     formatNumber,
     formatPercent,
     formatRange,
+    hrefOf,
     isMessageKey,
     isolate,
     isTimeZone,
     languageFacts,
     languageName,
     languagesOf,
-    localePath,
     localizeTree,
     mergeMessages,
     messageText,
@@ -24,14 +25,14 @@ import {
     missingKeys,
     negotiate,
     plural,
-    preferredPath,
     prefixed,
     regionOf,
+    routeOf,
     splitLocale,
     translator,
 } from "@/lib/std/translate";
 
-const routing = { locales: ["en", "ar"], defaultLocale: "en" };
+const routing = { locales: ["en", "ar"], defaultLocale: "en", localized: true };
 
 describe("locale", () => {
 
@@ -218,24 +219,44 @@ describe("dictionaries", () => {
 });
 describe("locales and paths", () => {
 
-    const routing = { locales: ["en", "ar"], defaultLocale: "en" };
+    const localized = { locales: ["en", "ar"], defaultLocale: "en", localized: true };
+    const plain = { ...localized, localized: false };
 
-    test("a path splits into locale and rest, and prefixes only when the locale is not the default", () => {
+    test("a path splits into its locale and the rest, and a link carries the locale only on a localized site", () => {
 
-        expect(splitLocale("/ar/account", routing)).toEqual({ locale: "ar", path: "/account", explicit: true });
-        expect(splitLocale("/account", routing)).toEqual({ locale: "en", path: "/account", explicit: false });
-        expect(splitLocale("", routing)).toEqual({ locale: "en", path: "/", explicit: false });
-        expect(localePath("ar", "/", routing)).toBe("/ar");
-        expect(localePath("en", "/x", routing)).toBe("/x");
+        expect(splitLocale("/ar/account", localized)).toEqual({ locale: "ar", path: "/account", explicit: true });
+        expect(splitLocale("/account", localized)).toEqual({ locale: "en", path: "/account", explicit: false });
+        expect(splitLocale("", localized)).toEqual({ locale: "en", path: "/", explicit: false });
+        expect(splitLocale("/arabic", localized)).toEqual({ locale: "en", path: "/arabic", explicit: false });
+        expect(prefixed("ar", "/")).toBe("/ar");
         expect(prefixed("ar", "/x")).toBe("/ar/x");
+        expect(hrefOf("ar", "/x", localized)).toBe("/ar/x");
+        expect(hrefOf("ar", "/x", plain)).toBe("/x");
 
     });
-    test("a preferred locale redirects an implicit path only, and only to a supported non-default locale", () => {
+    test("the chosen locale is the saved one when supported, then the browser's, then the default", () => {
 
-        expect(preferredPath({ locale: "en", path: "/x", explicit: false }, "ar", routing)).toBe("/ar/x");
-        expect(preferredPath({ locale: "ar", path: "/x", explicit: true }, "ar", routing)).toBeUndefined();
-        expect(preferredPath({ locale: "en", path: "/x", explicit: false }, "fr", routing)).toBeUndefined();
-        expect(preferredPath({ locale: "en", path: "/x", explicit: false }, "en", routing)).toBeUndefined();
+        expect(chosenLocale(localized, "ar", "en")).toBe("ar");
+        expect(chosenLocale(localized, "fr", "ar;q=0.9,en;q=0.1")).toBe("ar");
+        expect(chosenLocale(localized, undefined, "de")).toBe("en");
+        expect(chosenLocale(localized)).toBe("en");
+
+    });
+    test("a localized site keeps explicit locales and sends bare paths to the chosen one", () => {
+
+        expect(routeOf({ path: "/ar/x" }, localized)).toEqual({ kind: "pass", locale: "ar" });
+        expect(routeOf({ path: "/", language: "ar" }, localized)).toEqual({ kind: "redirect", path: "/ar", status: 307 });
+        expect(routeOf({ path: "/x", accept: "ar" }, localized)).toEqual({ kind: "redirect", path: "/ar/x", status: 307 });
+        expect(routeOf({ path: "/x" }, localized)).toEqual({ kind: "redirect", path: "/en/x", status: 307 });
+
+    });
+    test("a site without localization has one url per screen: a locale in the url is a permanent redirect away", () => {
+
+        expect(routeOf({ path: "/x", language: "ar" }, plain)).toEqual({ kind: "rewrite", locale: "ar", path: "/ar/x" });
+        expect(routeOf({ path: "/", accept: "ar" }, plain)).toEqual({ kind: "rewrite", locale: "ar", path: "/ar" });
+        expect(routeOf({ path: "/", language: "fr" }, plain)).toEqual({ kind: "rewrite", locale: "en", path: "/en" });
+        expect(routeOf({ path: "/en/x" }, plain)).toEqual({ kind: "redirect", path: "/x", status: 308 });
+        expect(routeOf({ path: "/ar" }, plain)).toEqual({ kind: "redirect", path: "/", status: 308 });
 
     });
     test("regions come from the first tag that names one; time zones are checked by the host", () => {
