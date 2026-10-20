@@ -62,3 +62,11 @@ regexTarget = "line"
 
 paths = ['''(?:^|/)specs/(?:\([^/]+\)/)*[^/]+/config/contracts\.ts$''']
 regexes = ['''realtime:\s*\{\s*url:\s*"ws://127\.0\.0\.1:\d+",\s*key:''']
+
+[[allowlists]]
+description = "Checksum manifests of the removed ai part: SHA-256 digests keyed by source paths that contain token and keys"
+condition = "AND"
+regexTarget = "line"
+
+paths = ['''^ai/evidence/(?:baseline|verified-sources)\.json$''']
+regexes = ['''^\s*"src/core/[a-z]+/[a-z_]+\.py":\s*"[0-9a-f]{64}",?$''']
