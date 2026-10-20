@@ -1,11 +1,13 @@
 ui-section () {
 
-    printf '\n%s\n' "${1-}"
+    if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then printf '\n\033[1m%s\033[0m\n' "${1-}"
+    else printf '\n%s\n' "${1-}"
+    fi
 
 }
 ui-row () {
 
-    if [[ -n "${2-}" ]]; then printf '  %-42s %s\n' "${1-}" "${2}"
+    if [[ -n "${2-}" ]]; then printf '  %-*s  %s\n' "${UI_WIDTH:-42}" "${1-}" "${2}"
     else printf '  %s\n' "${1-}"
     fi
 

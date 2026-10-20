@@ -32,8 +32,3 @@ bootstrap-checksum () {
     fs-hash "${TOOL_ROOT}/${MANIFEST[paths.build]}/release/infra"
 
 }
-bootstrap-run () {
-
-    bash "${TOOL_ROOT}/${MANIFEST[paths.entrypoint]}" "$@"
-
-}

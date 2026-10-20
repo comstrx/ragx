@@ -77,6 +77,12 @@ native-routes () {
     done < <(native-services)
 
 }
+native-edge-routes () {
+
+    native-routes || return
+    [[ -z "${CONFIG[GRAFANA_HOST]}" ]] || out "grafana|${CONFIG[GRAFANA_HOST]}|3000|/api/health|roundrobin|200|static"
+
+}
 native-hosts () {
 
     local service=""
@@ -84,6 +90,8 @@ native-hosts () {
     while IFS= read -r service; do
         native-host "${service}" || return
     done < <(native-services)
+
+    [[ -z "${CONFIG[GRAFANA_HOST]}" ]] || out "${CONFIG[GRAFANA_HOST]}"
 
 }
 native-slot () {

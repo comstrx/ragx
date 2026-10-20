@@ -177,106 +177,6 @@ is-root () {
     (( EUID == 0 ))
 
 }
-is-gui () {
-
-    if is-linux; then
-        [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]
-        return
-    fi
-
-    is-macos || return 1
-    [[ -z "${SSH_CONNECTION:-}${SSH_TTY:-}" ]] || return 1
-
-    has launchctl && launchctl print "gui/${EUID}" >/dev/null 2>&1
-
-}
-is-headless () {
-
-    ! is-gui
-
-}
-
-ci-name () {
-
-    is-true "${GITHUB_ACTIONS:-}"          && { out github;    return; }
-    is-true "${GITLAB_CI:-}"               && { out gitlab;    return; }
-    is-true "${TF_BUILD:-}"                && { out azure;     return; }
-    is-true "${CIRCLECI:-}"                && { out circleci;  return; }
-    is-true "${TRAVIS:-}"                  && { out travis;    return; }
-    is-true "${BUILDKITE:-}"               && { out buildkite; return; }
-    is-true "${DRONE:-}"                   && { out drone;     return; }
-    [[ -n "${JENKINS_URL:-}" ]]            && { out jenkins;   return; }
-    [[ -n "${TEAMCITY_VERSION:-}" ]]       && { out teamcity;  return; }
-    [[ -n "${BITBUCKET_BUILD_NUMBER:-}" ]] && { out bitbucket; return; }
-    [[ -n "${CODEBUILD_BUILD_ID:-}" ]]     && { out codebuild; return; }
-    is-true "${CI:-}"                      && { out generic;   return; }
-
-    return 1
-
-}
-is-ci () {
-
-    ci-name >/dev/null
-
-}
-is-ci-pull () {
-
-    local provider=""
-
-    provider="$(ci-name)" || return 1
-
-    case "${provider}" in
-        github)    [[ "${GITHUB_EVENT_NAME:-}" == pull_request || "${GITHUB_EVENT_NAME:-}" == pull_request_target ]] ;;
-        gitlab)    [[ "${CI_PIPELINE_SOURCE:-}" == merge_request_event ]] ;;
-        azure)     [[ "${BUILD_REASON:-}" == PullRequest ]] ;;
-        bitbucket) [[ -n "${BITBUCKET_PR_ID:-}" ]] ;;
-        circleci)  [[ -n "${CIRCLE_PULL_REQUEST:-}" ]] ;;
-        travis)    [[ -n "${TRAVIS_PULL_REQUEST:-}" && "${TRAVIS_PULL_REQUEST}" != false ]] ;;
-        buildkite) [[ -n "${BUILDKITE_PULL_REQUEST:-}" && "${BUILDKITE_PULL_REQUEST}" != false ]] ;;
-        jenkins)   [[ -n "${CHANGE_ID:-}" ]] ;;
-        drone)     [[ "${DRONE_BUILD_EVENT:-}" == pull_request ]] ;;
-        *)         return 1 ;;
-    esac
-
-}
-is-ci-tag () {
-
-    local provider=""
-
-    provider="$(ci-name)" || return 1
-    is-ci-pull && return 1
-
-    case "${provider}" in
-        github)    [[ "${GITHUB_REF_TYPE:-}" == tag ]] ;;
-        gitlab)    [[ -n "${CI_COMMIT_TAG:-}" ]] ;;
-        azure)     [[ "${BUILD_SOURCEBRANCH:-}" == refs/tags/* ]] ;;
-        bitbucket) [[ -n "${BITBUCKET_TAG:-}" ]] ;;
-        circleci)  [[ -n "${CIRCLE_TAG:-}" ]] ;;
-        travis)    [[ -n "${TRAVIS_TAG:-}" ]] ;;
-        buildkite) [[ -n "${BUILDKITE_TAG:-}" ]] ;;
-        drone)     [[ "${DRONE_BUILD_EVENT:-}" == tag ]] ;;
-        *)         return 1 ;;
-    esac
-
-}
-is-ci-push () {
-
-    local provider=""
-
-    provider="$(ci-name)" || return 1
-    is-ci-pull && return 1
-    is-ci-tag  && return 1
-
-    case "${provider}" in
-        github)    [[ "${GITHUB_EVENT_NAME:-}" == push ]] ;;
-        gitlab)    [[ "${CI_PIPELINE_SOURCE:-}" == push ]] ;;
-        azure)     [[ "${BUILD_REASON:-}" == IndividualCI || "${BUILD_REASON:-}" == BatchedCI ]] ;;
-        bitbucket) [[ -n "${BITBUCKET_COMMIT:-}" ]] ;;
-        drone)     [[ "${DRONE_BUILD_EVENT:-}" == push ]] ;;
-        *)         return 1 ;;
-    esac
-
-}
 
 run-cmd () {
 
@@ -302,6 +202,22 @@ run-sudo () {
 run-sudo-ok () {
 
     run-sudo "$@" >/dev/null 2>&1
+
+}
+run-retry () {
+
+    local attempts="${1:-}" delay="${2:-}" attempt=1
+
+    shift 2
+    [[ "${attempts}" =~ ^[1-9][0-9]?$ && "${delay}" =~ ^[0-9]+$ ]] || { err "Invalid retry policy: ${attempts}/${delay}"; return; }
+    (( $# > 0 )) || { err "Command required"; return; }
+
+    until "$@"; do
+        (( attempt < attempts )) || return 1
+        warn "Attempt ${attempt} of ${attempts} failed; retrying in $(( delay * attempt ))s"
+        sleep "$(( delay * attempt ))"
+        attempt=$(( attempt + 1 ))
+    done
 
 }
 run-until () {

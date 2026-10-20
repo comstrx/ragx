@@ -14,9 +14,11 @@ test-config-schema () {
     expect-equal "${CONFIG_SOURCE[HTTP3_ENABLED]}" defaults
     expect-equal "${CONFIG[API_BALANCE]}" leastconn
     expect-equal "${CONFIG[WEB_BALANCE]}" roundrobin
-    expect-equal "${CONFIG_SOURCE[HEALTH_TIMEOUT]}" manifest
-    expect-equal "${CONFIG[STATE_ROOT]}" "${CONFIG[PROJECT_ROOT]}/.infra/unconfigured-staging"
-    expect-fail config-schema-key HEALTH_TIMEOUT
+    expect-equal "${CONFIG_SOURCE[HEALTH_TIMEOUT]}" defaults
+    expect-equal "${CONFIG_SOURCE[IMAGE_POSTGRES]}" manifest
+    expect-equal "${CONFIG[STATE_ROOT]}" "${CONFIG[PROJECT_ROOT]}/.infra/unconfigured"
+    config-schema-key HEALTH_TIMEOUT
+    expect-fail config-schema-key IMAGE_POSTGRES
     expect-fail config-schema-key CDN_MODE
     config-schema-key HTTP3_ENABLED
 
@@ -39,7 +41,7 @@ test-config-precedence () {
     expect-equal "${CONFIG[RELEASE]}" process
     expect-equal "${CONFIG_SOURCE[RELEASE]}" process
     expect-equal "${CONFIG[API_HOST]}" process.example.com
-    expect-equal "${CONFIG[COMPOSE_PROJECT]}" cli-staging
+    expect-equal "${CONFIG[COMPOSE_PROJECT]}" cli
 
     unset RELEASE API_HOST
     CLI_OVERRIDES=( UNKNOWN=value )
@@ -51,17 +53,35 @@ test-config-files () {
     local root="${TMPDIR}/project"
 
     mkdir -p "${root}"
-    printf 'PROJECT=base\n' > "${root}/.env"
-    printf 'PROJECT=local\n' > "${root}/.env.local"
+    expect-equal "$(config-file "${root}" production)" '' 'no file leaves the defaults'
 
-    expect-equal "$(config-file "${root}" local)" "${root}/.env.local"
+    printf 'PROJECT=base\n' > "${root}/.env"
+    expect-equal "$(config-file "${root}" local)" "${root}/.env"
     expect-equal "$(config-file "${root}" production)" "${root}/.env"
 
-    printf 'PROJECT=pod\n' > "${root}/.env.pod"
-    expect-equal "$(config-file "${root}" production)" "${root}/.env.pod"
+    printf 'PROJECT=local\n' > "${root}/.env.local"
+    expect-equal "$(config-file "${root}" local)" "${root}/.env.local"
+    expect-equal "$(config-file "${root}" production)" "${root}/.env" 'production never reads the local file'
+
+    printf 'PROJECT=prod\n' > "${root}/.env.prod"
+    expect-equal "$(config-file "${root}" production)" "${root}/.env.prod"
 
     printf 'PROJECT=production\n' > "${root}/.env.production"
-    expect-error 'Both .env.production and .env.pod exist' config-file "${root}" production
+    expect-equal "$(config-file "${root}" production)" "${root}/.env.production"
+
+    CLI_FLAGS[--project]="${root}"
+    ENV_FILE="$(printf 'PROJECT=encoded\nAPI_HOST=api.encoded.test\n' | openssl base64 -A)"
+    config-load
+    expect-equal "${CONFIG[PROJECT]}" encoded 'a base64 ENV_FILE replaces the env files'
+    expect-equal "${CONFIG_SOURCE[PROJECT]}" file
+
+    ENV_FILE=$'PROJECT=plain\nAPI_HOST=api.plain.test'
+    config-load
+    expect-equal "${CONFIG[API_HOST]}" api.plain.test 'a plain ENV_FILE is read as written'
+
+    ENV_FILE='CDN_MODE=direct'
+    expect-error 'Unknown setting in' config-load
+    unset ENV_FILE
 
     printf 'PROJECT=first\n' > "${root}/one"
     printf 'PROJECT=second\n' > "${root}/two"
@@ -87,14 +107,11 @@ test-config-modes () {
     output="$(env ENV_MODE=production bash "${TOOL_BIN}" --project "${root}" config ENV_MODE)"
     expect-equal "${output}" local
 
-    output="$(bash "${TOOL_BIN}" --project "${root}" --environment production config DEPLOY_ENV)"
-    expect-equal "${output}" production
-    expect-error 'DEPLOY_ENV must be staging or production' bash "${TOOL_BIN}" --project "${root}" --environment qa config DEPLOY_ENV
+    expect-error 'Unknown setting: DEPLOY_ENV' bash "${TOOL_BIN}" --project "${root}" config DEPLOY_ENV
 
     TOOL_BUILD=release
     config-load
     expect-equal "${CONFIG[ENV_MODE]}" production
-    expect-equal "${CONFIG[DEPLOY_ENV]}" staging
 
 }
 test-config-derived () {
@@ -105,18 +122,40 @@ test-config-derived () {
     config-derive
 
     expect-equal "${CONFIG[API_URL]}" https://api.shop.test
-    expect-equal "${CONFIG[APP_ORIGINS]}" '["https://admin.shop.test","https://shop.test"]'
+    expect-equal "${CONFIG[IMAGE_POSTGRES]}" "${MANIFEST[images.postgres]}"
 
     cfg-set HTTPS_PORT 8443
     config-derive
     expect-equal "${CONFIG[API_URL]}" https://api.shop.test:8443
-    expect-equal "${CONFIG[APP_ORIGINS]}" '["https://admin.shop.test:8443","https://shop.test:8443"]'
 
     cfg-set TLS_ENABLED false
     config-derive
     expect-equal "${CONFIG[API_URL]}" http://api.shop.test
 
-    MANIFEST[native.http3_enabled]=true
+    MANIFEST[native.health_timeout]=999
+    config-derive
+    expect-equal "${CONFIG[HEALTH_TIMEOUT]}" 120 'deployment settings live in the env schema only'
+
+    cfg-set REGISTRY_DRIVER ghcr
+    cfg-set REGISTRY_USER ''
+    cfg-set REGISTRY_TOKEN ''
+    cfg-set GITOPS_URL https://github.com/org/deploy
+    cfg-set GITOPS_USER ''
+    cfg-set GITOPS_TOKEN ''
+    cfg-set GITHUB_TOKEN github-sentinel process
+    config-derive
+    expect-equal "${CONFIG[REGISTRY_TOKEN]}" github-sentinel 'GITHUB_TOKEN pulls from GHCR'
+    expect-equal "${CONFIG[REGISTRY_USER]}" x-access-token
+    expect-equal "${CONFIG_SOURCE[REGISTRY_TOKEN]}" process 'an exported GITHUB_TOKEN stays transient'
+    expect-equal "${CONFIG[GITOPS_TOKEN]}" github-sentinel 'GITHUB_TOKEN reads a GitHub desired-state repository'
+
+    cfg-set REGISTRY_TOKEN robot-token file
+    cfg-set REGISTRY_USER robot file
+    config-derive
+    expect-equal "${CONFIG[REGISTRY_TOKEN]}" robot-token 'an explicit registry token wins'
+
+    CONFIG_SCHEMA+=( IMAGE_EXTRA )
+    MANIFEST[images.extra]=example/extra@sha256:0
     expect-error 'collides with the env schema' config-derive
 
 }
@@ -132,16 +171,109 @@ test-config-validation () {
     cfg-set HTTP3_ENABLED false
     config-validate
 
-    cfg-set DEPLOY_ENV production
+    cfg-set ENV_MODE production
     expect-error 'Production requires TLS_ENABLED=true' config-validate
 
-    cfg-set DEPLOY_ENV staging
+    cfg-set ENV_MODE local
     cfg-set TLS_ENABLED true
     cfg-set HTTP3_ENABLED true
-    cfg-set CLOUDFLARE_PROXIED true
-    cfg-set CLOUDFLARE_TOKEN token-for-tests
+    cfg-set EDGE_SOCKETS ''
+    cfg-set DNS_PROXIED true
+    expect-error 'DNS_PROXIED applies to the records DNS_PROVIDER manages' config-validate
+    cfg-set DNS_PROVIDER route53
+    expect-error 'Invalid DNS_PROVIDER: expected cloudflare' config-validate
+    cfg-set DNS_PROVIDER cloudflare
+    cfg-set DNS_TOKEN token-for-tests
+    expect-error 'DNS settings are partial; missing DNS_ZONE, DNS_ADDRESS' config-validate
+
+    cfg-set DNS_ZONE "$(printf 'a%.0s' {1..32})"
+    cfg-set DNS_ADDRESS 203.0.113.7
+    cfg-set RATE_LIMIT_IP 20/1s
     output="$(config-validate 2>&1)"
-    expect-contains "${output}" 'Cloudflare proxies this record'
+    expect-contains "${output}" 'DNS_PROXIED=true: the DNS provider terminates public QUIC'
+    expect-contains "${output}" 'DNS_PROXIED=true without TRUSTED_HEADER'
+    cfg-set EDGE_SOCKETS /srv/edge
+    expect-absent "$(config-validate 2>&1)" 'QUIC' 'a relayed edge serves no QUIC to warn about'
+    cfg-set EDGE_SOCKETS ''
+
+    cfg-set TRUSTED_PROXIES 'https://proxy.example/ips 198.51.100.0/24 2001:db8::/32'
+    expect-error 'TRUSTED settings are partial; missing TRUSTED_HEADER' config-validate
+    cfg-set TRUSTED_HEADER 'Bad Header'
+    expect-error 'Invalid TRUSTED_HEADER: expected header' config-validate
+    cfg-set TRUSTED_HEADER True-Client-IP
+    expect-absent "$(config-validate 2>&1)" 'without TRUSTED_HEADER' 'a trusted header restores the clients behind proxied records'
+    cfg-set TRUSTED_PROXIES 'http://proxy.example/ips'
+    expect-error 'Invalid TRUSTED_PROXIES: expected proxies' config-validate
+    cfg-set TRUSTED_PROXIES '198.51.100.0/33'
+    expect-error 'Invalid TRUSTED_PROXIES: expected proxies' config-validate
+
+    cfg-set TRUSTED_PROXIES ''
+    cfg-set TRUSTED_HEADER ''
+    cfg-set DNS_PROXIED false
+    cfg-set DNS_PROVIDER ''
+    cfg-set DNS_TOKEN ''
+    cfg-set DNS_ZONE ''
+    cfg-set DNS_ADDRESS ''
+    cfg-set RATE_LIMIT_GLOBAL 5000/10s
+    cfg-set RATE_LIMIT_PATHS '/v1/auth=10/1m,/v1/upload=5/1h'
+    config-validate
+
+    cfg-set RATE_LIMIT_HOST 10/1d
+    cfg-set RATE_LIMIT_PATHS '/v1=10/1m,/v1/auth=5/1m,auth=1/1s'
+    output="$(config-validate 2>&1)" && err "Invalid rate limits were accepted"
+    expect-contains "${output}" 'Invalid RATE_LIMIT_HOST: expected rate'
+    expect-contains "${output}" 'Invalid RATE_LIMIT_PATHS entry: auth=1/1s'
+    expect-contains "${output}" 'RATE_LIMIT_PATHS prefixes must not nest: /v1 and /v1/auth'
+
+    cfg-set RATE_LIMIT_HOST ''
+    cfg-set RATE_LIMIT_PATHS ''
+    cfg-set API_HOST api.shop.test
+    cfg-set GRAFANA_HOST api.shop.test
+    cfg-set GRAFANA_PASSWORD short
+    cfg-set TELEGRAM_BOT_TOKEN 123456:not-a-token
+    cfg-set REGISTRY_TOKEN pull-token
+    output="$(config-validate 2>&1)" && err "Partial integrations were accepted"
+    expect-contains "${output}" 'Host api.shop.test is routed twice'
+    expect-contains "${output}" 'GRAFANA_PASSWORD needs at least 12 characters'
+    expect-contains "${output}" 'Invalid TELEGRAM_BOT_TOKEN: expected bot'
+    expect-contains "${output}" 'TELEGRAM settings are partial; missing TELEGRAM_CHAT_ID'
+    expect-contains "${output}" 'REGISTRY settings are partial; missing REGISTRY_USER'
+
+    cfg-set GRAFANA_HOST grafana.shop.test
+    cfg-set GRAFANA_PASSWORD grafana-password-01
+    cfg-set TELEGRAM_BOT_TOKEN "123456:$(printf 'A%.0s' {1..35})"
+    cfg-set TELEGRAM_CHAT_ID -1001234567890
+    cfg-set REGISTRY_TOKEN ''
+    config-validate
+
+    cfg-set API_FORCED_ENV 'APP_PORT=8000 not-a-pair'
+    cfg-set API_WORK_COMMAND ' '
+    cfg-set GITOPS_DESIRED ../desired.env
+    cfg-set DB_EXTENSIONS 'vector;drop'
+    cfg-set MIGRATION_POLICY expand
+    cfg-set API_MIGRATE_COMMAND ''
+    output="$(config-validate 2>&1)" && err "Invalid runtime contracts were accepted"
+    expect-contains "${output}" 'Invalid API_FORCED_ENV: expected pairs'
+    expect-contains "${output}" 'Invalid API_WORK_COMMAND: expected command'
+    expect-contains "${output}" 'Invalid GITOPS_DESIRED: expected relative'
+    expect-contains "${output}" 'Invalid DB_EXTENSIONS: expected extensions'
+    expect-contains "${output}" 'MIGRATION_POLICY=expand requires API_MIGRATE_COMMAND'
+
+    cfg-set API_FORCED_ENV ''
+    cfg-set API_WORK_COMMAND 'python -m bootstrap work'
+    cfg-set GITOPS_DESIRED deploy/desired.env
+    cfg-set DB_EXTENSIONS vector,pg_trgm
+    cfg-set MIGRATION_POLICY none
+    config-validate
+
+    cfg-set GITOPS_URL https://git.example.test/org/deploy
+    output="$(config-validate 2>&1)" && err "Invalid delivery settings were accepted"
+    expect-contains "${output}" 'GITOPS settings are partial; missing GITOPS_USER, GITOPS_TOKEN'
+
+    cfg-set GITOPS_USER reader
+    cfg-set GITOPS_TOKEN reader-token
+    output="$(config-validate 2>&1)"
+    expect-contains "${output}" 'GitOps pulls private images only with a permanent REGISTRY_TOKEN'
 
     cfg-set API_REPLICAS 33
     cfg-set HTTP_PORT '80; reboot'
@@ -192,10 +324,8 @@ test-config-required () {
     config-required
 
     cfg-set DB_PASSWORD short
-    cfg-set AUTH_SECRET short
     cfg-set REDIS_PASSWORD ''
     expect-error 'DB_PASSWORD needs at least 16 characters' config-required
-    expect-error 'AUTH_SECRET needs at least 32 characters' config-required
     expect-error 'Missing setting: REDIS_PASSWORD' config-required
 
 }
@@ -211,6 +341,7 @@ test-config-secrets () {
     expect-equal "$(cfg-show AUTH_KEYS)" '[redacted]'
     expect-equal "$(cfg-show REGISTRY_TOKEN)" '[redacted]'
     expect-equal "$(cfg-show TLS_ENABLED)" true
+    expect-equal "$(cfg-show API_ENV_MOUNT)" /app/.env 'a mount path is not a secret'
     expect-equal "$(log-redact 'a sentinel-sensitive-value-1234567890 b')" 'a [redacted] b'
 
     output="$(err 'leaked registry-sentinel and ["private-key-material"]' 2>&1)" || true

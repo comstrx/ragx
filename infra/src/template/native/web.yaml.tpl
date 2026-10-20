@@ -7,7 +7,8 @@
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     tmpfs: ['/tmp:uid=10001,gid=10001,mode=0700', '/app/.next/out/cache:uid=10001,gid=10001,mode=0700']
-    environment: {PORT: '{{WEB_PORT}}', HOSTNAME: 0.0.0.0}
+    volumes: {{WEB_MOUNTS}}
+    environment: {{WEB_VARIABLES}}
     networks:
       apps:
         aliases: ['{{WEB_SERVICE}}-${DEPLOY_SLOT:?DEPLOY_SLOT required}']

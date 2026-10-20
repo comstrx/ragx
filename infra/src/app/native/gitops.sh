@@ -6,16 +6,41 @@ source-include module/tls.sh || return
 
 native-reconcile () {
 
-    local scratch="" status=0
+    local scratch="" current="" reason="" status=0
 
     scratch="$(fs-temp)" || return
 
-    if gitops-fetch "${scratch}" && native-deploy; then state-write "${CONFIG[STATE_ROOT]}" desired "${CONFIG[GITOPS_COMMIT]}" || status=$?
-    else status=1
+    if ! gitops-fetch "${scratch}"; then
+        status=1
+    elif current="$(state-read "${CONFIG[STATE_ROOT]}" current 2>/dev/null || true)" && [[ "${current}" != "${CONFIG[RELEASE]}" ]] &&
+        reason="$(native-rejected "${CONFIG[RELEASE]}")" && ! cli-flag --force; then
+        warn "Desired release ${CONFIG[RELEASE]} was rejected (${reason}); waiting for a new release"
+    elif ! reason="$(native-stale)"; then
+        status=1
+    elif [[ -n "${reason}" ]]; then
+        warn "The server ${reason} differ from the desired state of ${CONFIG[RELEASE]}; waiting for server stage"
+    elif native-deploy; then
+        state-write "${CONFIG[STATE_ROOT]}" desired "${CONFIG[GITOPS_COMMIT]}" || status=$?
+    else
+        status=1
     fi
 
     rm -rf -- "${scratch}"
     return "${status}"
+
+}
+native-stale () {
+
+    local app="" digest="" revision=""
+
+    for app in API WEB; do
+        digest="$(native-env-digest "${app}")" || return
+        [[ "${digest}" == "${CONFIG[${app}_ENV_SHA256]:-}" ]] || { out "${app} env files"; return 0; }
+    done
+
+    [[ -n "${CONFIG[VERSION]:-}" ]] || return 0
+    revision="$(native-revision)" || return
+    [[ "${CONFIG[RELEASE]}" == "${CONFIG[VERSION]}-${revision}" ]] || out settings
 
 }
 native-watch () {
@@ -28,10 +53,21 @@ native-watch () {
 }
 native-export () {
 
-    local destination="${1:-${TOOL_ROOT}/${MANIFEST[paths.build]}/desired}" scratch="" status=0
+    local destination="${1:-${TOOL_ROOT}/${MANIFEST[paths.build]}/desired}"
+
+    native-desired "${destination}" || return
+
+    succ "Desired state written to ${destination}; commit it and protect tag ${CONFIG[RELEASE_REF]}"
+
+}
+native-desired () {
+
+    local destination="${1}" scratch="" status=0
 
     config-validate || return
+    native-release-id || return
     cfg-require PROJECT RELEASE API_IMAGE API_HOST || return
+    native-env-digests || return
     scratch="$(fs-temp)" || return
 
     native-render-compose "${scratch}" || status=$?
@@ -39,9 +75,23 @@ native-export () {
         -f "${scratch}/application.yaml" -f "${scratch}/web.yaml" || status=$?
 
     rm -rf -- "${scratch}"
+    return "${status}"
+
+}
+native-publish () {
+
+    local scratch="" status=0
+
+    cfg-require GITOPS_URL GITOPS_USER GITOPS_TOKEN || return
+    scratch="$(fs-temp)" || return
+
+    native-desired "${scratch}" || status=$?
+    (( status != 0 )) || gitops-publish "${scratch}" || status=$?
+
+    rm -rf -- "${scratch}"
     (( status == 0 )) || return "${status}"
 
-    succ "Desired state written to ${destination}; commit it and protect tag ${CONFIG[RELEASE_REF]}"
+    ui-result publish true safe
 
 }
 native-portainer-deploy () {
@@ -104,12 +154,12 @@ native-portainer-install () {
     (( ${#CONFIG[PORTAINER_ADMIN_PASSWORD]} >= 12 )) || { err "PORTAINER_ADMIN_PASSWORD needs at least 12 characters"; return; }
     (( ${#CONFIG[PORTAINER_SECRET_KEY]} >= 32 )) || { err "PORTAINER_SECRET_KEY needs at least 32 characters"; return; }
     docker-ready || return
-    [[ "${CONFIG[DEPLOY_ENV]}" != production ]] || docker-versions || return
+    [[ "${CONFIG[ENV_MODE]}" != production ]] || docker-versions || return
 
     socket="$(docker-socket)" || return
-    uid="$(id -u)" || return
+    uid="$(docker-uid)" || return
     gid="$(stat -c %g "${socket}" 2>/dev/null || stat -f %g "${socket}")" || { err "Docker socket ownership unreadable"; return; }
-    ! docker-rootless || { uid=0; gid=0; }
+    ! docker-rootless || gid=0
 
     fs-dir "${secrets}" 755 || return
 

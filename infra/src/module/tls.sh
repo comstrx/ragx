@@ -55,10 +55,10 @@ tls-certbot () {
             flags+=( --network "${CONFIG[COMPOSE_PROJECT]}-apps" --network-alias acme )
         ;;
         dns)
-            cfg-require CLOUDFLARE_TOKEN || return
-            [[ "${CONFIG[CLOUDFLARE_TOKEN]}" =~ ^[A-Za-z0-9_-]+$ ]] || { err "CLOUDFLARE_TOKEN has an unexpected format"; return; }
+            cfg-require DNS_PROVIDER DNS_TOKEN || return
+            [[ "${CONFIG[DNS_TOKEN]}" =~ ^[A-Za-z0-9_-]+$ ]] || { err "DNS_TOKEN has an unexpected format"; return; }
             credentials="${CONFIG[STATE_ROOT]}/cloudflare.ini"
-            printf 'dns_cloudflare_api_token = %s\n' "${CONFIG[CLOUDFLARE_TOKEN]}" | fs-write "${credentials}" || return
+            printf 'dns_cloudflare_api_token = %s\n' "${CONFIG[DNS_TOKEN]}" | fs-write "${credentials}" || return
             flags+=( --network bridge --mount "type=bind,source=${credentials},target=/run/cloudflare.ini,readonly" )
         ;;
     esac
@@ -131,5 +131,25 @@ tls-import () {
         --mount "type=volume,source=${CONFIG[COMPOSE_PROJECT]}-tls,target=/tls" \
         -- "${CONFIG[IMAGE_HAPROXY]}" -c 'set -eu; umask 077; cat > /tls/site.pem.new; mv /tls/site.pem.new /tls/site.pem' ||
         { err "Certificate import failed"; return; }
+
+}
+tls-expiry () {
+
+    local host="${1}" address="${2}" port="${3}"
+
+    need openssl || return
+
+    openssl s_client -connect "${address}:${port}" -servername "${host}" < /dev/null 2>/dev/null | tls-enddate || { err "No certificate answered on ${address}:${port}"; return; }
+
+}
+tls-enddate () {
+
+    local line="" end=""
+
+    need openssl || return
+
+    end="$(while IFS= read -r line; do printf '%s\n' "${line#Cert:}"; done | openssl x509 -noout -enddate 2>/dev/null)" || return 1
+
+    date -u -d "${end#notAfter=}" +%s 2>/dev/null || { err "Certificate expiry unreadable: ${end}"; return; }
 
 }

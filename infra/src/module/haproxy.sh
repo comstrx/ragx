@@ -1,30 +1,17 @@
 haproxy-render () {
 
-    local directory="${1}" route="" name="" host="" port="" path="" balance="" expect="" slot="" suffix="" certificate="/etc/haproxy-tls/site.pem"
-    local hostnames="" routing="" backends="" binds="" candidate="    bind :8081" security="" redirect=""
+    local directory="${1}" route="" name="" host="" port="" path="" balance="" expect="" kind="" slot="" hostnames="" routing="" backends=""
 
     shift
     (( $# > 0 )) || { err "HAProxy needs at least one route"; return; }
 
-    if cfg-true TLS_ENABLED; then
-
-        [[ "${CONFIG[HTTPS_PORT]}" == 443 ]] || suffix=":${CONFIG[HTTPS_PORT]}"
-
-        binds="    bind :8443 ssl crt ${certificate} strict-sni alpn h2,http/1.1"
-        candidate="    bind :8444 ssl crt ${certificate} strict-sni alpn h2,http/1.1"
-        redirect="    http-request redirect prefix https://%[req.hdr(host),lower,field(1,:)]${suffix} code 308 unless { ssl_fc } || { path_beg /.well-known/acme-challenge/ }"
-        security="    http-after-response set-header Strict-Transport-Security \"max-age=63072000\" if { ssl_fc }"
-
-        if cfg-true HTTP3_ENABLED; then
-            binds+=$'\n'"    bind quic4@:8443 ssl crt ${certificate} strict-sni ssl-min-ver TLSv1.3 alpn h3"
-            security+=$'\n'"    http-after-response set-header Alt-Svc 'h3=\":${CONFIG[HTTPS_PORT]}\"; ma=86400' if { ssl_fc }"
-        fi
-
-    fi
+    haproxy-protocols || return
+    haproxy-client || return
+    haproxy-limits || return
 
     for route in "$@"; do
 
-        IFS='|' read -r name host port path balance expect <<< "${route}"
+        IFS='|' read -r name host port path balance expect kind <<< "${route}"
 
         [[ "${name}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || { err "Invalid backend name: ${name}"; return; }
         parse-host "${host}" || { err "Invalid route host for ${name}: ${host}"; return; }
@@ -32,8 +19,16 @@ haproxy-render () {
         parse-path "${path}" || { err "Invalid readiness path for ${name}: ${path}"; return; }
         [[ "${balance}" == roundrobin || "${balance}" == leastconn ]] || { err "Invalid balance for ${name}: ${balance}"; return; }
         [[ "${expect}" =~ ^[1-5][0-9]{2}(-[1-5][0-9]{2})?$ ]] || { err "Invalid readiness status for ${name}: ${expect}"; return; }
+        [[ "${kind:-slot}" == slot || "${kind}" == static ]] || { err "Invalid route kind for ${name}: ${kind}"; return; }
 
         hostnames+="${hostnames:+ }${host}"
+
+        if [[ "${kind}" == static ]]; then
+            routing+="    use_backend ${name} if { req.hdr(host),lower,field(1,:) -m str ${host} }"$'\n'
+            backends+="$(haproxy-backend "${name}" "" "${host}" "${port}" "${path}" "${balance}" "${expect}")"$'\n\n'
+            continue
+        fi
+
         routing+="    use_backend ${name}_%[var(txn.slot)] if { req.hdr(host),lower,field(1,:) -m str ${host} }"$'\n'
 
         for slot in blue green; do
@@ -43,29 +38,151 @@ haproxy-render () {
     done
 
     cfg-set HAPROXY_HOSTS "${hostnames}"
-    cfg-set HAPROXY_BINDS "${binds}"
-    cfg-set HAPROXY_CANDIDATE "${candidate}"
-    cfg-set HAPROXY_REDIRECT "${redirect}"
-    cfg-set HAPROXY_SECURITY "${security}"
     cfg-set HAPROXY_ROUTES "${routing}    default_backend unavailable"
-    cfg-set HAPROXY_BACKENDS "${backends%$'\n'}"
+    cfg-set HAPROXY_BACKENDS "${backends}${CONFIG[HAPROXY_TABLES]}"
 
     fs-dir "${directory}" 755 || return
     template-render "${MANIFEST[paths.templates]}/native/haproxy.cfg" "${directory}/haproxy.cfg" 644
 
 }
+haproxy-protocols () {
+
+    local tls="ssl crt /etc/haproxy-tls/site.pem strict-sni alpn h2,http/1.1" relay="mode 666 accept-proxy" suffix="" binds="    bind :8080"
+    local candidate="    bind :8081" security="" redirect=""
+
+    [[ -z "${CONFIG[EDGE_SOCKETS]}" ]] || binds="    bind unix@/sockets/http.sock ${relay}"
+
+    if cfg-true TLS_ENABLED; then
+
+        [[ "${CONFIG[HTTPS_PORT]}" == 443 ]] || suffix=":${CONFIG[HTTPS_PORT]}"
+
+        if [[ -n "${CONFIG[EDGE_SOCKETS]}" ]]; then binds+=$'\n'"    bind unix@/sockets/https.sock ${relay} ${tls}"
+        else binds+=$'\n'"    bind :8443 ${tls}"
+        fi
+
+        candidate="    bind :8444 ${tls}"
+        redirect="    http-request redirect prefix https://%[req.hdr(host),lower,field(1,:)]${suffix} code 308 unless { ssl_fc } || { path_beg /.well-known/acme-challenge/ }"
+        security="    http-after-response set-header Strict-Transport-Security \"max-age=63072000\" if { ssl_fc }"
+
+        if haproxy-quic; then
+            binds+=$'\n'"    bind quic4@:8443 ssl crt /etc/haproxy-tls/site.pem strict-sni ssl-min-ver TLSv1.3 alpn h3"
+            security+=$'\n'"    http-after-response set-header Alt-Svc 'h3=\":${CONFIG[HTTPS_PORT]}\"; ma=86400' if { ssl_fc }"
+        fi
+
+    fi
+
+    cfg-set HAPROXY_BINDS "${binds}"
+    cfg-set HAPROXY_CANDIDATE "${candidate}"
+    cfg-set HAPROXY_REDIRECT "${redirect}"
+    cfg-set HAPROXY_SECURITY "${security}"
+
+}
+haproxy-quic () {
+
+    cfg-true TLS_ENABLED && cfg-true HTTP3_ENABLED && [[ -z "${CONFIG[EDGE_SOCKETS]}" ]]
+
+}
+haproxy-client () {
+
+    local header="${CONFIG[TRUSTED_HEADER]}" range="" rules="" line=""
+    local -a ranges=()
+
+    read -r -a ranges <<< "${CONFIG[TRUSTED_RANGES]:-}"
+
+    for range in "${ranges[@]}"; do
+        parse-cidr "${range}" || { err "Invalid trusted range: ${range}"; return; }
+        line+=" ${range}"
+        (( ${#line} < 160 )) || { rules+="    acl trusted src${line}"$'\n'; line=""; }
+    done
+
+    [[ -z "${line}" ]] || rules+="    acl trusted src${line}"$'\n'
+    [[ -z "${rules}" ]] || rules+="    http-request set-src req.hdr_ip(${header},-1) if trusted { req.hdr(${header}) -m found }"
+
+    cfg-set HAPROXY_CLIENT "${rules}"
+
+}
+haproxy-limits () {
+
+    local exempt='unless { path_beg /.well-known/acme-challenge/ }' rules="" tables="" rule="" prefix="" window="" count="" seconds="" index=0
+    local -a paths=()
+
+    if [[ -n "${CONFIG[RATE_LIMIT_GLOBAL]}" ]]; then
+        window="$(haproxy-rate "${CONFIG[RATE_LIMIT_GLOBAL]}")" || return
+        read -r count seconds <<< "${window}"
+        tables+="$(haproxy-table limit_global 'integer size 1' "${seconds}")"$'\n\n'
+        rules+="    http-request track-sc0 int(1) table limit_global ${exempt}"$'\n'
+        rules+="    http-request deny deny_status 429 hdr Retry-After ${seconds} if { sc_http_req_rate(0) gt ${count} }"$'\n'
+    fi
+
+    if [[ -n "${CONFIG[RATE_LIMIT_HOST]}" ]]; then
+        window="$(haproxy-rate "${CONFIG[RATE_LIMIT_HOST]}")" || return
+        read -r count seconds <<< "${window}"
+        tables+="$(haproxy-table limit_host 'string len 255 size 100k' "${seconds}")"$'\n\n'
+        rules+="    http-request track-sc1 req.hdr(host),lower,field(1,:) table limit_host ${exempt}"$'\n'
+        rules+="    http-request deny deny_status 429 hdr Retry-After ${seconds} if { sc_http_req_rate(1) gt ${count} }"$'\n'
+    fi
+
+    if [[ -n "${CONFIG[RATE_LIMIT_IP]}" ]]; then
+        window="$(haproxy-rate "${CONFIG[RATE_LIMIT_IP]}")" || return
+        read -r count seconds <<< "${window}"
+        tables+="$(haproxy-table limit_ip 'ipv6 size 1m' "${seconds}")"$'\n\n'
+        rules+="    http-request track-sc2 src table limit_ip ${exempt}"$'\n'
+        rules+="    http-request deny deny_status 429 hdr Retry-After ${seconds} if { sc_http_req_rate(2) gt ${count} }"$'\n'
+    fi
+
+    [[ -z "${CONFIG[RATE_LIMIT_PATHS]}" ]] || IFS=, read -r -a paths <<< "${CONFIG[RATE_LIMIT_PATHS]}"
+
+    for rule in "${paths[@]}"; do
+        index=$(( index + 1 ))
+        prefix="${rule%%=*}"
+        window="$(haproxy-rate "${rule#*=}")" || return
+        read -r count seconds <<< "${window}"
+        tables+="$(haproxy-table "limit_path_${index}" 'ipv6 size 1m' "${seconds}")"$'\n\n'
+        rules+="    http-request track-sc3 src table limit_path_${index} if { path_beg ${prefix} }"$'\n'
+        rules+="    http-request deny deny_status 429 hdr Retry-After ${seconds} if { path_beg ${prefix} } { sc_http_req_rate(3) gt ${count} }"$'\n'
+    done
+
+    cfg-set HAPROXY_LIMITS "${rules%$'\n'}"
+    cfg-set HAPROXY_TABLES "${tables}"
+
+}
+haproxy-rate () {
+
+    local rate="${1}" count="" amount="" seconds=""
+
+    [[ "${rate}" =~ ^([1-9][0-9]*)/([1-9][0-9]*)([smh])$ ]] || { err "Invalid rate: ${rate}"; return; }
+    count="${BASH_REMATCH[1]}"
+    amount="${BASH_REMATCH[2]}"
+
+    case "${BASH_REMATCH[3]}" in
+        s) seconds="${amount}" ;;
+        m) seconds=$(( amount * 60 )) ;;
+        h) seconds=$(( amount * 3600 )) ;;
+    esac
+
+    out "${count} ${seconds}"
+
+}
+haproxy-table () {
+
+    out "backend ${1}" "    stick-table type ${2} expire $(( ${3} * 2 ))s store http_req_rate(${3}s)"
+
+}
 haproxy-backend () {
 
-    local name="${1}" slot="${2}" host="${3}" port="${4}" path="${5}" balance="${6}" expect="${7}"
+    local name="${1}" slot="${2}" host="${3}" port="${4}" path="${5}" balance="${6}" expect="${7}" target="${1}" slots="1-32"
 
-    out "backend ${name}_${slot}" \
+    [[ -z "${slot}" ]] || target="${name}-${slot}"
+    [[ -n "${slot}" ]] || slots="1-1"
+
+    out "backend ${name}${slot:+_${slot}}" \
         "    balance ${balance}" \
         '    http-reuse safe' \
         '    option httpchk' \
         "    http-check send meth GET uri ${path} ver HTTP/1.1 hdr Host ${host}" \
         "    http-check expect status ${expect}" \
         "    default-server inter 2s fastinter 1s downinter 2s fall 3 rise 2 slowstart 10s maxconn ${CONFIG[BACKEND_MAXCONN]} maxqueue ${CONFIG[BACKEND_MAXCONN]} observe layer7 error-limit 10 on-error mark-down init-state fully-down" \
-        "    server-template replica 1-32 ${name}-${slot}:${port} check resolvers docker resolve-prefer ipv4 init-addr none"
+        "    server-template replica ${slots} ${target}:${port} check resolvers docker resolve-prefer ipv4 init-addr none"
 
 }
 haproxy-check () {
@@ -85,7 +202,7 @@ haproxy-features () {
     details="$(docker-oneshot --entrypoint haproxy -- "${CONFIG[IMAGE_HAPROXY]}" -vv)" || { err "HAProxy build unreadable"; return; }
 
     [[ "${details}" == *+PROMEX* ]] || { err "HAProxy build lacks the Prometheus exporter"; return; }
-    ! cfg-true HTTP3_ENABLED || [[ "${details}" == *+QUIC* ]] || { err "HAProxy build lacks QUIC; set HTTP3_ENABLED=false or change the image"; return; }
+    ! haproxy-quic || [[ "${details}" == *+QUIC* ]] || { err "HAProxy build lacks QUIC; set HTTP3_ENABLED=false or change the image"; return; }
 
 }
 

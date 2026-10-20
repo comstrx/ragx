@@ -102,6 +102,14 @@ test-parse-grammars () {
     parse-address 255.255.255.255
     expect-fail parse-address 256.0.0.1
     expect-fail parse-address 1.2.3
+    parse-cidr 173.245.48.0/20
+    parse-cidr 2400:cb00::/32
+    parse-cidr 0.0.0.0/0
+    expect-fail parse-cidr 173.245.48.0
+    expect-fail parse-cidr 256.0.0.0/8
+    expect-fail parse-cidr 10.0.0.0/33
+    expect-fail parse-cidr 2400:cb00::/129
+    expect-fail parse-cidr 'bad;range/8'
 
     parse-port 65535
     expect-fail parse-port 65536
@@ -132,5 +140,17 @@ test-parse-map () {
 
     parse-map mapped ''
     expect-equal "${#mapped[@]}" 0
+
+}
+test-parse-content () {
+
+    local text=$'APP_ENV=production\nKEY="a b"\nLONG=0123456789012345678901234567890123456789012345678901234567890123456789'
+
+    expect-equal "$(parse-content "$(printf '%s\n' "${text}" | openssl base64 -A)")" "${text}" 'one base64 line decodes'
+    expect-equal "$(parse-content "${text}")" "${text}" 'plain text passes through'
+    expect-equal "$(parse-content APP_ENV=production)" APP_ENV=production
+    expect-equal "$(parse-content "$(printf 'bin\000ary' | openssl base64 -A)")" "$(printf 'bin\000ary' | openssl base64 -A)" 'binary is never decoded'
+    expect-equal "$(parse-content abc)" abc
+    expect-equal "$(parse-content "$(printf '%s\n' "${text}" | openssl base64)")" "$(printf '%s\n' "${text}" | openssl base64)" 'wrapped base64 is not one line'
 
 }

@@ -14,12 +14,14 @@ native-render () {
     local directory=""
 
     config-validate || return
+    native-release-id || return
     config-required || return
     directory="$(native-directory "${CONFIG[RELEASE]}")" || return
 
     if [[ -f "${directory}/release.env" ]]; then
         native-release-match "${directory}" || return
     else
+        native-env-digests || return
         native-render-files "${directory}" || return
         config-release-save "${directory}/release.env" || return
         state-write "${directory}" migration "${CONFIG[MIGRATION_POLICY]}" || return
@@ -36,7 +38,8 @@ native-render-files () {
     postgresql-render "${directory}" || return
     rabbitmq-render "${directory}" || return
     redis-render "${directory}" || return
-    native-api-env "${directory}" || return
+    native-env-render "${directory}" API || return
+    native-env-render "${directory}" WEB || return
 
     template-render "${MANIFEST[paths.templates]}/native/data.yaml.tpl" "${directory}/data.yaml" || return
     native-render-compose "${directory}"
@@ -44,7 +47,20 @@ native-render-files () {
 }
 native-render-compose () {
 
-    local directory="${1}" templates="${MANIFEST[paths.templates]}/native" spec="" image="" body=""
+    local directory="${1}" templates="${MANIFEST[paths.templates]}/native" spec="" image="" body="" release="" storage=""
+
+    [[ -z "${CONFIG[API_RELEASE_VARIABLE]}" ]] || release="${CONFIG[API_RELEASE_VARIABLE]}=${CONFIG[RELEASE]}"
+    storage="{\"type\": \"volume\", \"source\": \"storage\", \"target\": $(parse-json-string "${CONFIG[API_STORAGE_MOUNT]}")}"
+
+    cfg-set API_MOUNTS "$(native-mounts API "${storage}")"
+    cfg-set API_SERVE_ARGS "$(native-words "${CONFIG[API_SERVE_COMMAND]}")"
+    cfg-set API_WORK_ARGS "$(native-words "${CONFIG[API_WORK_COMMAND]}")"
+    cfg-set API_SCHEDULE_ARGS "$(native-words "${CONFIG[API_SCHEDULE_COMMAND]}")"
+    cfg-set API_SERVE_VARIABLES "$(native-variables "${CONFIG[API_FORCED_ENV]}" "${CONFIG[API_SERVE_ENV]}" "${release}")"
+    cfg-set API_WORK_VARIABLES "$(native-variables "${CONFIG[API_FORCED_ENV]}" "${CONFIG[API_WORK_ENV]}" "${release}")"
+    cfg-set API_SCHEDULE_VARIABLES "$(native-variables "${CONFIG[API_FORCED_ENV]}" "${CONFIG[API_SCHEDULE_ENV]}" "${release}")"
+    cfg-set WEB_MOUNTS "$(native-mounts WEB)"
+    cfg-set WEB_VARIABLES "$(native-variables "${CONFIG[WEB_FORCED_ENV]}")"
 
     template-render "${templates}/application.yaml.tpl" "${directory}/application.yaml" || return
 
@@ -66,64 +82,149 @@ native-render-compose () {
     printf '%s\n' "${body}" | fs-write "${directory}/web.yaml"
 
 }
-native-api-env () {
+native-release-id () {
 
-    local directory="${1}" broker="" password="" key=""
-    local -a keys=(
-        APP_NAME APP_ENV APP_DEBUG APP_HOST APP_PORT APP_WORKERS APP_PREFIX APP_URL APP_RELEASE APP_ORIGINS LOG_RENDERER
-        DB_DRIVER DB_HOST DB_PORT DB_DATABASE DB_USERNAME DB_PASSWORD DB_SSLMODE DB_POOL_MAX DB_MIGRATE DB_SEED
-        AUTH_SECRET AUTH_KEYS QUEUE_DRIVER QUEUE_URL QUEUE_EXCHANGE QUEUE_WORKERS EVENT_DRIVER EVENT_URL EVENT_EXCHANGE
-        CACHE_DRIVER CACHE_URL CACHE_PREFIX BROADCAST_ENABLED BROADCAST_DRIVER BROADCAST_URL SOCKET_ENABLED SCHEDULE_ENABLED
-        STORAGE_DISK STORAGE_ROOT STORAGE_MAX_SIZE DOCS_ENABLED MAIL_DRIVER
-    )
+    local revision=""
 
-    broker="$(parse-url-component "${CONFIG[RABBIT_USER]}"):$(parse-url-component "${CONFIG[RABBIT_PASSWORD]}")"
-    password="$(parse-url-component "${CONFIG[REDIS_PASSWORD]}")"
+    [[ -z "${CONFIG[RELEASE]}" ]] || return 0
+    [[ -n "${CONFIG[VERSION]}" ]] || { err "Missing setting: VERSION or RELEASE"; return; }
 
-    cfg-set APP_NAME "${CONFIG[PROJECT]}"
-    cfg-set APP_ENV production
-    cfg-set APP_DEBUG false
-    cfg-set APP_HOST 0.0.0.0
-    cfg-set APP_PORT "${CONFIG[API_PORT]}"
-    cfg-set APP_PREFIX "${CONFIG[API_PREFIX]}"
-    cfg-set APP_URL "${CONFIG[API_URL]}"
-    cfg-set APP_RELEASE "${CONFIG[RELEASE]}"
-    cfg-set LOG_RENDERER json
-    cfg-set DB_DRIVER postgresql
-    cfg-set DB_HOST postgres
-    cfg-set DB_PORT 5432
-    cfg-set DB_DATABASE "${CONFIG[DB_NAME]}"
-    cfg-set DB_USERNAME "${CONFIG[DB_USER]}"
-    cfg-set DB_SSLMODE disable
-    cfg-set DB_MIGRATE false
-    cfg-set DB_SEED false
-    cfg-set QUEUE_DRIVER rabbitmq
-    cfg-set QUEUE_URL "amqp://${broker}@rabbitmq:5672/"
-    cfg-set QUEUE_EXCHANGE "${CONFIG[COMPOSE_PROJECT]}.jobs"
-    cfg-set EVENT_DRIVER rabbitmq
-    cfg-set EVENT_URL "${CONFIG[QUEUE_URL]}"
-    cfg-set EVENT_EXCHANGE "${CONFIG[COMPOSE_PROJECT]}.events"
-    cfg-set CACHE_DRIVER redis
-    cfg-set CACHE_URL "redis://:${password}@redis:6379/0"
-    cfg-set CACHE_PREFIX "${CONFIG[COMPOSE_PROJECT]}:"
-    cfg-set BROADCAST_ENABLED true
-    cfg-set BROADCAST_DRIVER redis
-    cfg-set BROADCAST_URL "redis://:${password}@redis:6379/1"
-    cfg-set SOCKET_ENABLED true
-    cfg-set SCHEDULE_ENABLED false
-    cfg-set STORAGE_DISK public
-    cfg-set STORAGE_ROOT /app/storage
-    cfg-set STORAGE_MAX_SIZE "${CONFIG[UPLOAD_BYTES]}"
-    cfg-set DOCS_ENABLED false
+    revision="$(native-revision)" || return
+    parse-identifier "${CONFIG[VERSION]}-${revision}" || { err "VERSION is too long for a release name: ${CONFIG[VERSION]}"; return; }
+    cfg-set RELEASE "${CONFIG[VERSION]}-${revision}"
 
-    [[ "${CONFIG[STORAGE_DRIVER]}" != s3 ]] || cfg-set STORAGE_DISK s3
+}
+native-revision () {
 
-    for key in STORAGE_S3_BUCKET STORAGE_S3_REGION STORAGE_S3_ENDPOINT STORAGE_S3_KEY STORAGE_S3_SECRET MAIL_HOST MAIL_PORT \
-        MAIL_USERNAME MAIL_PASSWORD MAIL_SENDER LLM_OPENAI_KEY LLM_ANTHROPIC_KEY LLM_GEMINI_KEY LLM_DEEPSEEK_KEY LLM_LOCAL_URL LLM_LOCAL_KEY; do
-        [[ -z "${CONFIG[${key}]}" ]] || keys+=( "${key}" )
+    local key="" digest=""
+    local -a keys=()
+
+    native-env-digests || return
+
+    while IFS= read -r key; do
+        [[ "${key}" == RELEASE ]] || keys+=( "${key}" )
+    done < <(config-release-keys)
+
+    digest="$(template-env-text false "${keys[@]}" | fs-hash -)" || return
+    out "${digest:0:8}"
+
+}
+native-mounts () {
+
+    local app="${1}" mounts="${2-}" source=""
+
+    if native-env-enabled "${app}"; then
+        source="$(parse-json-string "\${RELEASE_ROOT:?RELEASE_ROOT required}/${app,,}.env")"
+        mounts+="${mounts:+, }{\"type\": \"bind\", \"source\": ${source}, \"target\": $(parse-json-string "${CONFIG[${app}_ENV_MOUNT]}"), \"read_only\": true}"
+    fi
+
+    out "[${mounts}]"
+
+}
+native-words () {
+
+    local word="" json=""
+    local -a words=()
+
+    read -r -a words <<< "${1-}"
+
+    for word in "${words[@]}"; do
+        json+="${json:+, }$(parse-json-string "${word//\$/\$\$}")"
     done
 
-    template-compose-env "${directory}/api.env" "${keys[@]}"
+    out "[${json}]"
+
+}
+native-variables () {
+
+    local pair="" name="" json=""
+    local -a pairs=() order=()
+    local -A values=()
+
+    read -r -a pairs <<< "$*"
+
+    for pair in "${pairs[@]}"; do
+        name="${pair%%=*}"
+        [[ -n "${values[${name}]+x}" ]] || order+=( "${name}" )
+        values["${name}"]="${pair#*=}"
+    done
+
+    for name in "${order[@]}"; do
+        json+="${json:+, }$(parse-json-string "${name}"): $(parse-json-string "${values[${name}]//\$/\$\$}")"
+    done
+
+    out "{${json}}"
+
+}
+native-env-file () {
+
+    out "${CONFIG[PROJECT_ROOT]}/.env.${1,,}"
+
+}
+native-env-enabled () {
+
+    [[ "${1}" == API ]] || native-env-present "${1}"
+
+}
+native-env-present () {
+
+    local name="${1}_ENV_FILE"
+
+    [[ -n "${!name+x}" && "${!name@a}" == *x* && -n "${!name}" ]] || [[ -f "$(native-env-file "${1}")" ]]
+
+}
+native-env-content () {
+
+    local app="${1}" name="${1}_ENV_FILE" file="" content="" bytes=0
+
+    file="$(native-env-file "${app}")"
+
+    if [[ -n "${!name+x}" && "${!name@a}" == *x* && -n "${!name}" ]]; then
+        content="$(parse-content "${!name}")"
+    elif [[ -f "${file}" ]]; then
+        ! IFS= read -r -d '' content < "${file}" || { err "NUL bytes are forbidden: ${file}"; return; }
+        content="$(fs-read "${file}")" || return
+    else
+        err "${app} env content missing: export ${name} or stage ${file##*/}"
+        return
+    fi
+
+    bytes="$(LC_ALL=C; out "${#content}")"
+    (( bytes <= 49152 )) || { err "${name} exceeds 48 KiB"; return; }
+    [[ "${content}" != *$'\r'* ]] || { err "${name} has carriage returns; save it with LF line endings"; return; }
+    [[ "${content}" =~ [^[:space:]] ]] || { err "${name} is empty"; return; }
+
+    printf '%s' "${content}"
+
+}
+native-env-digest () {
+
+    local content=""
+
+    native-env-enabled "${1}" || return 0
+    content="$(native-env-content "${1}")" || return
+
+    printf '%s\n' "${content}" | fs-hash -
+
+}
+native-env-digests () {
+
+    local app="" digest=""
+
+    for app in API WEB; do
+        digest="$(native-env-digest "${app}")" || return
+        cfg-set "${app}_ENV_SHA256" "${digest}"
+    done
+
+}
+native-env-render () {
+
+    local directory="${1}" app="${2}" content=""
+
+    native-env-enabled "${app}" || return 0
+    content="$(native-env-content "${app}")" || return
+
+    printf '%s\n' "${content}" | fs-write "${directory}/${app,,}.env" 644
 
 }
 native-release-match () {
@@ -131,6 +232,7 @@ native-release-match () {
     local directory="${1}" scratch="" expected="" actual="" status=0
 
     [[ -f "${directory}/release.env" ]] || { err "Release snapshot missing: ${directory}"; return; }
+    native-env-digests || return
     scratch="$(fs-temp)" || return
 
     if ( config-release-load "${directory}/release.env" && config-release-save "${scratch}/expected" ) && config-release-save "${scratch}/actual"; then

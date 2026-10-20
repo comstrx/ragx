@@ -2,15 +2,28 @@ source-include module/docker.sh || return
 
 native-rollback () {
 
-    docker-ready || return
-    fs-dir "${CONFIG[STATE_ROOT]}" || return
+    local root="${CONFIG[STATE_ROOT]}" pending="" current="" previous=""
 
-    state-locked "${CONFIG[STATE_ROOT]}/lock" native-rollback-locked
+    docker-ready || return
+    fs-dir "${root}" || return
+    pending="$(state-read "${root}" pending 2>/dev/null)" || pending=""
+
+    if ! state-locked "${root}/lock" native-rollback-locked; then
+        native-announce rollback.failed "the rollback failed; inspect status"
+        return 1
+    fi
+
+    current="$(state-read "${root}" current 2>/dev/null)" || current=""
+    previous="$(state-read "${root}" previous 2>/dev/null)" || previous=""
+
+    if [[ -n "${pending}" ]]; then native-announce rollback.succeeded "${pending} was rejected by an operator; ${current:-no release} keeps serving"
+    else native-announce rollback.succeeded "${current} is live again by an operator; ${previous} was set aside"
+    fi
 
 }
 native-rollback-locked () {
 
-    local root="${CONFIG[STATE_ROOT]}" pending="" origin="" previous="" current="" directory="" policy=""
+    local reason="${1:-rolled back by an operator}" root="${CONFIG[STATE_ROOT]}" pending="" origin="" previous="" current="" directory="" policy=""
 
     pending="$(state-read "${root}" pending 2>/dev/null)" || pending=""
 
@@ -19,6 +32,7 @@ native-rollback-locked () {
         directory="$(native-directory "${pending}")" || return
         config-release-load "${directory}/release.env" || return
         cfg-set DEPLOY_SLOT "$(state-read "${root}" pending-slot)" state || return
+        native-reject "${pending}" "${reason}" || warn "Rejection of ${pending} was not recorded"
         native-abort "${directory}" "${pending}" "${origin}"
         return
     fi
@@ -46,7 +60,11 @@ native-rollback-locked () {
     native-wait-app "${previous}" || return
     native-probe-candidate || { err "Retained release ${previous} is not ready"; return; }
 
-    native-promote "${directory}" "${previous}" "${current}" && { ui-result rollback true safe; return; }
+    if native-promote "${directory}" "${previous}" "${current}"; then
+        native-reject "${current}" "${reason}" || warn "Rejection of ${current} was not recorded"
+        ui-result rollback true safe
+        return
+    fi
 
     native-abort "${directory}" "${previous}" "${current}"
     err "Rollback to ${previous} failed; ${current} restored"
@@ -94,6 +112,7 @@ native-current () {
 }
 native-stop () {
 
+    cli-flag --force || { err "stop takes the edge and the current release offline; data services keep running. Repeat with --force"; return; }
     native-current || return
 
     state-locked "${CONFIG[STATE_ROOT]}/lock" native-stop-locked
@@ -104,6 +123,7 @@ native-stop-locked () {
     native-compose-edge stop edge || return
     native-compose-app "${CONFIG[RELEASE]}" --profile worker --profile scheduler stop -t "${CONFIG[DRAIN_TIMEOUT]}" || return
 
+    native-announce service.stopped "the edge and ${CONFIG[RELEASE]} were stopped by an operator; data services keep running"
     ui-result stop true safe
 
 }
@@ -124,6 +144,7 @@ native-start-locked () {
     native-select "${CONFIG[DEPLOY_SLOT]}" "${CONFIG[RELEASE]}" || return
     native-background-start "${CONFIG[RELEASE]}" || return
 
+    native-announce service.started "${CONFIG[RELEASE]} and the edge were started by an operator"
     ui-result start true safe
 
 }
@@ -141,6 +162,7 @@ native-uninstall-locked () {
     native-compose-app "${CONFIG[RELEASE]}" --profile worker --profile scheduler down || return
     native-compose-data down || return
 
+    native-announce service.uninstalled "the edge, ${CONFIG[RELEASE]} and the data containers were removed by an operator; data volumes stay"
     ui-result uninstall true safe
 
 }

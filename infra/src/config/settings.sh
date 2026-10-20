@@ -22,22 +22,14 @@ config-manifest () {
 }
 config-file () {
 
-    local root="${1}" mode="${2}"
+    local root="${1}" mode="${2}" name=""
+    local -a chain=( .env.local .env )
 
-    if [[ "${mode}" == production ]]; then
+    [[ "${mode}" != production ]] || chain=( .env.production .env.prod .env )
 
-        [[ ! -f "${root}/.env.production" || ! -f "${root}/.env.pod" ]] || { err "Both .env.production and .env.pod exist; keep one or pass --config"; return; }
-        [[ ! -f "${root}/.env.production" ]] || { out "${root}/.env.production"; return; }
-        [[ ! -f "${root}/.env.pod" ]] || { out "${root}/.env.pod"; return; }
-
-    elif [[ -f "${root}/.env.local" ]]; then
-
-        out "${root}/.env.local"
-        return
-
-    fi
-
-    [[ ! -f "${root}/.env" ]] || out "${root}/.env"
+    for name in "${chain[@]}"; do
+        [[ ! -f "${root}/${name}" ]] || { out "${root}/${name}"; return 0; }
+    done
 
 }
 config-load () {
@@ -49,6 +41,7 @@ config-load () {
 
     CONFIG=()
     CONFIG_SOURCE=()
+    CONFIG_DEFAULTS=()
     CONFIG_KEYS=()
 
     schema="$(asset-materialize .env.example)" || return
@@ -58,11 +51,23 @@ config-load () {
 
     CONFIG_SCHEMA=( "${CONFIG_KEYS[@]}" )
 
+    for key in "${CONFIG_SCHEMA[@]}"; do
+        CONFIG_DEFAULTS["${key}"]="${CONFIG[${key}]}"
+    done
+
     if (( ${#CLI_CONFIGS[@]} > 0 )); then
 
         for file in "${CLI_CONFIGS[@]}"; do
             cfg-load "${file}" known file || return
         done
+
+    elif [[ -n "${ENV_FILE:-}" ]]; then
+
+        file="$(fs-temp-file)" || return
+        parse-content "${ENV_FILE}" | fs-write "${file}" || return
+        cfg-load "${file}" known file || status=$?
+        rm -f -- "${file}"
+        (( status == 0 )) || return "${status}"
 
     else
 
@@ -79,7 +84,6 @@ config-load () {
         cfg-set "${key}" "${pair#*=}" cli
     done
 
-    [[ -z "${CLI_FLAGS[--environment]:-}" ]] || cfg-set DEPLOY_ENV "${CLI_FLAGS[--environment]}" cli
     [[ -z "${CLI_FLAGS[--target]:-}" ]] || cfg-set SSH_HOST "${CLI_FLAGS[--target]}" cli
 
     cfg-set ENV_MODE "${mode}" build
@@ -101,22 +105,17 @@ config-schema-key () {
 }
 config-derive () {
 
-    local stack="${MANIFEST[stack]}" key="" name="" scheme=http port="${CONFIG[HTTP_PORT]}" default=80 origins="" host=""
-    local -A hosts=()
+    local key="" name="" scheme=http port="${CONFIG[HTTP_PORT]}" default=80
 
-    [[ "${CONFIG[DEPLOY_ENV]}" == staging || "${CONFIG[DEPLOY_ENV]}" == production ]] || { err "DEPLOY_ENV must be staging or production"; return; }
     [[ -z "${CONFIG[PROJECT]}" ]] || parse-identifier "${CONFIG[PROJECT]}" || { err "PROJECT must be an identifier"; return; }
 
-    cfg-set STACK "${stack}" manifest
+    cfg-set STACK "${MANIFEST[stack]}" manifest
 
     for key in "${!MANIFEST[@]}"; do
 
-        case "${key}" in
-            images.*)     name="IMAGE_${key#images.}" ;;
-            "${stack}".*) name="${key#"${stack}".}" ;;
-            *)            continue ;;
-        esac
+        [[ "${key}" == images.* ]] || continue
 
+        name="IMAGE_${key#images.}"
         name="${name^^}"
         name="${name//-/_}"
         ! config-schema-key "${name}" || { err "Bash.toml ${key} collides with the env schema"; return; }
@@ -127,10 +126,12 @@ config-derive () {
 
     cfg-has DEPLOY_SLOT || cfg-set DEPLOY_SLOT blue state
 
-    cfg-set COMPOSE_PROJECT "${CONFIG[PROJECT]:-unconfigured}-${CONFIG[DEPLOY_ENV]}"
+    cfg-set COMPOSE_PROJECT "${CONFIG[PROJECT]:-unconfigured}"
     cfg-set STATE_ROOT "${CONFIG[PROJECT_ROOT]}/${MANIFEST[paths.cache]}/${CONFIG[COMPOSE_PROJECT]}"
+    cfg-set BACKUP_ROOT "${CONFIG[BACKUP_DIR]:-${CONFIG[STATE_ROOT]}/backups}"
     cfg-set WEB_ENABLED false
     [[ -z "${CONFIG[WEB_IMAGES]}" ]] || cfg-set WEB_ENABLED true
+    config-github
 
     if cfg-true TLS_ENABLED; then
         scheme=https
@@ -140,15 +141,25 @@ config-derive () {
 
     [[ "${port}" != "${default}" ]] || port=""
     cfg-set API_URL "${scheme}://${CONFIG[API_HOST]:-localhost}${port:+:${port}}"
+    cfg-set GRAFANA_URL "${scheme}://${CONFIG[GRAFANA_HOST]:-localhost}${port:+:${port}}"
 
-    parse-map hosts "${CONFIG[WEB_HOSTS]}" || return
+}
+config-github () {
 
-    while IFS= read -r key; do
-        [[ -n "${key}" ]] || continue
-        host="${hosts[${key}]}"
-        origins+="${origins:+,}$(parse-json-string "${scheme}://${host}${port:+:${port}}")"
-    done < <(printf '%s\n' "${!hosts[@]}" | LC_ALL=C sort)
+    local source="${CONFIG_SOURCE[GITHUB_TOKEN]:-}"
 
-    cfg-set APP_ORIGINS "[${origins}]"
+    [[ -n "${CONFIG[GITHUB_TOKEN]:-}" ]] || return 0
+
+    if [[ -z "${CONFIG[REGISTRY_TOKEN]}" && "${CONFIG[REGISTRY_DRIVER]}" == ghcr ]]; then
+        cfg-set REGISTRY_TOKEN "${CONFIG[GITHUB_TOKEN]}" "${source}"
+        [[ -n "${CONFIG[REGISTRY_USER]}" ]] || cfg-set REGISTRY_USER x-access-token "${source}"
+    fi
+
+    if [[ -z "${CONFIG[GITOPS_TOKEN]}" && "${CONFIG[GITOPS_URL]}" == https://github.com/* ]]; then
+        cfg-set GITOPS_TOKEN "${CONFIG[GITHUB_TOKEN]}" "${source}"
+        [[ -n "${CONFIG[GITOPS_USER]}" ]] || cfg-set GITOPS_USER x-access-token "${source}"
+    fi
+
+    return 0
 
 }

@@ -3,12 +3,11 @@ git-ref () {
     [[ "${1:-}" =~ ^[A-Za-z0-9_][A-Za-z0-9_./-]{0,254}$ && "${1}" != *..* && "${1}" != *.lock && "${1}" != */ ]]
 
 }
-git-checkout () {
+git-run () {
 
-    local url="${1}" ref="${2}" destination="${3}" username="${4}" credential="${5}" vault=""
+    local username="${1}" credential="${2}" vault=""
 
-    [[ "${url}" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?/[A-Za-z0-9_./~-]+$ ]] || { err "HTTPS repository URL without credentials required"; return; }
-    git-ref "${ref}" || { err "Invalid Git reference: ${ref}"; return; }
+    shift 2
     net-safe "${username}" || { err "Git username must be a single line"; return; }
     net-safe "${credential}" || { err "Git credential must be a single line"; return; }
     need git || return
@@ -30,9 +29,23 @@ git-checkout () {
             GIT_ASKPASS="${vault}/askpass" INFRA_GIT_VAULT="${vault}" \
             git -c credential.helper= -c core.hooksPath=/dev/null -c protocol.file.allow=never \
                 -c protocol.ext.allow=never -c http.followRedirects=false \
-                -c http.lowSpeedLimit=1024 -c http.lowSpeedTime=30 \
-                clone --quiet --no-checkout --depth 1 --single-branch --branch "${ref}" -- "${url}" "${destination}"
+                -c http.lowSpeedLimit=1024 -c http.lowSpeedTime=30 "$@"
     )
+
+}
+git-url () {
+
+    [[ "${1:-}" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?/[A-Za-z0-9_./~-]+$ ]]
+
+}
+git-checkout () {
+
+    local url="${1}" ref="${2}" destination="${3}" username="${4}" credential="${5}"
+
+    git-url "${url}" || { err "HTTPS repository URL without credentials required"; return; }
+    git-ref "${ref}" || { err "Invalid Git reference: ${ref}"; return; }
+
+    git-run "${username}" "${credential}" clone --quiet --no-checkout --depth 1 --single-branch --branch "${ref}" -- "${url}" "${destination}"
 
 }
 git-file () {

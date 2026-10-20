@@ -12,9 +12,8 @@ services:
         source: {{EDGE_ROOT|json}}
         target: /etc/haproxy
         read_only: true
-      - tls:/etc/haproxy-tls:ro
-    ports:
-{{EDGE_PORTS}}
+      - tls:/etc/haproxy-tls:ro{{EDGE_MOUNTS}}
+    ports: {{EDGE_PORTS}}
     networks: [apps]
     restart: unless-stopped
     mem_limit: {{EDGE_MEMORY|json}}

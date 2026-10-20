@@ -25,6 +25,13 @@ docker-rootless () {
     [[ "${options}" == *rootless* ]]
 
 }
+docker-uid () {
+
+    if docker-rootless; then out 0
+    else id -u
+    fi
+
+}
 docker-endpoint () {
 
     local context="" endpoint=""
@@ -109,6 +116,19 @@ docker-digests () {
 
 }
 
+docker-remote () {
+
+    local reference="${1:-}" digest=""
+
+    parse-image "${reference}" || { err "Invalid image reference: ${reference}"; return; }
+    need jq || return
+
+    digest="$(docker-client buildx imagetools inspect --format '{{json .Manifest}}' "${reference}" 2>/dev/null | jq -r '.digest // empty')" || return 1
+    [[ "${digest}" =~ ^sha256:[a-f0-9]{64}$ ]] || return 1
+
+    out "${reference%:*}@${digest}"
+
+}
 docker-health () {
 
     local state=""

@@ -20,8 +20,23 @@ systemd-timer () {
     systemctl --user enable --now "${name}.timer" || { err "Timer activation failed: ${name}"; return; }
 
 }
-systemd-stop () {
+systemd-remove () {
 
-    systemctl --user disable --now "${1}.timer" || { err "Timer stop failed: ${1}"; return; }
+    local target="${HOME}/.config/systemd/user"
+
+    systemctl --user disable --now "${1}.timer" 2>/dev/null || true
+    rm -f -- "${target}/${1}.timer" "${target}/${1}.service" || return
+    systemctl --user daemon-reload || { err "systemd user manager unavailable"; return; }
+
+}
+systemd-list () {
+
+    has systemctl || { err "Timers need systemd"; return; }
+    systemctl --user list-timers --all --no-pager --no-legend "${1}-*.timer"
+
+}
+systemd-present () {
+
+    has systemctl && systemctl --user is-enabled --quiet "${1}.timer" 2>/dev/null
 
 }

@@ -60,6 +60,17 @@ parse-address () {
     return 0
 
 }
+parse-cidr () {
+
+    local address="${1%/*}" prefix="${1##*/}"
+
+    [[ "${1:-}" == */* && "${prefix}" =~ ^[0-9]{1,3}$ ]] || return 1
+
+    if [[ "${address}" == *:* ]]; then [[ "${address}" =~ ^[0-9A-Fa-f:]{2,39}$ ]] && (( 10#${prefix} <= 128 ))
+    else parse-address "${address}" && (( 10#${prefix} <= 32 ))
+    fi
+
+}
 parse-image () {
 
     local component='[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?'
@@ -292,5 +303,17 @@ parse-xml-string () {
     value="${value//\'/\&apos;}"
 
     printf '%s' "${value}"
+
+}
+parse-content () {
+
+    local text="${1-}" decoded=""
+
+    if [[ "${text}" =~ ^[A-Za-z0-9+/]{8,}={0,2}$ ]] && (( ${#text} % 4 == 0 )) && decoded="$(printf '%s' "${text}" | openssl base64 -d -A 2>/dev/null | tr '\000' '\001')" && [[ -n "${decoded}" && "${decoded}" != *$'\001'* ]]; then
+        printf '%s\n' "${decoded}"
+        return
+    fi
+
+    printf '%s\n' "${text}"
 
 }

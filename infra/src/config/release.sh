@@ -1,10 +1,12 @@
 config-release-key () {
 
     case "${1:-}" in
-        PROJECT|DEPLOY_ENV|RELEASE|MIGRATION_POLICY|API_IMAGE|WEB_IMAGES|API_HOST|WEB_HOSTS) return 0 ;;
-        API_READY_PATH|WEB_READY_PATH|TLS_ENABLED|HTTP_PORT|HTTPS_PORT)                      return 0 ;;
-        IMAGE_POSTGRES|IMAGE_RABBITMQ|IMAGE_REDIS)                                           return 0 ;;
-        AUTH_*|DB_*|RABBIT_*|REDIS_*|STORAGE_*|MAIL_*|LLM_*)                                 return 0 ;;
+        PROJECT|RELEASE|MIGRATION_POLICY|API_IMAGE|WEB_IMAGES|API_HOST|WEB_HOSTS)            return 0 ;;
+        API_READY_PATH|WEB_READY_PATH|TLS_ENABLED|HTTP_PORT|HTTPS_PORT|API_PORT|WEB_PORT)    return 0 ;;
+        IMAGE_POSTGRES|IMAGE_RABBITMQ|IMAGE_REDIS|APP_MEMORY|DATA_MEMORY|CPUS)               return 0 ;;
+        API_ENV_SHA256|API_ENV_MOUNT|API_STORAGE_MOUNT|API_RELEASE_VARIABLE|API_FORCED_ENV)  return 0 ;;
+        API_*_COMMAND|API_SERVE_ENV|API_WORK_ENV|API_SCHEDULE_ENV)                           return 0 ;;
+        WEB_ENV_SHA256|WEB_ENV_MOUNT|WEB_FORCED_ENV|DB_*|RABBIT_*|REDIS_*)                   return 0 ;;
     esac
 
     return 1
@@ -14,7 +16,7 @@ config-release-keys () {
 
     local key=""
 
-    for key in "${CONFIG_SCHEMA[@]}" IMAGE_POSTGRES IMAGE_RABBITMQ IMAGE_REDIS; do
+    for key in "${CONFIG_SCHEMA[@]}" IMAGE_POSTGRES IMAGE_RABBITMQ IMAGE_REDIS API_ENV_SHA256 WEB_ENV_SHA256; do
         config-release-key "${key}" || continue
         out "${key}"
     done | LC_ALL=C sort -u

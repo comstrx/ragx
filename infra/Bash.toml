@@ -22,18 +22,27 @@ node = "26"
 haproxy = "3.4.7"
 portainer = "2.45.2"
 
+[requires]
+runtime = "awk curl docker git jq od openssl ssh tar"
+
 [images]
 curl = "curlimages/curl:8.23.0@sha256:a134550be58ab783810e613ae96fd253c38f7bdd16d9bf9be350700c7a29ac06"
-postgres = "postgres:18@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336"
+postgres = "pgvector/pgvector:0.8.7-pg18@sha256:2358fcba361ed2233a5ed81b5fe4ca779ccb304120ce531a3bf51c0ed7e2bc11"
 rabbitmq = "rabbitmq:4.2-alpine@sha256:2ec385e7399a5e0d6fc267304fb711ac78ec0b05dc0a64c4d7501f70b15d66a2"
 redis = "redis:8.4-alpine@sha256:0514fa59e3d84e2f3be66731c5401fc2a85b8ea71b49c0116c850f6a558076f4"
 haproxy = "haproxytech/haproxy-alpine:3.4.7@sha256:c9d745967c0651adbfdf0150a739a833a790f3b4eced1758374a6b0f3820c8d9"
 portainer = "portainer/portainer-ce:2.45.2@sha256:03f94a406496dc84d37b552795fc424ccad8d0d7200353b6a82915f6e8f73ab0"
+aws = "amazon/aws-cli:2.37.9@sha256:92de75724b6a746951f0e8b915d86bbccd7cb55aff96cd0cb4f7017272160780"
 certbot = "certbot/dns-cloudflare:v5.2.0@sha256:bb5a1e275d3a06331d9b5b3245f778bf36179bc72820d7d567cdecfd55a854e4"
 python = "python:3.15-slim@sha256:d802f03223b9e00604cd54574bcac1a4638914c43683d3f0afd6ebee35f25313"
 bun = "oven/bun:1.4.3-alpine@sha256:629e17411f1f129dbec3af78d5af9c9f2a937435c80349437206c6b0b7422373"
 node = "node:26-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859ad70cb26ab8be9a517dbd5"
 uv = "ghcr.io/astral-sh/uv:0.13.1@sha256:4a1f3666816dafadd20ceb71eac9a7d56d7ef30279f7d64048519ab901ada336"
+prometheus = "prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e"
+alertmanager = "prom/alertmanager:v0.34.1@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a"
+grafana = "grafana/grafana:13.2.4@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f"
+node-exporter = "prom/node-exporter:v1.12.1@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0"
+postgres-exporter = "prometheuscommunity/postgres-exporter:v0.20.1@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e"
 
 [check]
 severity = "style"
@@ -42,36 +51,9 @@ reason_sc1090 = "Runtime-selected sources are all embedded and analyzed together
 reason_sc1091 = "The source-checkout loader is inactive in bundles; its embedded implementation is checked directly."
 reason_sc2016 = "Generated Bash and injection tests deliberately preserve literal expansion syntax."
 
-[native]
-api_port = 8000
-web_port = 3000
-api_prefix = "/v1"
-api_balance = "leastconn"
-web_balance = "roundrobin"
-health_timeout = 120
-warmup_seconds = 10
-drain_timeout = 30
-retention_seconds = 900
-app_workers = 2
-queue_workers = 2
-db_pool_max = 10
-db_memory = "128MB"
-app_memory = "512m"
-data_memory = "512m"
-edge_memory = "256m"
-cpus = "1"
-edge_maxconn = 4096
-backend_maxconn = 128
-upload_bytes = 10485760
-metrics_port = 9090
-portainer_port = 9443
-gitops_interval = 60
-gitops_desired = "deploy/desired.env"
-gitops_compose = "deploy/application.yaml"
-backup_max_age = 90000
-
 [endpoints]
 cloudflare = "https://api.cloudflare.com/client/v4"
+telegram = "https://api.telegram.org"
 
 [downloads]
 shellcheck_linux_x86_64 = "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198"

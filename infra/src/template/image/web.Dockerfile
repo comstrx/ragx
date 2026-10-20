@@ -7,11 +7,10 @@ WORKDIR /app
 COPY web/package.json web/bun.lock ./
 RUN bun install --frozen-lockfile
 COPY web/ ./
-ARG SPEC
-ARG API_URL
-ENV NEXT_PUBLIC_SPEC=${SPEC} SPEC_API_URL=${API_URL} NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
-RUN bun run build
-RUN bun -e 'import {stage} from "./tools/serve.ts"; import {readFileSync} from "node:fs"; const m=JSON.parse(readFileSync("node_modules/.cache/spec/production/meta.json","utf8")); if(m.output==="standalone") stage(".next/out","public");'
+ARG BUILD_ENV
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
+RUN env ${BUILD_ENV} bun run build
+RUN env ${BUILD_ENV} bun -e 'import {stage} from "./tools/serve.ts"; import {readFileSync} from "node:fs"; const m=JSON.parse(readFileSync("node_modules/.cache/spec/production/meta.json","utf8")); if(m.output==="standalone") stage(".next/out","public");'
 FROM ${NODE_IMAGE}
 RUN apk upgrade --no-cache
 COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun

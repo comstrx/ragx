@@ -9,6 +9,21 @@ test-gitops-desired () {
     expect-equal "${CONFIG[MIGRATION_POLICY]}" none
     expect-equal "${CONFIG_SOURCE[RELEASE]}" gitops
 
+    expect-equal "${CONFIG[API_ENV_SHA256]}" ''
+
+    printf 'API_ENV_SHA256=%064d\n' 7 >> "${file}"
+    gitops-read "${file}"
+    expect-equal "${CONFIG[API_ENV_SHA256]}" "$(printf '%064d' 7)"
+
+    printf 'VERSION=v2\n' >> "${file}"
+    expect-error 'Desired RELEASE must extend VERSION' gitops-read "${file}"
+    sed -i.bak 's/^VERSION=v2$/VERSION=r2/; s/^RELEASE=r2$/RELEASE=r2-0a1b2c3d/' "${file}"
+    gitops-read "${file}"
+    expect-equal "${CONFIG[VERSION]}" r2
+
+    printf 'WEB_ENV_SHA256=short\n' >> "${file}"
+    expect-error 'Desired env digests must be SHA-256' gitops-read "${file}"
+
     printf 'REGISTRY_TOKEN=forbidden\n' >> "${file}"
     expect-error 'Unexpected desired-state key: REGISTRY_TOKEN' gitops-read "${file}"
 
@@ -28,7 +43,7 @@ test-gitops-portainer-payload () {
     cfg-set GITOPS_TOKEN 'git-sentinel"token'
     cfg-set RELEASE_REF refs/tags/release-r1
 
-    fs-produce "${body}" 600 portainer-payload shop-staging-r1 API_REPLICAS=3 'DEPLOY_SLOT=blue' 'RELEASE_ROOT=/srv/state dir/r1'
+    fs-produce "${body}" 600 portainer-payload shop-r1 API_REPLICAS=3 'DEPLOY_SLOT=blue' 'RELEASE_ROOT=/srv/state dir/r1'
     text="$(fs-read "${body}")"
     expect-equal "$(fs-mode "${body}")" 600
     expect-contains "${text}" '"RepositoryReferenceName":"refs/tags/release-r1"'
@@ -46,10 +61,10 @@ test-gitops-portainer-payload () {
     PATH="${TMPDIR}/bin:${PATH}"
 
     cfg-set PORTAINER_TOKEN portainer-sentinel
-    expect-equal "$(portainer-create shop-staging-r1 API_REPLICAS=2)" 42
-    expect-contains "$(fs-read "${captured}")" 'https://localhost:9443/api/stacks/create/standalone/repository?endpointId=1'
+    expect-equal "$(portainer-create shop-r1 API_REPLICAS=2)" 42
+    expect-contains "$(fs-read "${TMPDIR}/captured.config")" 'url = "https://localhost:9443/api/stacks/create/standalone/repository?endpointId=1"'
+    expect-contains "$(fs-read "${TMPDIR}/captured.config")" 'header = "X-API-Key: portainer-sentinel"'
     expect-absent "$(fs-read "${captured}")" portainer-sentinel
-    expect-equal "$(fs-read "${TMPDIR}/captured.config")" 'header = "X-API-Key: portainer-sentinel"'
     expect-equal "$(ls -A "${TOOL_TEMP}")" '' 'request bodies are removed'
 
 }
@@ -57,10 +72,10 @@ test-gitops-relocate () {
 
     local root="/srv/state dir/releases/r1" text=""
 
-    printf '{"name":"x","services":{"api":{"env_file":[{"path":"%s/${RELEASE_ROOT:?RELEASE_ROOT required}/api.env"}],"volumes":["%s/data:/data"]}}}\n' "${root}" "${root}" > "${TMPDIR}/compose.json"
+    printf '{"name":"x","services":{"api":{"volumes":[{"type":"bind","source":"%s/${RELEASE_ROOT:?RELEASE_ROOT required}/api.env","target":"/app/.env"},"%s/data:/data"]}}}\n' "${root}" "${root}" > "${TMPDIR}/compose.json"
     text="$(gitops-relocate "${root}" "${TMPDIR}/compose.json")"
 
-    expect-contains "${text}" '"path": "${RELEASE_ROOT:?RELEASE_ROOT required}/api.env"'
+    expect-contains "${text}" '"source": "${RELEASE_ROOT:?RELEASE_ROOT required}/api.env"'
     expect-contains "${text}" '"${RELEASE_ROOT}/data:/data"'
     expect-absent "${text}" "${root}"
     expect-absent "${text}" '"name"'
@@ -97,6 +112,6 @@ test-gitops-control-plane () {
     expect-equal "$(fs-mode "${TMPDIR}/api-key")" 600
     expect-absent "$(fs-read "${TMPDIR}/portainer.args")" sentinel
     expect-contains "$(fs-read "${TMPDIR}/portainer.stdin")" 'Authorization: Bearer jwt-value'
-    expect-contains "$(fs-read "${TMPDIR}/portainer.args")" https://localhost:9443/api/users/1/tokens
+    expect-contains "$(fs-read "${TMPDIR}/portainer.stdin")" https://localhost:9443/api/users/1/tokens
 
 }

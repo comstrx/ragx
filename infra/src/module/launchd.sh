@@ -33,8 +33,20 @@ launchd-timer () {
     launchctl bootstrap "${domain}" "${file}" || { err "Agent activation failed: ${name}"; return; }
 
 }
-launchd-stop () {
+launchd-remove () {
 
-    launchctl bootout "$(launchd-domain)/io.infra.${1}" || { err "Agent stop failed: ${1}"; return; }
+    ! launchd-present "${1}" || launchctl bootout "$(launchd-domain)/io.infra.${1}" || { err "Agent stop failed: ${1}"; return; }
+    rm -f -- "${HOME}/Library/LaunchAgents/io.infra.${1}.plist"
+
+}
+launchd-list () {
+
+    has launchctl || { err "Timers need launchd"; return; }
+    launchctl list | awk -v prefix="io.infra.${1}-" 'index($3, prefix) == 1'
+
+}
+launchd-present () {
+
+    has launchctl && launchctl print "$(launchd-domain)/io.infra.${1}" >/dev/null 2>&1
 
 }

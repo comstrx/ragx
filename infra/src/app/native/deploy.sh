@@ -1,6 +1,8 @@
 source-include module/docker.sh || return
 source-include module/haproxy.sh || return
 source-include module/portainer.sh || return
+source-include module/postgresql.sh || return
+source-include module/registry.sh || return
 source-include module/tls.sh || return
 
 native-deploy () {
@@ -11,34 +13,109 @@ native-deploy () {
     fi
 
     config-validate || return
+    native-release-id || return
     config-required || return
+    ! cli-flag --dry-run || { native-deploy-plan; return; }
     native-runtime || return
     docker-ready || return
-    [[ "${CONFIG[DEPLOY_ENV]}" != production ]] || docker-versions || return
+    [[ "${CONFIG[ENV_MODE]}" != production ]] || docker-versions || return
     fs-dir "${CONFIG[STATE_ROOT]}" || return
 
     state-locked "${CONFIG[STATE_ROOT]}/lock" native-converge
 
 }
-native-converge () {
+native-intent () {
 
-    local root="${CONFIG[STATE_ROOT]}" release="${CONFIG[RELEASE]}" pending="" current="" active="" slot="" origin="" directory="" status=0
+    local root="${CONFIG[STATE_ROOT]}" release="${CONFIG[RELEASE]}" pending="" current="" previous="" reason=""
 
     pending="$(state-read "${root}" pending 2>/dev/null)" || pending=""
     current="$(state-read "${root}" current 2>/dev/null)" || current=""
+    previous="$(state-read "${root}" previous 2>/dev/null)" || previous=""
+
+    if [[ -n "${pending}" && "${pending}" != "${release}" ]]; then out "blocked ${pending}"
+    elif [[ -z "${pending}" && "${current}" != "${release}" ]] && reason="$(native-rejected "${release}")"; then out "rejected ${reason}"
+    elif [[ -n "${pending}" ]]; then out resume
+    elif [[ -n "${previous}" && "${release}" == "${previous}" ]]; then out switch
+    elif [[ "${current}" == "${release}" ]]; then out current
+    else out new
+    fi
+
+}
+native-deploy-plan () {
+
+    local intent="" detail="" current="" active="" slot=blue UI_WIDTH=10
+
+    read -r intent detail < <(native-intent)
+    current="$(state-read "${CONFIG[STATE_ROOT]}" current 2>/dev/null)" || current=""
+    active="$(state-read "${CONFIG[STATE_ROOT]}" active-slot 2>/dev/null)" || active=""
+    [[ "${active}" != blue ]] || slot=green
+
+    ui-row release "${CONFIG[RELEASE]}"
+    ui-row live "${current:-none}${active:+ in ${active}}"
+    ui-row images "api=${CONFIG[API_IMAGE]}${CONFIG[WEB_IMAGES]:+ ${CONFIG[WEB_IMAGES]}}"
+    ui-row migration "${CONFIG[MIGRATION_POLICY]}"
+
+    case "${intent}" in
+        blocked)  ui-row intent "refused: ${detail} is pending; finish it with deploy or reject it with rollback" ;;
+        rejected) ui-row intent "rejected (${detail}); --force ships it again" ;;
+        resume)   ui-row intent "resume the pending release in its slot" ;;
+        switch)   ui-row intent "switch back to the retained ${CONFIG[RELEASE]} in seconds, without pulling or migrating" ;;
+        current)  ui-row intent "no change: ${CONFIG[RELEASE]} is live; probe the public endpoint" ;;
+        new)      ui-row intent "deploy into the ${slot} slot through the readiness gates, then verify for ${CONFIG[VERIFY_SECONDS]}s" ;;
+    esac
+
+    if [[ "${intent}" == new ]] && docker-ready 2>/dev/null; then
+        native-edge-preflight || return
+        ui-row edge "the live edge matches the rendered one"
+    elif [[ "${intent}" == new ]]; then
+        ui-row edge "unchecked: Docker is unreachable"
+    fi
+
+    [[ "${intent}" != blocked ]] || { err "This deploy would be refused"; return; }
+    [[ "${intent}" != rejected ]] || cli-flag --force || { err "This deploy would be refused"; return; }
+
+    ui-result deploy-plan false safe
+
+}
+native-converge () {
+
+    local root="${CONFIG[STATE_ROOT]}" release="${CONFIG[RELEASE]}" current="" active="" slot="" origin="" directory=""
+    local intent="" detail="" phase="" status=0
+
+    read -r intent detail < <(native-intent)
+    current="$(state-read "${root}" current 2>/dev/null)" || current=""
     active="$(state-read "${root}" active-slot 2>/dev/null)" || active=""
 
-    [[ -z "${pending}" || "${pending}" == "${release}" ]] || { err "Release ${pending} is pending; finish it with deploy or reject it with rollback"; return; }
+    case "${intent}" in
+        blocked)
+            err "Release ${detail} is pending; finish it with deploy or reject it with rollback"
+            return
+        ;;
+        rejected)
+            cli-flag --force || { err "Release ${release} was rejected (${detail}); publish a new release or deploy --force"; return; }
+            rm -f -- "${root}/rejected/${release}"
+            read -r intent detail < <(native-intent)
+        ;;
+    esac
 
-    if [[ "${current}" == "${release}" && -z "${pending}" ]]; then
+    if [[ "${intent}" == switch ]]; then
+        native-release-match "$(native-directory "${release}")" || return
+        native-rollback-locked "superseded by ${release}" || return
+        native-observe
+        native-announce deploy.switched "${release} is live again; ${current} was superseded"
+        return
+    fi
+
+    if [[ "${intent}" == current ]]; then
         cfg-set DEPLOY_SLOT "${active}" state
         native-release-match "$(native-directory "${release}")" || return
         native-probe-public || return
+        native-observe
         ui-result deploy false safe
         return
     fi
 
-    if [[ -z "${pending}" ]]; then
+    if [[ "${intent}" == new ]]; then
 
         native-edge-preflight || return
 
@@ -75,7 +152,18 @@ native-converge () {
         status=$?
     fi
 
-    (( status == 0 )) || { native-abort "${directory}" "${release}" "${origin}"; return "${status}"; }
+    if (( status != 0 )); then
+        phase="$(state-read "${root}" phase 2>/dev/null)" || phase=""
+        [[ ! "${phase}" =~ ^(data|migrated|healthy|switching|switched)$ ]] || native-reject "${release}" "failed at phase ${phase}" || warn "Rejection of ${release} was not recorded"
+        if native-abort "${directory}" "${release}" "${origin}"; then native-announce deploy.rejected "${release} was rejected; ${origin:-no release} keeps serving"
+        else native-announce deploy.unrecovered "${release} failed and automatic recovery failed; inspect status"
+        fi
+        return "${status}"
+    fi
+
+    native-verify "${release}" || { native-revert "${release}" "failed verification after the switch"; return; }
+    native-observe
+    native-announce deploy.succeeded "${release} is live on ${CONFIG[API_URL]}"
 
     ui-result deploy true safe
 
@@ -87,8 +175,7 @@ native-prepare () {
     native-phase prepared || return
     native-images || return
     native-capacity || return
-    docker-network "${CONFIG[COMPOSE_PROJECT]}-data" "${CONFIG[COMPOSE_PROJECT]}" internal || return
-    docker-network "${CONFIG[COMPOSE_PROJECT]}-apps" "${CONFIG[COMPOSE_PROJECT]}" || return
+    native-networks || return
     native-volumes || return
     native-data "${directory}" || return
     native-phase data || return
@@ -163,6 +250,16 @@ native-abort () {
     state-write "${root}" pending ""
 
 }
+native-reject () {
+
+    state-write "${CONFIG[STATE_ROOT]}/rejected" "${1}" "${2}"
+
+}
+native-rejected () {
+
+    state-read "${CONFIG[STATE_ROOT]}/rejected" "${1}" 2>/dev/null
+
+}
 native-retire () {
 
     local slot="${1}" root="${CONFIG[STATE_ROOT]}" release="" current="" demoted=0 now=0
@@ -196,17 +293,33 @@ native-phase () {
 }
 native-images () {
 
-    local service="" image=""
-
-    for image in "${CONFIG[IMAGE_POSTGRES]}" "${CONFIG[IMAGE_RABBITMQ]}" "${CONFIG[IMAGE_REDIS]}" "${CONFIG[IMAGE_HAPROXY]}" "${CONFIG[IMAGE_CURL]}"; do
-        docker-present "${image}" || docker-pull "${image}" || return
-    done
+    local service="" image="" host="" status=0
+    local -a pulls=( "${CONFIG[IMAGE_POSTGRES]}" "${CONFIG[IMAGE_RABBITMQ]}" "${CONFIG[IMAGE_REDIS]}" "${CONFIG[IMAGE_HAPROXY]}" "${CONFIG[IMAGE_CURL]}" )
 
     while IFS= read -r service; do
         image="$(native-service-image "${service}")" || return
         parse-pinned "${image}" || { err "${service} image must be pinned by digest"; return; }
-        docker-present "${image}" || docker-pull "${image}" || return
+        pulls+=( "${image}" )
     done < <(native-services)
+
+    if [[ -n "${CONFIG[REGISTRY_TOKEN]}" ]]; then
+        host="$(registry-host)" || return
+        docker-login "${host}" "${CONFIG[REGISTRY_USER]}" "${CONFIG[REGISTRY_TOKEN]}" || return
+    fi
+
+    for image in "${pulls[@]}"; do
+        docker-present "${image}" || docker-pull "${image}" || { status=1; break; }
+    done
+
+    [[ -z "${host}" ]] || docker-logout "${host}" || warn "Registry logout failed: ${host}"
+
+    return "${status}"
+
+}
+native-networks () {
+
+    docker-network "${CONFIG[COMPOSE_PROJECT]}-data" "${CONFIG[COMPOSE_PROJECT]}" internal || return
+    docker-network "${CONFIG[COMPOSE_PROJECT]}-apps" "${CONFIG[COMPOSE_PROJECT]}"
 
 }
 native-capacity () {
@@ -258,19 +371,25 @@ native-data () {
     fi
 
     native-compose-data up -d --no-recreate postgres rabbitmq redis || return
-    native-wait-data
+    native-wait-data || return
+
+    postgresql-extensions "${CONFIG[DB_NAME]}" "${CONFIG[DB_EXTENSIONS]}" native-compose-data exec -T postgres
 
 }
 native-migrate () {
 
     local directory="${1}" release="${2}"
+    local -a migrate=()
 
     [[ "${CONFIG[MIGRATION_POLICY]}" == expand && "${NATIVE_ROLLBACK:-false}" != true ]] || return 0
     [[ ! -f "${directory}/migrated" ]] || return 0
     [[ ! -f "${directory}/migration-started" ]] || { err "An interrupted migration needs schema inspection before retry"; return; }
 
+    read -r -a migrate <<< "${CONFIG[API_MIGRATE_COMMAND]}"
+    (( ${#migrate[@]} > 0 )) || { err "MIGRATION_POLICY=expand requires API_MIGRATE_COMMAND"; return; }
+
     state-write "${directory}" migration-started true || return
-    native-compose-app "${release}" run --rm --no-deps -T api python -m bootstrap migrate || { err "Migration failed for ${release}"; return; }
+    native-compose-app "${release}" run --rm --no-deps -T api "${migrate[@]}" || { err "Migration failed for ${release}"; return; }
     state-write "${directory}" migrated true
 
 }

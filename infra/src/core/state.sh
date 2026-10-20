@@ -66,6 +66,16 @@ state-locked () {
     )
 
 }
+state-busy () {
+
+    local path="${1}" owner=""
+
+    [[ -f "${path}/owner" && ! -L "${path}" ]] || return 1
+    IFS= read -r owner < "${path}/owner" || return 1
+
+    [[ "${owner}" =~ ^[1-9][0-9]*$ ]] && kill -0 "${owner}" 2>/dev/null
+
+}
 state-recover () {
 
     local path="${1}" owner=""

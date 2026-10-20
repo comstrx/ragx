@@ -1,4 +1,4 @@
-declare -gA CONFIG=() CONFIG_SOURCE=() MANIFEST=()
+declare -gA CONFIG=() CONFIG_SOURCE=() CONFIG_DEFAULTS=() MANIFEST=()
 declare -ga CONFIG_KEYS=()
 
 cfg-key () {
@@ -37,7 +37,7 @@ cfg-show () {
 
     cfg-has "${key}" || { err "Unknown setting: ${key}"; return; }
 
-    if log-secret "${key}"; then out '[redacted]'
+    if [[ -n "${CONFIG[${key}]}" ]] && log-secret "${key}"; then out '[redacted]'
     else out "${CONFIG[${key}]}"
     fi
 

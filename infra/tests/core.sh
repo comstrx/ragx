@@ -64,8 +64,8 @@ test-state-lock () {
 }
 test-cli-parse () {
 
-    cli-parse --environment staging -e PROJECT=value --config a --config b --force deploy extra -- --raw
-    expect-equal "${CLI_FLAGS[--environment]}" staging
+    cli-parse --target 203.0.113.10 -e PROJECT=value --config a --config b --force deploy extra -- --raw
+    expect-equal "${CLI_FLAGS[--target]}" 203.0.113.10
     expect-equal "${CLI_OVERRIDES[0]}" PROJECT=value
     expect-equal "${#CLI_CONFIGS[@]}" 2
     expect-equal "${CLI_ARGS[*]}" 'deploy extra --raw'
@@ -73,13 +73,37 @@ test-cli-parse () {
 
     expect-error 'Value required: --config' cli-parse --config
     expect-error 'Repeated flag: --project' cli-parse --project a --project b
-    expect-error 'Unknown flag: --json' cli-parse --json
+    expect-error 'Unknown flag: --JSON' cli-parse --JSON
+    expect-error 'Unknown flag: -x' cli-parse -x
     expect-error 'Expected KEY=VALUE after -e' cli-parse -e lower=value
     expect-error 'Unknown command: drop' cli-dispatch native-tls drop 'issue renew'
 
-    cli-has deploy "${STACK_COMMANDS[@]}"
-    expect-fail cli-has native-deploy "${STACK_COMMANDS[@]}"
+    cli-parse notify hello --channel=telegram --token 123:abc --chat -1001 --force
+    expect-equal "$(cli-value --channel)" telegram
+    expect-equal "$(cli-value --chat)" -1001 'a value may start with a dash'
+    expect-equal "${CLI_ARGS[*]}" 'notify hello'
+    expect-fail cli-flag --token
+    expect-fail cli-value --force
+    expect-error '--force takes no value' cli-parse --force=yes
+    expect-error 'Value required: --token' cli-parse notify --token
+    expect-error 'Repeated flag: --chat' cli-parse --chat 1 --chat=2
+    expect-error 'notify does not take --force' bash "${TOOL_BIN}" --project "${TMPDIR}" notify hi --force
+    expect-error 'status does not take --token' bash "${TOOL_BIN}" --project "${TMPDIR}" status --token x
+    expect-contains "$(bash "${TOOL_BIN}" --project "${TMPDIR}" help notify)" '--token TOKEN'
+    expect-contains "$(bash "${TOOL_BIN}" --project "${TMPDIR}" help restore)" 'Runs on SSH_HOST over SSH'
+
+    cli-parse -h deploy --dry-run
+    cli-flag --help
+    expect-equal "$(cli-switches)" --dry-run
+    expect-equal "$(cli-distance kitten sitting)" 3
+    expect-equal "$(cli-suggest deplox deploy rollback render)" deploy
+    expect-equal "$(cli-suggest res restore render)" restore
+    expect-equal "$(cli-suggest zzzzzz deploy rollback)" ''
+
+    expect-error 'Unknown command: deplox; did you mean deploy?' bash "${TOOL_BIN}" --project "${TMPDIR}" deplox
     expect-error 'Unknown command: arbitrary' bash "${TOOL_BIN}" --project "${TMPDIR}" arbitrary
+    expect-error 'deploy does not take --list; see infra help deploy' bash "${TOOL_BIN}" --project "${TMPDIR}" deploy --list
+    expect-error 'status does not take --force' bash "${TOOL_BIN}" --project "${TMPDIR}" status --force
 
 }
 test-sys-detection () {
@@ -96,24 +120,6 @@ test-sys-detection () {
     expect-fail is-unix
     expect-error 'Unsupported operating system' os
     expect-equal "$(runtime)" unsupported
-
-    GITHUB_ACTIONS=false
-    CI=false
-    expect-fail is-ci
-    GITHUB_ACTIONS=true
-    GITHUB_EVENT_NAME=pull_request
-    GITLAB_CI=true
-    CI_COMMIT_TAG=irrelevant
-    expect-equal "$(ci-name)" github
-    is-ci-pull
-    expect-fail is-ci-tag
-    expect-fail is-ci-push
-    GITHUB_EVENT_NAME=push
-    GITHUB_REF_TYPE=tag
-    is-ci-tag
-    expect-fail is-ci-push
-    GITHUB_REF_TYPE=branch
-    is-ci-push
 
     has bash
     expect-fail has --version
@@ -174,5 +180,54 @@ test-template-filters () {
 
     printf 'value={{lower}}\n' > "${directory}/src/template/sample"
     expect-error 'Invalid placeholder' template-text src/template/sample
+
+}
+test-cli-help () {
+
+    local output="" name="" group="" usage="" summary=""
+
+    output="$(bash "${TOOL_BIN}" --project "${TMPDIR}" help)"
+    expect-contains "${output}" 'Ships, guards and operates one server'
+    expect-contains "${output}" $'\nData\n'
+    expect-contains "${output}" 'restore [BACKUP] --force'
+    expect-contains "${output}" 'Global flags'
+    expect-contains "${output}" 'config [KEY] [--changed]'
+    expect-absent "${output}" '__test'
+
+    output="$(bash "${TOOL_BIN}" --project "${TMPDIR}" restore --help)"
+    expect-equal "$(bash "${TOOL_BIN}" --project "${TMPDIR}" help restore)" "${output}"
+    expect-contains "${output}" 'infra restore [BACKUP] --force'
+    expect-contains "${output}" 'Required: replaces the live database'
+    expect-contains "${output}" 'infra restore 20261020T112013Z-jcQdcHui.dump --force'
+    expect-contains "$(bash "${TOOL_BIN}" --project "${TMPDIR}" -h)" 'Global flags'
+    expect-contains "$(bash "${TOOL_BIN}" --project "${TMPDIR}" help test)" '--list'
+    expect-error 'Unknown command: restroe; did you mean restore?' bash "${TOOL_BIN}" --project "${TMPDIR}" help restroe
+
+    expect-contains "$(bash "${TOOL_BIN}" --project "${TMPDIR}" --version)" "${MANIFEST[name]} ${MANIFEST[version]} (stack native"
+    expect-equal "$(bash "${TOOL_BIN}" --project "${TMPDIR}" version)" "$(bash "${TOOL_BIN}" --project "${TMPDIR}" --version)"
+
+    output="$(bash "${TOOL_BIN}" --project "${TMPDIR}" -e PROJECT=shop -e TELEGRAM_BOT_TOKEN=123:secret-sentinel config --changed)"
+    expect-contains "${output}" 'PROJECT'
+    expect-contains "${output}" 'shop  (cli)'
+    expect-contains "${output}" '[redacted]  (cli)'
+    expect-absent "${output}" secret-sentinel
+    expect-absent "${output}" 'HTTP_PORT'
+    expect-contains "$(bash "${TOOL_BIN}" --project "${TMPDIR}" config)" '80  (defaults)'
+    printf 'HTTP_PORT=80\nHTTPS_PORT=8443\nSLACK_WEBHOOK_URL=\n' > "${TMPDIR}/staged.env"
+    output="$(bash "${TOOL_BIN}" --project "${TMPDIR}" --config "${TMPDIR}/staged.env" config --changed)"
+    expect-contains "${output}" '8443  (file)'
+    expect-absent "${output}" 'HTTP_PORT ' 'a staged default is not a change'
+    expect-absent "${output}" SLACK_WEBHOOK_URL
+    expect-equal "$(bash "${TOOL_BIN}" --project "${TMPDIR}" --config "${TMPDIR}/staged.env" config SLACK_WEBHOOK_URL)" '' 'an empty secret prints empty'
+    expect-equal "$(bash "${TOOL_BIN}" --project "${TMPDIR}" -e PROJECT=shop config PROJECT)" shop
+
+    while IFS='|' read -r name group usage summary; do
+        declare -F "native-${name}" >/dev/null || err "${name} is listed without a native-${name} function"
+        [[ -n "${group}" && -n "${usage}" && -n "${summary}" ]] || err "${name} has an incomplete row"
+    done < <(printf '%s\n' "${STACK_COMMANDS[@]}")
+
+    for name in "${!COMMAND_ABOUT[@]}" "${!COMMAND_NOTES[@]}" "${!COMMAND_EXAMPLES[@]}" "${!COMMAND_FLAGS[@]}" "${!COMMAND_WHERE[@]}"; do
+        bootstrap-row "${name}" >/dev/null || err "The manual describes an unknown command: ${name}"
+    done
 
 }

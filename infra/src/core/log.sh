@@ -21,7 +21,7 @@ upper () {
 log-secret () {
 
     case "${1-}" in
-        *PASSWORD*|*SECRET*|*TOKEN*|*CREDENTIAL*|*_KEY|*_KEYS) return 0 ;;
+        *PASSWORD*|*SECRET*|*TOKEN*|*CREDENTIAL*|*WEBHOOK_URL|*_KEY|*_KEYS) return 0 ;;
     esac
 
     return 1

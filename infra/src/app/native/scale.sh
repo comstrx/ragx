@@ -42,6 +42,7 @@ native-scale-locked () {
     native-probe-public || return
 
     state-audit "${root}" "${CONFIG[RELEASE]}" scaled || return
+    native-announce scale.applied "${CONFIG[RELEASE]} now runs api=${CONFIG[API_REPLICAS]} workers=${CONFIG[WORKER_REPLICAS]}${CONFIG[WEB_REPLICAS]:+ web=${CONFIG[WEB_REPLICAS]}}"
     ui-result scale true safe
 
 }

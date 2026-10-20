@@ -5,9 +5,8 @@ x-application: &application
   read_only: true
   cap_drop: [ALL]
   security_opt: [no-new-privileges:true]
-  env_file: ['${RELEASE_ROOT:?RELEASE_ROOT required}/api.env']
   tmpfs: ['/tmp:uid=10001,gid=10001,mode=0700']
-  volumes: [storage:/app/storage]
+  volumes: {{API_MOUNTS}}
   networks: [data, apps]
   restart: unless-stopped
   mem_limit: {{APP_MEMORY|json}}
@@ -24,8 +23,8 @@ services:
   api:
     <<: *application
     scale: ${API_REPLICAS:?API_REPLICAS required}
-    command: [python, -m, bootstrap, serve]
-    environment: {QUEUE_WORKERS: '0', SCHEDULE_ENABLED: 'false'}
+    command: {{API_SERVE_ARGS}}
+    environment: {{API_SERVE_VARIABLES}}
     networks:
       data: {}
       apps:
@@ -40,14 +39,14 @@ services:
     <<: *application
     scale: ${WORKER_REPLICAS:?WORKER_REPLICAS required}
     profiles: [worker]
-    command: [python, -m, bootstrap, work]
-    environment: {SCHEDULE_ENABLED: 'false'}
+    command: {{API_WORK_ARGS}}
+    environment: {{API_WORK_VARIABLES}}
     healthcheck: {disable: true}
   scheduler:
     <<: *application
     profiles: [scheduler]
-    command: [python, -m, bootstrap, schedule]
-    environment: {QUEUE_WORKERS: '0', SCHEDULE_ENABLED: 'true'}
+    command: {{API_SCHEDULE_ARGS}}
+    environment: {{API_SCHEDULE_VARIABLES}}
     healthcheck: {disable: true}
 
 networks:
