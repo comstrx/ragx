@@ -39,10 +39,13 @@ bootstrap-unknown () {
 bootstrap-row () {
 
     local name="${1:-}" row=""
+    local -a rows=()
 
-    while IFS= read -r row; do
+    mapfile -t rows < <(bootstrap-commands)
+
+    for row in "${rows[@]}"; do
         [[ "${row%%|*}" != "${name}" ]] || { out "${row}"; return 0; }
-    done < <(bootstrap-commands)
+    done
 
     return 1
 

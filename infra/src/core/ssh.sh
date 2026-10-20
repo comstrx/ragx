@@ -149,7 +149,7 @@ cd -- "$HOME" && cd -- "$directory" || exit 66
 base=$jobs/$id
 case $action in
     start)
-        mkdir -p -- "$jobs" && chmod 700 -- "$jobs" || exit 73
+        mkdir -p -- "$jobs" && chmod 700 "./$jobs" || exit 73
         [[ ! -e "$base.pid" ]] || exit 65
         find "$jobs" -type f -mtime +14 -delete 2>/dev/null
         while IFS= read -r -d '' pair; do export "$pair"; done
