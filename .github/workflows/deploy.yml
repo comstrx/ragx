@@ -186,7 +186,12 @@ jobs:
               else infra image build web "${reference}" "${name}"
               fi
               trivy image --config .trivy.yml --scanners vuln,secret,misconfig --exit-code 1 "${reference}"
-              infra registry push "${reference}"
+              for attempt in 1 2 3; do
+                if infra registry push "${reference}"; then break; fi
+                (( attempt < 3 )) || exit 1
+                echo "::warning::${reference} was refused; GHCR grants a new package to the repository after a delay, retrying"
+                sleep 20
+              done
               pinned="$(infra image remote "${reference}")"
               printf -- '- %s\n' "${pinned}" >> "${GITHUB_STEP_SUMMARY}"
             fi
