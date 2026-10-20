@@ -1,7 +1,0 @@
-src/core/thread/scope.py:39: error: Function does not return a value (it only ever returns None)  [func-returns-value]
-src/core/llm/message.py:101: error: Unexpected keyword argument "binary" for "from_base64" of "Codec"  [call-arg]
-src/core/llm/message.py:101: note: "from_base64" defined in "core.string.codec"
-tests/test_llm.py:72: error: Item "None" of "Session | None" has no attribute "turns"  [union-attr]
-tests/test_llm.py:77: error: Item "None" of "Session | None" has no attribute "turns"  [union-attr]
-tests/test_rag.py:30: error: Dict entry 0 has incompatible type "str": "float"; expected "str": "Sequence[str | Any]"  [dict-item]
-Found 5 errors in 4 files (checked 281 source files)

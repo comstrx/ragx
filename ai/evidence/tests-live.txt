@@ -1,6 +1,0 @@
-   Building ragx-ai @ file:///var/www/projects/ragx/ai
-      Built ragx-ai @ file:///var/www/projects/ragx/ai
-Uninstalled 1 package in 0.58ms
-Installed 1 package in 1ms
-.......................                                                  [100%]
-23 passed in 34.14s
