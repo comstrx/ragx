@@ -11,8 +11,9 @@ import asyncio, httpx, ipaddress, socket
 type Resolver = Callable[[str, int], Awaitable[Sequence[str]]]
 type Address = ipaddress.IPv4Address | ipaddress.IPv6Address
 
-PORTS     = { "https": 443, "http": 80 }
-UNREACHED = (httpx.ConnectError, httpx.ConnectTimeout)
+PORTS      = { "https": 443, "http": 80 }
+UNREACHED  = (httpx.ConnectError, httpx.ConnectTimeout)
+CANDIDATES = 4
 
 async def lookup ( host: str, port: int ) -> list[str]:
 
@@ -99,7 +100,7 @@ class Pinned(httpx.AsyncBaseTransport):
     async def handle_async_request ( self, request: httpx.Request ) -> httpx.Response:
 
         host, port    = self._egress._target_(request.url)
-        *others, last = await self.addresses(host, port)
+        *others, last = (await self.addresses(host, port))[:CANDIDATES]
         target        = request.url
         default       = port == PORTS.get(target.scheme)
 

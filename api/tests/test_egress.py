@@ -166,7 +166,7 @@ class TestEgress:
 
         async def lookup ( host: str, port: int ) -> list[str]:
 
-            return ["127.0.0.2", "127.0.0.1"]
+            return ["127.0.0.2", "127.0.0.1"] if host == "service.test" else [f"127.0.0.{n}" for n in (2, 3, 4, 5, 1)]
 
         async with served() as (port, hits):
 
@@ -174,6 +174,9 @@ class TestEgress:
             client = Egress(policy.schemes, policy.hosts, frozenset({ port }), private=True).client(resolver=lookup)
 
             expect((await client.get(f"http://service.test:{port}/file.txt")).body).equals(PAYLOAD)
+            expect(len(hits)).equals(1)
+
+            await test.rejects(client.get(f"http://crowded.test:{port}/file.txt"), Code.UNAVAILABLE, "network")
             expect(len(hits)).equals(1)
 
             await client.close()
