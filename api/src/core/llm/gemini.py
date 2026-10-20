@@ -2,31 +2,31 @@ from collections.abc import AsyncGenerator, Sequence
 from typing import Any, ClassVar, override
 
 from core.date import date
-from core.net import Transport
-from .embedding import Embeddings, embeddings
 from .message import Attachment, Chunk, Message, Options, Reply, Usage
 from .provider import AUDIO, CORE, DOCUMENTS, EMBED, IMAGES, INSTRUCT, JSON, SCHEMA, VECTORS, VIDEO, Provider
+from .result import Embeddings, embeddings
 import contextlib
 
-BASE  = "https://generativelanguage.googleapis.com"
-MODEL = "gemini-2.5-flash"
 ROLES = { "user": "user", "assistant": "model" }
 TASKS = { True: "RETRIEVAL_QUERY", False: "RETRIEVAL_DOCUMENT" }
+WIRE  = {
+    "temperature" : "temperature",
+    "top_p"       : "topP",
+    "top_k"       : "topK",
+    "stop"        : "stopSequences",
+    "seed"        : "seed",
+    "presence"    : "presencePenalty",
+    "frequency"   : "frequencyPenalty",
+}
 
 class Gemini(Provider):
 
     name         = "gemini"
-    model        = MODEL
+    base         = "https://generativelanguage.googleapis.com"
+    keyed        = True
     capabilities : ClassVar[frozenset[str]] = CORE | {JSON, SCHEMA, IMAGES, DOCUMENTS, AUDIO, VIDEO}
-
-    def __init__ (
-        self, key: str, model: str | None = None, base: str | None = None, wait: float = 60.0, retries: int = 1,
-        transport: Transport | None = None,
-    ) -> None:
-
-        self.missing(("key", key))
-
-        super().__init__(base or BASE, key, model, wait, retries, transport)
+    tunes        : ClassVar[frozenset[str]] = frozenset({*WIRE, "effort"})
+    efforts      : ClassVar[frozenset[str]] = frozenset({"minimal", "low", "medium", "high"})
 
     @override
     def abilities ( self ) -> frozenset[str]:
@@ -56,13 +56,14 @@ class Gemini(Provider):
 
         system  = options.system or next((message.content for message in messages if message.role == "system"), None)
         turns   = [message for message in messages if message.role != "system"]
-        config: dict[str, Any] = {}
-        payload: dict[str, Any] = { "contents": [self.content(message) for message in turns] }
+        tuned   = self.tuned(options)
+        effort  = tuned.pop("effort", None)
+        listed  = { name: list(value) if name == "stop" else value for name, value in tuned.items() }
+        config  : dict[str, Any] = { WIRE[name]: value for name, value in listed.items() }
+        payload : dict[str, Any] = { "contents": [self.content(message) for message in turns] }
 
-        if options.temperature is not None: config["temperature"] = options.temperature
         if options.max_tokens is not None: config["maxOutputTokens"] = options.max_tokens
-        if options.top_p is not None: config["topP"] = options.top_p
-        if options.stop: config["stopSequences"] = list(options.stop)
+        if effort is not None: config["thinkingConfig"] = { "thinkingLevel": effort }
         if options.json: config["responseMimeType"] = "application/json"
         if options.schema is not None and options.native:
             config["responseMimeType"]   = "application/json"
@@ -70,7 +71,7 @@ class Gemini(Provider):
         if system: payload["system_instruction"] = { "parts": [{ "text": system }] }
         if config: payload["generationConfig"] = config
 
-        return payload
+        return { **payload, **options.extra }
 
     def path ( self, options: Options, action: str ) -> str:
 

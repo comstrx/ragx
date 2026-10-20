@@ -1,40 +1,73 @@
-from collections.abc import Iterable, Sequence
-from dataclasses import replace
+from collections.abc import AsyncGenerator, Iterable, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Self, Unpack
 
-from core.array import Metrics, Ranking
+from core.array import Metrics
 from core.error import Code, Fault
-from core.fs import Converter, Extraction, ExtractPolicy
+from core.fs import ExtractPolicy
 from core.json import json
-from core.llm import Prompt
+from core.llm import Chunk, Llm, Score, Tuning, llm
 from core.number import Embedding
 from core.string import string
-from .context import GROUNDED, JUDGE, JUDGED, Context, judged
-from .contract import Answer, Document, Evaluation, Index, Models, Passage, Policies, Row, Settings
+from .contract import Answer, Document, Evaluation, Index, Passage, Policies, Row, Settings, Summary
+from .evaluate import Judge, Quality
+from .extract import Reader
+from .generate import Context, Writer
+from .retrieve import Retriever
 
-KEY  = 32
-PAIR = 2
+KEY = 32
 
 class Rag:
 
-    def __init__ (
-        self, models: Models, index: Index, policies: Policies | None = None, settings: Settings | None = None,
-    ) -> None:
+    def __init__ ( self ) -> None:
 
-        self._models   = models
-        self._index    = index
-        self._policies = policies or Policies()
-        self._settings = settings or Settings()
-        self._reader   = Extraction()
+        self._index    : Index | None = None
+        self._llm      = llm
+        self._policies = Policies()
+        self._settings = Settings()
+
+        self.build()
+
+    def setup (
+        self, index: Index | None = None, brain: Llm | None = None, policies: Policies | None = None,
+        settings: Settings | None = None,
+    ) -> Self:
+
+        self._index    = index or self._index
+        self._llm      = brain or self._llm
+        self._policies = policies or self._policies
+        self._settings = settings or self._settings
+
+        self.build()
+
+        return self
+
+    def build ( self ) -> None:
+
+        self._reader    = Reader(self._llm, self._policies, self._settings)
+        self._retriever = Retriever(self._llm, self._policies, self._settings)
+        self._writer    = Writer(self._llm, self._policies, self._settings)
+        self._judge     = Judge(self._llm, self._policies, self._settings)
+
+    def index ( self ) -> Index:
+
+        if self._index is None: raise Fault(Code.INTERNAL, reason="rag.index.missing")
+
+        return self._index
 
     def identity ( self ) -> str:
 
-        return self._models.embedding.provider().identity()
+        return self._retriever.identity()
 
-    def stage ( self, prompt: Prompt, name: str ) -> Prompt:
+    async def extract (
+        self, name: str, data: bytes, key: str | None = None, policy: ExtractPolicy | None = None,
+    ) -> Document:
 
-        return prompt.harness(self._policies.stage(name))
+        return await self._reader.read(name, data, key, policy)
+
+    async def read ( self, path: str | Path, key: str | None = None, policy: ExtractPolicy | None = None ) -> Document:
+
+        return await self._reader.file(path, key, policy)
 
     def passages ( self, document: Document, scope: str ) -> list[Passage]:
 
@@ -58,128 +91,125 @@ class Rag:
 
     async def ingest ( self, documents: Sequence[Document], scope: str ) -> tuple[Passage, ...]:
 
-        self._index.scoped(scope)
+        index = self.index()
+
+        index.scoped(scope)
 
         if len({ document.id for document in documents }) != len(documents):
             raise Fault(Code.VALIDATION, reason="rag.documents.duplicate")
 
         planned  = [(document, self.passages(document, scope)) for document in documents]
         written  = [passage for _, passages in planned for passage in passages]
-        vectors  = iter(await self.embedded([passage.text for passage in written]))
+        vectors  = iter(await self.embed([passage.text for passage in written]))
         identity = self.identity()
 
         for document, passages in planned:
 
-            rows = [Row(passage, next(vectors)) for passage in passages]
-
-            await self._index.replace(scope, document.id, rows, identity)
+            await index.replace(scope, document.id, [Row(passage, next(vectors)) for passage in passages], identity)
 
         return tuple(written)
 
     async def files (
         self, paths: Sequence[str | Path], scope: str, policy: ExtractPolicy | None = None,
-        converter: Converter | None = None,
     ) -> tuple[Passage, ...]:
 
-        documents: list[Document] = []
-
-        for path in paths:
-
-            extracted = await self._reader.extract(path, policy, converter)
-
-            documents.append(Document(str(path), extracted.source, extracted.parts))
-
-        return await self.ingest(documents, scope)
+        return await self.ingest([await self.read(path, policy=policy) for path in paths], scope)
 
     async def upload (
         self, name: str, data: bytes, scope: str, key: str | None = None, policy: ExtractPolicy | None = None,
-        converter: Converter | None = None,
     ) -> tuple[Passage, ...]:
 
-        extracted = await self._reader.parse(name, data, policy, converter)
+        return await self.ingest([await self.extract(name, data, key, policy)], scope)
 
-        return await self.ingest([Document(key or name, extracted.source, extracted.parts)], scope)
+    async def embed (
+        self, texts: Sequence[str], query: bool = False, provider: str | None = None,
+    ) -> list[Embedding]:
 
-    async def embedded ( self, texts: Sequence[str], query: bool = False ) -> list[Embedding]:
+        return await self._retriever.embed(texts, query, provider)
 
-        embedder = self.stage(self._models.embedding, "embedding")
-        guided   = self._settings.instruction if query else None
-        size     = self._settings.batch
-        found: list[Embedding] = []
+    async def scores (
+        self, question: str, texts: Sequence[str], provider: str | None = None,
+    ) -> tuple[Score, ...]:
 
-        for start in range(0, len(texts), size):
+        return await self._retriever.scores(question, texts, provider)
 
-            found.extend((await embedder.embed(texts[start:start + size], query, guided)).vectors)
+    async def rank (
+        self, question: str, passages: Sequence[Passage], provider: str | None = None,
+    ) -> tuple[Passage, ...]:
 
-        return found
+        return await self._retriever.rank(question, passages, provider)
 
-    async def retrieve ( self, question: str, scope: str ) -> tuple[Passage, ...]:
+    def fuse ( self, rankings: Sequence[Sequence[Passage]], limit: int | None = None ) -> tuple[Passage, ...]:
 
-        if not question.strip(): raise Fault(Code.VALIDATION, reason="rag.question")
+        return self._retriever.fused(rankings, limit)
 
-        vector = (await self.embedded([question], query=True))[0]
-        found  = await self._index.search(scope, question, vector, self.identity(), self._settings.candidates)
+    async def retrieve ( self, question: str, scope: str, rewrites: Sequence[str] = () ) -> tuple[Passage, ...]:
 
-        return await self.reranked(question, found)
+        return await self._retriever.search(self.index(), question, scope, rewrites)
 
-    async def reranked ( self, question: str, passages: tuple[Passage, ...] ) -> tuple[Passage, ...]:
+    async def grounding ( self, question: str, scope: str, rewrites: Sequence[str] = () ) -> Context:
 
-        ranker = self._models.ranking
+        return Context.build(question, await self.retrieve(question, scope, rewrites), self._settings.context)
 
-        if ranker is None or len(passages) < PAIR: return passages
+    async def ask (
+        self, question: str, scope: str, provider: str | None = None, session: str | None = None,
+        **tuning: Unpack[Tuning],
+    ) -> Answer:
 
-        texts  = [passage.text for passage in passages]
-        scores = await self.stage(ranker, "ranking").rank(
-            question, texts, self._settings.generative, native=self._settings.native,
-        )
+        return await self._writer.ask(await self.grounding(question, scope), provider, session, **tuning)
 
-        return tuple(replace(passages[score.index], score=score.score) for score in scores)
+    async def stream (
+        self, question: str, scope: str, provider: str | None = None, session: str | None = None,
+        **tuning: Unpack[Tuning],
+    ) -> AsyncGenerator[Chunk | Answer]:
 
-    async def ask ( self, question: str, scope: str, generation: Prompt | None = None ) -> Answer:
+        context = await self.grounding(question, scope)
 
-        context = Context.build(question, await self.retrieve(question, scope), self._settings.context)
-        writer  = self.stage(generation or self._models.generation, "generation").instruct(GROUNDED)
-        reply   = await writer.schema(context.schema(), self._settings.native).ask(context.prompt)
-        data    = reply.payload()
+        async for item in self._writer.stream(question, context, provider, session, **tuning): yield item
 
-        return Answer(reply, str(data["answer"]), context.passages(), context.cited(data["citations"]))
+    async def summarize (
+        self, source: str | Document, provider: str | None = None, focus: str | None = None,
+        **tuning: Unpack[Tuning],
+    ) -> Summary:
 
-    async def evaluate ( self, question: str, answer: Answer ) -> Evaluation:
+        text = source.content() if isinstance(source, Document) else source
 
-        judge = self._models.evaluation
+        return await self._writer.summarize(text, provider, focus, **tuning)
 
-        if judge is None: raise Fault(Code.INTERNAL, reason="rag.evaluation.missing")
+    async def evaluate ( self, question: str, answer: Answer, provider: str | None = None ) -> Evaluation:
 
-        asked = judged(question, answer.text, answer.passages)
-        reply = await self.stage(judge, "evaluation").instruct(JUDGE).schema(JUDGED, self._settings.native).ask(asked)
-        data  = reply.payload()
-
-        return Evaluation(float(data["score"]), str(data["reasoning"]), reply.model)
+        return await self._judge.evaluate(question, answer, provider)
 
     def metrics ( self, retrieved: Sequence[Passage], relevant: Iterable[str], limit: int = 10 ) -> Metrics:
 
-        return Ranking().metrics(list(dict.fromkeys(passage.document for passage in retrieved)), relevant, limit)
+        return self._retriever.metrics(retrieved, relevant, limit)
 
-    async def forget ( self, scope: str, document: str ) -> int:
+    def quality ( self, scope: str, limit: int = 3, recall: float = 1.0, floor: float | None = None ) -> Quality:
 
-        return await self._index.remove(scope, document)
+        return Quality(self, scope, limit, recall, floor)
+
+    async def forget ( self, scope: str, document: str ) -> bool:
+
+        return await self.index().remove(scope, document) > 0
 
     async def documents ( self, scope: str ) -> list[str]:
 
-        return await self._index.documents(scope)
+        return await self.index().documents(scope)
 
     async def count ( self, scope: str ) -> int:
 
-        return await self._index.count(scope)
+        return await self.index().count(scope)
 
     async def clear ( self, scope: str ) -> int:
 
-        return await self._index.clear(scope)
+        return await self.index().clear(scope)
 
     def describe ( self ) -> dict[str, Any]:
 
+        tasks = self._llm.tasks()
+
         return {
-            "index": self._index.describe(), "embedding": self.identity(), "ranking": self._models.ranking is not None,
-            "evaluation": self._models.evaluation is not None, "candidates": self._settings.candidates,
-            "context": self._settings.context, "native": self._settings.native,
+            "index": self._index.describe() if self._index is not None else None, "tasks": tasks,
+            "candidates": self._settings.candidates, "context": self._settings.context,
+            "native": self._settings.native, "partial": self._settings.partial,
         }

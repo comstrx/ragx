@@ -14,7 +14,7 @@ import asyncio, contextlib
 JSON  = "application/octet-stream"
 RPC   = 5.0
 NAP   = 0.05
-FAULT = (AMQPError, OSError)
+FAULT = (AMQPError, OSError, RuntimeError)
 
 class RabbitBroker(Broker):
 
@@ -51,6 +51,9 @@ class RabbitBroker(Broker):
 
                 self._connection = self._connection or await connect_robust(self._url)
                 self._channel    = await self._connection.channel()
+
+                self._exchanges.clear()
+                self._queues.clear()
 
                 await self._channel.set_qos(prefetch_count=self._prefetch)
 
@@ -148,12 +151,18 @@ class RabbitBroker(Broker):
     @override
     async def ack ( self, parcel: Parcel ) -> None:
 
-        if isinstance(parcel.receipt, AbstractIncomingMessage): await parcel.receipt.ack()
+        if not isinstance(parcel.receipt, AbstractIncomingMessage): return
+
+        try: await parcel.receipt.ack()
+        except FAULT as error: raise self.unavailable(error) from error
 
     @override
     async def reject ( self, parcel: Parcel, requeue: bool = False ) -> None:
 
-        if isinstance(parcel.receipt, AbstractIncomingMessage): await parcel.receipt.reject(requeue=requeue)
+        if not isinstance(parcel.receipt, AbstractIncomingMessage): return
+
+        try: await parcel.receipt.reject(requeue=requeue)
+        except FAULT as error: raise self.unavailable(error) from error
 
     async def counted ( self, name: str ) -> int:
 

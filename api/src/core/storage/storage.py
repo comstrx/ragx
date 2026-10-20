@@ -4,6 +4,7 @@ from typing import override
 
 from core.error import Code, Fault
 from core.fs import Driver, fs
+from core.net import Egress
 from .upload import KILO, PATTERN, Content, Intake, Stored
 import builtins
 
@@ -17,10 +18,12 @@ class Storage(Intake):
         self._limit   = 10 * KILO * KILO
         self._allowed: tuple[str, ...] = ()
         self._blocked: tuple[str, ...] = ()
+        self._egress  = Egress()
 
     def setup (
         self, disks: Mapping[str, Driver], default: str = "public", pattern: str = PATTERN,
         limit: int = 10 * KILO * KILO, allowed: Sequence[str] = (), blocked: Sequence[str] = (),
+        egress: Egress | None = None,
     ) -> None:
 
         self._disks   = dict(disks)
@@ -29,6 +32,7 @@ class Storage(Intake):
         self._limit   = limit
         self._allowed = tuple(allowed)
         self._blocked = tuple(item.lower().lstrip(".") for item in blocked)
+        self._egress  = egress or Egress()
 
         for name, disk in self._disks.items(): fs.drivers.register(f"storage.{name}", disk)
 

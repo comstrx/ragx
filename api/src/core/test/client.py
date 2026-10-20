@@ -1,15 +1,16 @@
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import AsyncExitStack, contextmanager
 from types import TracebackType
-from typing import Any, Protocol, Self
+from typing import Any, Protocol, Self, override
 
-from httpx import ASGITransport, AsyncClient
+from httpx import ASGITransport, AsyncClient, Request as Sent, Response as Received
 from starlette.testclient import TestClient, WebSocketTestSession
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 from core.error import Code
 from core.http import App
 from core.json import json
 from .expect import Expect, dig, mismatch
+import asyncio
 
 type Files = Mapping[str, tuple[str, bytes, str]]
 type Fields = Mapping[str, object]
@@ -121,6 +122,13 @@ class Answer:
 
         return self
 
+class Isolated(ASGITransport):
+
+    @override
+    async def handle_async_request ( self, request: Sent ) -> Received:
+
+        return await asyncio.create_task(super().handle_async_request(request))
+
 class Client:
 
     def __init__ (
@@ -131,7 +139,7 @@ class Client:
         self._app      = app
         self._lifespan = lifespan
         self._stack    = AsyncExitStack()
-        transport      = ASGITransport(app=app, raise_app_exceptions=False, client=peer)
+        transport      = Isolated(app=app, raise_app_exceptions=False, client=peer)
         self._client   = AsyncClient(transport=transport, base_url=base, headers=dict(headers or {}))
 
     async def __aenter__ ( self ) -> Self:

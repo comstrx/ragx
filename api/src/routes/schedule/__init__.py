@@ -1,8 +1,5 @@
-from core.schedule import schedule
-from app.jobs import PurgeTokens
+from core.schedule import Task
 
-tasks = (
-    schedule.job(PurgeTokens, "tokens.purge").daily_at("03:00").without_overlapping(),
-)
+tasks: tuple[Task, ...] = ()
 
 __all__ = ["tasks"]

@@ -3,10 +3,11 @@ from dataclasses import dataclass, replace
 
 from core.error import Code, Fault
 from core.string import string
-from .message import Attachment, Message, Options
+from .message import EFFORTS, Attachment, Message, Options
 import math
 
 TEMPERATURE = 2.0
+PENALTY     = 2.0
 ATTACHED    = 16 * 1024 * 1024
 STOPS       = 4
 TURN        = 2
@@ -83,19 +84,26 @@ class Harness:
 
     def check ( self, options: Options ) -> None:
 
+        penalties = [value for value in (options.presence, options.frequency) if value is not None]
+
         if options.max_tokens is not None and options.max_tokens < 1:
             raise Fault(Code.VALIDATION, reason="llm.options.tokens")
         if options.temperature is not None and not 0 <= options.temperature <= TEMPERATURE:
             raise Fault(Code.VALIDATION, reason="llm.options.temperature")
         if options.top_p is not None and not 0 < options.top_p <= 1:
             raise Fault(Code.VALIDATION, reason="llm.options.top_p")
+        if options.top_k is not None and options.top_k < 1: raise Fault(Code.VALIDATION, reason="llm.options.top_k")
+        if any(not -PENALTY <= value <= PENALTY for value in penalties):
+            raise Fault(Code.VALIDATION, reason="llm.options.penalty")
+        if options.effort is not None and options.effort not in EFFORTS:
+            raise Fault(Code.VALIDATION, reason="llm.options.effort")
         if len(options.stop) > STOPS: raise Fault(Code.VALIDATION, reason="llm.options.stop")
 
     def dedicated ( self, options: Options, model: str, bound: bool ) -> None:
 
         if options.model not in (None, model): raise Fault(Code.VALIDATION, reason="llm.dedicated.model")
 
-        chosen = options.system or options.generation() or options.json or options.schema or options.metadata
+        chosen = options.system or options.tuning() or options.json or options.schema or options.metadata
 
         if chosen or bound: raise Fault(Code.VALIDATION, reason="llm.dedicated.options")
 

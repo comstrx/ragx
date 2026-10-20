@@ -16,6 +16,14 @@ def field (
 
     return shape_field(default, alias=env, factory=factory, **rules)
 
+def concealed ( value: object, data: object ) -> Any:
+
+    if not isinstance(value, BaseModel) or not isinstance(data, dict): return data
+
+    hidden = getattr(type(value), "hidden", ())
+
+    return { name: concealed(getattr(value, name, None), item) for name, item in data.items() if name not in hidden }
+
 class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
@@ -73,9 +81,7 @@ class Settings(BaseSettings):
 
     def describe ( self ) -> dict[str, Any]:
 
-        shown = { name: value for name, value in self.dump().items() if name not in type(self).hidden }
-
-        plain: dict[str, Any] = masked(shown)
+        plain: dict[str, Any] = masked(concealed(self, self.dump()))
 
         return plain
 

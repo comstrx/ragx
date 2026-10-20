@@ -2,6 +2,8 @@ from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, cast
 
+from core.error import Code, Fault
+from core.log import log
 from core.thread import thread
 from .lock import Lock
 from .store import MemoryStore, Store
@@ -95,8 +97,10 @@ class Cache:
     def __init__ ( self, store: Store | None = None ) -> None:
 
         self._store: Store = store or MemoryStore()
+        self._local  = MemoryStore()
         self._hits   = 0
         self._misses = 0
+        self._shed   = 0
 
     def use ( self, store: Store ) -> None:
 
@@ -220,8 +224,21 @@ class Cache:
 
     async def hit ( self, key: str, limit: int, window: float ) -> Hit:
 
-        count = await self._store.increment(key, 1, window)
-        reset = await self._store.ttl(key) or window
+        try: return await self.counted(self._store, key, limit, window)
+        except Fault as fault:
+
+            if fault.code is not Code.UNAVAILABLE: raise
+
+            self._shed += 1
+
+            log.warning("cache.hit.degraded", store=self._store.name, reason=fault.reason)
+
+            return await self.counted(self._local, key, limit, window)
+
+    async def counted ( self, store: Store, key: str, limit: int, window: float ) -> Hit:
+
+        count = await store.increment(key, 1, window)
+        reset = await store.ttl(key) or window
 
         return Hit(allowed=count <= limit, remaining=max(limit - count, 0), reset=reset)
 
@@ -248,7 +265,7 @@ class Cache:
 
     def stats ( self ) -> dict[str, int]:
 
-        return { "hits": self._hits, "misses": self._misses }
+        return { "hits": self._hits, "misses": self._misses, "shed": self._shed }
 
     def describe ( self ) -> dict[str, object]:
 

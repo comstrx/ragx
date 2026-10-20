@@ -7,7 +7,7 @@ from core.crypto import ApiKey, crypto
 from core.date import date
 from core.error import Code, Fault
 from core.rand import rand
-import jwt
+import base64, binascii, jwt
 
 RESERVED   = frozenset({"sub", "jti", "iat", "exp", "iss", "kind", "nbf", "aud"})
 SYMMETRIC  = frozenset({"HS256", "HS384", "HS512"})
@@ -189,6 +189,21 @@ class Token:
     def fingerprint ( self, text: str ) -> str:
 
         return crypto.digest(text.strip())
+
+    def basic ( self, header: str | None ) -> tuple[str, str]:
+
+        scheme, _, text = (header or "").strip().partition(" ")
+
+        try: decoded = base64.b64decode(text.strip(), validate=True).decode()
+        except (binascii.Error, UnicodeDecodeError) as error:
+            raise Fault(Code.UNAUTHORIZED, reason="token.basic") from error
+
+        name, colon, secret = decoded.partition(":")
+
+        if scheme.lower() != "basic" or not colon or not name or not secret:
+            raise Fault(Code.UNAUTHORIZED, reason="token.basic")
+
+        return name, secret
 
     def bearer ( self, header: str | None ) -> str:
 

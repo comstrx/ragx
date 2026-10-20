@@ -10,9 +10,12 @@ from core.string import string
 from core.thread import thread
 
 type Role = Literal["system", "user", "assistant"]
+type Effort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 
-IMAGES = ("image/png", "image/jpeg", "image/gif", "image/webp")
-TEXTS  = ("text/", "application/json", "application/xml", "application/x-yaml", "application/toml")
+IMAGES  = ("image/png", "image/jpeg", "image/gif", "image/webp")
+TEXTS   = ("text/", "application/json", "application/xml", "application/x-yaml", "application/toml")
+EFFORTS : tuple[Effort, ...] = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+TUNED   = ("temperature", "top_p", "top_k", "stop", "seed", "presence", "frequency", "effort")
 
 class Tuning(TypedDict, total=False):
 
@@ -21,11 +24,17 @@ class Tuning(TypedDict, total=False):
     temperature : float | None
     max_tokens  : int | None
     top_p       : float | None
+    top_k       : int | None
     stop        : tuple[str, ...]
+    seed        : int | None
+    presence    : float | None
+    frequency   : float | None
+    effort      : Effort | None
     json        : bool
     metadata    : Mapping[str, Any]
     schema      : Schema | None
     native      : bool
+    extra       : Mapping[str, Any]
 
 @dataclass(frozen=True, slots=True)
 class Attachment:
@@ -196,26 +205,27 @@ class Options:
     temperature : float | None = None
     max_tokens  : int | None = None
     top_p       : float | None = None
+    top_k       : int | None = None
     stop        : tuple[str, ...] = ()
+    seed        : int | None = None
+    presence    : float | None = None
+    frequency   : float | None = None
+    effort      : Effort | None = None
     json        : bool = False
     metadata    : Mapping[str, Any] = field(default_factory=dict)
     schema      : Schema | None = None
     native      : bool = True
+    extra       : Mapping[str, Any] = field(default_factory=dict)
 
     def merged ( self, **changes: Unpack[Tuning] ) -> Options:
 
         return replace(self, **changes)
 
-    def generation ( self ) -> dict[str, Any]:
+    def tuning ( self ) -> dict[str, Any]:
 
-        found: dict[str, Any] = {}
+        found = { name: getattr(self, name) for name in TUNED }
 
-        if self.temperature is not None: found["temperature"] = self.temperature
-        if self.max_tokens is not None: found["max_tokens"] = self.max_tokens
-        if self.top_p is not None: found["top_p"] = self.top_p
-        if self.stop: found["stop"] = list(self.stop)
-
-        return found
+        return { name: value for name, value in found.items() if value is not None and value != () }
 
 def conversation ( messages: Sequence[Message], options: Options ) -> list[Message]:
 

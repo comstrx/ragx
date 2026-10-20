@@ -1,3 +1,1 @@
-from .welcome import WelcomeMail
-
-__all__ = ["WelcomeMail"]
+__all__: list[str] = []

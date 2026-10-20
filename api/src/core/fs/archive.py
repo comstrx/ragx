@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,21 @@ from .path import Pathish
 import tarfile, zipfile
 
 TARS = (".tar", ".tgz", ".tar.gz", ".tar.bz2", ".tar.xz")
+
+@dataclass(frozen=True, slots=True)
+class Bounds:
+
+    members : int = 10_000
+    size    : int = 1 << 30
+    ratio   : float = 200.0
+
+    def check ( self, sizes: Sequence[tuple[int, int]], packed: int ) -> None:
+
+        unpacked = sum(size for size, _ in sizes)
+        swollen  = any(size > self.ratio * max(compressed, 1) for size, compressed in sizes if compressed)
+
+        if len(sizes) > self.members or unpacked > self.size or swollen or unpacked > self.ratio * max(packed, 1):
+            raise Fault(Code.BAD_REQUEST, reason="archive.bomb")
 
 def within ( root: Path, member: str ) -> Path:
 
@@ -50,17 +66,23 @@ class Archive:
 
         return await to_thread.run_sync(pack)
 
-    async def unzip ( self, archive: Pathish, folder: Pathish ) -> list[Path]:
+    async def unzip ( self, archive: Pathish, folder: Pathish, limits: Bounds | None = None ) -> list[Path]:
 
         def unpack () -> list[Path]:
 
             root = Path(folder)
 
-            root.mkdir(parents=True, exist_ok=True)
-
             with zipfile.ZipFile(archive) as bundle:
 
+                entries = bundle.infolist()
+
+                sizes   = [(item.file_size, item.compress_size) for item in entries]
+
+                (limits or Bounds()).check(sizes, Path(archive).stat().st_size)
+
                 members = [within(root, member) for member in bundle.namelist()]
+
+                root.mkdir(parents=True, exist_ok=True)
 
                 bundle.extractall(root)
 
@@ -85,17 +107,21 @@ class Archive:
 
         return await to_thread.run_sync(pack)
 
-    async def untar ( self, archive: Pathish, folder: Pathish ) -> list[Path]:
+    async def untar ( self, archive: Pathish, folder: Pathish, limits: Bounds | None = None ) -> list[Path]:
 
         def unpack () -> list[Path]:
 
             root = Path(folder)
 
-            root.mkdir(parents=True, exist_ok=True)
-
             with tarfile.open(archive) as bundle:
 
-                members = [within(root, member.name) for member in bundle.getmembers()]
+                entries = bundle.getmembers()
+
+                (limits or Bounds()).check([(item.size, 0) for item in entries], Path(archive).stat().st_size)
+
+                members = [within(root, member.name) for member in entries]
+
+                root.mkdir(parents=True, exist_ok=True)
 
                 bundle.extractall(root, filter="data")
 
@@ -105,12 +131,12 @@ class Archive:
         except (tarfile.TarError, FileNotFoundError) as error:
             raise Fault(Code.BAD_REQUEST, reason="archive") from error
 
-    async def extract ( self, archive: Pathish, folder: Pathish ) -> list[Path]:
+    async def extract ( self, archive: Pathish, folder: Pathish, limits: Bounds | None = None ) -> list[Path]:
 
         name = str(archive).lower()
 
-        if name.endswith(".zip"): return await self.unzip(archive, folder)
-        if name.endswith(TARS): return await self.untar(archive, folder)
+        if name.endswith(".zip"): return await self.unzip(archive, folder, limits)
+        if name.endswith(TARS): return await self.untar(archive, folder, limits)
 
         raise Fault(Code.BAD_REQUEST, reason="archive.kind")
 

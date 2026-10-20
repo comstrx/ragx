@@ -6,7 +6,7 @@ from core.error import Code, Fault
 from core.fs import fs
 from core.json import json as codec
 from .fluent import Breaker, Fluent, Hooks
-from .reply import REJECTED, RETRYABLE, SUCCESS, Reply, Sse, Transport, pause_of, repeatable_of
+from .reply import REJECTED, RETRYABLE, SUCCESS, Frames, Reply, Sse, Transport, pause_of, repeatable_of
 import asyncio, contextlib, httpx, time
 
 type Query = Mapping[str, object]
@@ -14,12 +14,8 @@ type Headers = Mapping[str, str]
 type Files = Mapping[str, tuple[str, bytes, str]]
 type Guard = Callable[[Reply], None]
 
-JSON      = { "content-type": "application/json" }
-SERVER    = 500
-DATA      = "data:"
-EVENT     = "event:"
-ID        = "id:"
-RETRY     = "retry:"
+JSON   = { "content-type": "application/json" }
+SERVER = 500
 
 class Client(Fluent):
 
@@ -35,6 +31,8 @@ class Client(Fluent):
         self._backoff   = backoff
         self._transport = transport.inner if transport is not None else None
         self._breaker   = breaker
+        self._redirects = 0
+        self._direct    = False
         self._client: httpx.AsyncClient | None = None
         self.hooks      = Hooks.empty()
 
@@ -47,9 +45,17 @@ class Client(Fluent):
         if retries is not None: self._retries = retries
 
         self._client = httpx.AsyncClient(
-            base_url=self._base, timeout=self._wait, headers=self._headers, follow_redirects=False,
-            transport=self._transport or httpx.AsyncHTTPTransport(retries=0),
+            base_url=self._base, timeout=self._wait, headers=self._headers, follow_redirects=self._redirects > 0,
+            max_redirects=self._redirects, transport=self._transport or httpx.AsyncHTTPTransport(retries=0),
+            trust_env=not self._direct,
         )
+
+        return self
+
+    def outbound ( self, redirects: int, direct: bool = True ) -> Client:
+
+        self._redirects = redirects
+        self._direct    = direct
 
         return self
 
@@ -253,34 +259,16 @@ class Client(Fluent):
         guard: Guard | None = None,
     ) -> AsyncGenerator[Sse]:
 
-        event: dict[str, Any] = {}
-        data: list[str] = []
-        asked = { "accept": "text/event-stream", **(headers or {}) }
+        frames = Frames()
+        asked  = { "accept": "text/event-stream", **(headers or {}) }
 
         async with contextlib.aclosing(self.lines(method, url, json, asked, wait, guard)) as rows:
 
             async for line in rows:
 
-                if line == "":
+                if (packet := frames.feed(line)) is not None: yield packet
 
-                    if data: yield self.packet(event, data)
-
-                    event, data = {}, []
-
-                    continue
-
-                if line.startswith(":"): continue
-                if line.startswith(DATA): data.append(line[len(DATA):].lstrip())
-                elif line.startswith(EVENT): event["event"] = line[len(EVENT):].strip()
-                elif line.startswith(ID): event["id"] = line[len(ID):].strip()
-                elif line.startswith(RETRY) and line[len(RETRY):].strip().isdigit():
-                    event["retry"] = int(line[len(RETRY):])
-
-        if data: yield self.packet(event, data)
-
-    def packet ( self, event: dict[str, Any], data: list[str] ) -> Sse:
-
-        return Sse("\n".join(data), str(event.get("event", "message")), event.get("id"), event.get("retry"))
+        if (packet := frames.flush()) is not None: yield packet
 
     async def download ( self, url: str, target: Path, headers: Headers | None = None ) -> int:
 

@@ -1,4 +1,5 @@
 from .blueprint import Blueprint
+from .cluster import Cluster
 from .column import Column, Embedded, Indexed
 from .documents import Documents
 from .engine import Database
@@ -18,8 +19,8 @@ outbox   = Outbox(database)
 rows     = Rows()
 
 __all__ = [
-    "Adapter", "Adapters", "Blueprint", "Column", "Database", "Documents", "Embedded", "Filters", "Indexed", "Loader",
-    "Migration", "Migrator", "Model", "Outbox", "Pivot", "PostgresAdapter", "Query", "Relation", "Row", "Rows",
-    "Schema", "Scope", "Seeder", "Seeds", "Session", "State", "Statement", "Status", "Translate", "adapters",
+    "Adapter", "Adapters", "Blueprint", "Cluster", "Column", "Database", "Documents", "Embedded", "Filters", "Indexed",
+    "Loader", "Migration", "Migrator", "Model", "Outbox", "Pivot", "PostgresAdapter", "Query", "Relation", "Row",
+    "Rows", "Schema", "Scope", "Seeder", "Seeds", "Session", "State", "Statement", "Status", "Translate", "adapters",
     "belongs_to", "belongs_to_many", "database", "has_many", "has_one", "morph_many", "morph_to", "outbox", "rows",
 ]

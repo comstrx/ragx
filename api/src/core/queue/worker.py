@@ -1,5 +1,6 @@
 from collections.abc import Awaitable, Callable, Sequence
 
+from core.error import Fault
 from core.log import log
 from .job import Job
 import asyncio, contextlib
@@ -8,6 +9,7 @@ type Pull = Callable[[str, float], Awaitable[Job | None]]
 type Perform = Callable[[Job], Awaitable[bool]]
 
 PULL = 0.5
+CALM = 5.0
 
 class Workers:
 
@@ -19,6 +21,7 @@ class Workers:
         self._stopping = asyncio.Event()
         self._running  = asyncio.Event()
         self._busy     = 0
+        self._stalls   = 0
 
         self._running.set()
 
@@ -37,20 +40,49 @@ class Workers:
 
     async def work ( self, queue: str ) -> None:
 
+        streak = 0
+
         while not self._stopping.is_set():
 
             await self._running.wait()
 
             if self._stopping.is_set(): return
 
-            job = await self.next(queue)
+            try:
 
-            if job is None: continue
+                await self.turn(queue)
 
-            self._busy += 1
+                streak = 0
 
-            try: await self._perform(job)
-            finally: self._busy -= 1
+            except Fault as fault:
+
+                streak       += 1
+                self._stalls += 1
+
+                self.stalled(queue, fault, streak)
+
+                await self.rest(min(PULL * 2.0 ** streak, CALM))
+
+    async def turn ( self, queue: str ) -> None:
+
+        job = await self.next(queue)
+
+        if job is None: return
+
+        self._busy += 1
+
+        try: await self._perform(job)
+        finally: self._busy -= 1
+
+    def stalled ( self, queue: str, fault: Fault, streak: int ) -> None:
+
+        if fault.code.transient(): log.warning("queue.worker.stalled", queue=queue, streak=streak, reason=fault.reason)
+        else: log.exception("queue.worker.faulted", queue=queue, streak=streak, reason=fault.reason)
+
+    async def rest ( self, pause: float ) -> None:
+
+        with contextlib.suppress(TimeoutError):
+            async with asyncio.timeout(pause): await self._stopping.wait()
 
     async def next ( self, queue: str ) -> Job | None:
 
@@ -123,7 +155,7 @@ class Workers:
 
     def describe ( self ) -> dict[str, object]:
 
-        return { "workers": self.alive(), "busy": self._busy, "paused": self.paused() }
+        return { "workers": self.alive(), "busy": self._busy, "paused": self.paused(), "stalls": self._stalls }
 
     def warn_if_dead ( self ) -> None:
 

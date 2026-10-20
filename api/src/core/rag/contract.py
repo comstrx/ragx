@@ -5,14 +5,14 @@ from typing import ClassVar
 
 from core.adapter import Adapter
 from core.error import Code, Fault
-from core.fs import Part
-from core.llm import Harness, Prompt, Reply
+from core.fs import Gap, Part
+from core.llm import Harness, Reply
 from core.number import Embedding
 
 DENSE   = "dense"
 LEXICAL = "lexical"
 DURABLE = "durable"
-STAGES  = ("generation", "embedding", "ranking", "evaluation")
+STAGES  = ("generation", "embedding", "ranking", "evaluation", "extraction", "summary")
 
 @dataclass(frozen=True, slots=True)
 class Document:
@@ -20,11 +20,21 @@ class Document:
     id     : str
     source : str
     parts  : tuple[Part, ...]
+    mime   : str = "text/plain"
+    gaps   : tuple[Gap, ...] = ()
 
     @classmethod
     def text ( cls, key: str, source: str, content: str ) -> Document:
 
         return cls(key, source, (Part(content),))
+
+    def content ( self ) -> str:
+
+        return "\n\n".join(part.text for part in self.parts)
+
+    def complete ( self ) -> bool:
+
+        return not self.gaps
 
 @dataclass(frozen=True, slots=True)
 class Passage:
@@ -61,12 +71,12 @@ class Evaluation:
     model     : str
 
 @dataclass(frozen=True, slots=True)
-class Models:
+class Summary:
 
-    generation : Prompt
-    embedding  : Prompt
-    ranking    : Prompt | None = None
-    evaluation : Prompt | None = None
+    text   : str
+    model  : str
+    rounds : int
+    pieces : int
 
 @dataclass(frozen=True, slots=True)
 class Policies:
@@ -76,6 +86,8 @@ class Policies:
     embedding  : Harness | None = None
     ranking    : Harness | None = None
     evaluation : Harness | None = None
+    extraction : Harness | None = None
+    summary    : Harness | None = None
 
     def stage ( self, name: str ) -> Harness:
 
@@ -96,12 +108,20 @@ class Settings:
     native      : bool = True
     generative  : bool = False
     instruction : str | None = None
+    partial     : bool = True
+    span        : float = 600.0
+    frames      : int = 8
+    scale       : float = 2.0
+    language    : str | None = None
+    digest      : int = 12_000
 
     def __post_init__ ( self ) -> None:
 
-        positive = min(self.chunk, self.candidates, self.context, self.batch) > 0
+        positive = min(self.chunk, self.candidates, self.context, self.batch, self.frames, self.digest) > 0
+        timed    = self.span > 0 and self.scale > 0
 
-        if not positive or not 0 <= self.overlap < self.chunk: raise Fault(Code.VALIDATION, reason="rag.settings")
+        if not positive or not timed or not 0 <= self.overlap < self.chunk:
+            raise Fault(Code.VALIDATION, reason="rag.settings")
 
 class Index(Adapter, ABC):
 

@@ -6,8 +6,8 @@ from core.error import Code
 from core.http import App
 from core.json import Schema, json
 from core.llm import (
-    CORE, EMBED, INSTRUCT, MODELS, RANK, SCHEMA, Attachment, ChatGpt, Chunk, Claude, Harness, Llm, Local, Memory,
-    Message, Options, Prompt, Sessions, Usage,
+    CORE, EMBED, INSTRUCT, MODELS, RANK, SCHEMA, TOKENS, Attachment, ChatGpt, Chunk, Claude, Harness, Llm, Local,
+    Memory, Message, Model, Options, Prompt, Sessions, Usage,
 )
 from core.net import Answer, Ask, Transport, net
 from core.rand import rand
@@ -63,7 +63,7 @@ def scripted ( seen: list[dict[str, Any]], *answers: str | Answer ) -> Transport
 
 def local ( transport: Transport, *serves: str ) -> Local:
 
-    return Local(BASE, "tiny", transport=transport, serves=CORE | set(serves))
+    return Local(Model("tiny", BASE, serves=CORE | set(serves)), transport)
 
 async def collect ( stream: AsyncIterator[Chunk], into: list[str] ) -> None:
 
@@ -170,7 +170,7 @@ class TestStructured:
 
             return payload({ "model": "c", "content": [{ "type": "text", "text": text }], "stop_reason": "end_turn" })
 
-        claude = Prompt(Claude("k", transport=net.mocked(answer), retries=0), Sessions())
+        claude = Prompt(Claude(Model("claude-x", key="k", retries=0), net.mocked(answer)), Sessions())
 
         await test.rejects(claude.schema(ANSWER).ask("x"), Code.VALIDATION, "json.schema.mismatch", "tags")
 
@@ -282,12 +282,18 @@ class TestTurns:
                 await test.rejects(one.save(restored.add(Message.user("x"))), Code.CONFLICT, "llm.session.conflict")
 
             expect((await ledger.read("d-1") or ({}, 0))[1]).equals(2)
-            expect((await one.forget("d-1"), await ledger.read("d-1"))).equals((True, None))
+            expect((one.clear() > 0, one.clear(), one.count(), await one.restore("d-1") is not None)).equals(
+                (True, 0, 0, True),
+            )
+            expect((await one.forget("d-1"), await one.forget("d-1"), await ledger.read("d-1"))).equals(
+                (True, False, None),
+            )
 
             writes = [await ledger.write("k", { "a": index }, version) for index, version in enumerate((0, 0, 1, 1))]
 
             expect((writes, await ledger.read("k"))).equals(([True, False, True, False], ({ "a": 2 }, 2)))
             expect((await ledger.keys("k"), await ledger.count(), await ledger.purge(-1))).equals((["k"], 1, 1))
+            expect((await ledger.purge(-1), await ledger.delete("k"), await ledger.count())).equals((0, False, 0))
 
         finally:
 
@@ -314,6 +320,46 @@ class TestTurns:
             ("NOTES", ["q2 " * 10, "a2", "q3", "a3"]),
         )
 
+class TestTokens:
+
+    async def test_a_declared_tokenizer_fits_requests_exactly_before_any_completion ( self ) -> None:
+
+        seen: list[str] = []
+        size = [100]
+
+        def answer ( asked: Ask ) -> Answer:
+
+            path = asked.url.rsplit("/", 1)[-1]
+
+            seen.append(path)
+
+            if path == "apply-template": return payload({ "prompt": "<|user|>hi" })
+            if path == "tokenize": return payload({ "tokens": list(range(size[0])) } if size[0] >= 0 else { "x": 1 })
+
+            return completion("fits")
+
+        exact = Prompt(local(net.mocked(answer), TOKENS), Sessions()).memory(Memory(window=256)).max_tokens(64)
+        loose = Prompt(local(net.mocked(answer)), Sessions()).memory(Memory(window=256)).max_tokens(64)
+
+        expect((await exact.ask("hi")).text).equals("fits")
+        expect(seen).equals(["apply-template", "tokenize", "completions"])
+
+        size[0] = 250
+
+        await test.rejects(exact.ask("hi"), Code.VALIDATION, "llm.context.limit")
+
+        expect(seen[-1]).equals("tokenize")
+
+        size[0] = -1
+
+        await test.rejects(exact.ask("hi"), Code.UNAVAILABLE, "llm.tokens.response")
+
+        seen.clear()
+
+        await loose.ask("hi")
+
+        expect(seen).equals(["completions"])
+
 class TestVectors:
 
     async def test_embeddings_and_reranking_are_strict_dedicated_operations ( self ) -> None:
@@ -337,7 +383,7 @@ class TestVectors:
 
             return payload({ "results": scored })
 
-        served   = Local(BASE, "embed", transport=net.mocked(answer), serves={EMBED, INSTRUCT, RANK})
+        served   = Local(Model("embed", BASE, serves=frozenset({EMBED, INSTRUCT, RANK})), net.mocked(answer))
         vectors  = Prompt(served, Sessions())
         embedded = await vectors.embed(["a", "b"], query=True, instruction="Find refund rules")
         ranked   = await vectors.rank("q", ["x", "y"])
@@ -347,7 +393,7 @@ class TestVectors:
         )
         expect(seen[0]["input"][0]).equals("Instruct: Find refund rules\nQuery: a")
         expect([(score.index, score.score) for score in ranked]).equals([(1, 0.9), (0, -1.5)])
-        expect(ChatGpt("k", "text-embedding-3-small").abilities()).equals(frozenset({ EMBED, MODELS }))
+        expect(ChatGpt(Model("text-embedding-3-small", key="k")).abilities()).equals(frozenset({ EMBED, MODELS }))
 
         before = len(seen)
 
@@ -363,7 +409,7 @@ class TestVectors:
 
             await test.rejects(work, Code.VALIDATION, reason)
 
-        plain = Prompt(Local(BASE, "embed", transport=net.mocked(answer), serves={EMBED}), Sessions())
+        plain = Prompt(Local(Model("embed", BASE, serves=frozenset({EMBED})), net.mocked(answer)), Sessions())
 
         instructed = plain.embed(["a"], query=True, instruction="x")
 
@@ -391,7 +437,7 @@ class TestVectors:
 
         for kind, body, reason in broken:
 
-            served = Prompt(Local(BASE, "m", transport=self.fixed(body), serves={EMBED, RANK}), Sessions())
+            served = Prompt(Local(Model("m", BASE, serves=frozenset({EMBED, RANK})), self.fixed(body)), Sessions())
             work   = served.embed(["a", "b"]) if kind == "embed" else served.rank("q", ["a", "b"])
 
             await test.rejects(work, Code.UNAVAILABLE, reason)

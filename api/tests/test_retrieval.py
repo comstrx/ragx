@@ -3,17 +3,26 @@ from typing import Any
 
 from core.array import Item, Ranked, Ranking, Search
 from core.error import Code
-from core.fs import Extraction, ExtractPolicy, Part
-from core.json import Schema
-from core.llm import Attachment
+from core.fs import Extraction, ExtractPolicy, Gap, Part, reader
+from core.json import Schema, json
+from core.llm import AUDIO, CORE, HEARING, IMAGES, SCHEMA, Attachment, Llm, Local, Model
+from core.net import Answer, Ask, net
+from core.rag import MemoryIndex, Rag, Settings
 from core.number import vector
 from core.string import string
-from core.test import expect, test
-import asyncio, math, os
+from core.test import expect, sample, test
+from core.thread import thread
+import math, os, shutil
 
 POLICY = "Refunds are available for 14 days after delivery. Contact support to request one."
 ARABIC = "يمكن طلب الإسترداد خلال ١٤ يوماً من الاستلام."
 SHIPPING = "Shipping takes three to five business days inside Egypt."
+LEGACY   = "مرحبا بكم في منصة رجكس".encode("cp1256")
+JPEG     = b"\xff\xd8\xff"
+TAB      = "\t"
+BASE     = "http://models/v1"
+JSON     = { "content-type": "application/json" }
+HEARD    = { "text": "x", "segments": [{ "start": 0.25, "end": 0.75, "text": "مرحبا" }] }
 
 def reference ( left: tuple[float, ...], right: tuple[float, ...] ) -> float:
 
@@ -34,50 +43,33 @@ def indexed () -> Search:
 
     return found
 
-def document ( *pages: str ) -> bytes:
+def models ( asked: list[Ask], hearing: bool = True ) -> Llm:
 
-    count   = len(pages)
-    kids    = " ".join(f"{4 + index * 2} 0 R" for index in range(count))
-    objects = ["<< /Type /Catalog /Pages 2 0 R >>", f"<< /Type /Pages /Kids [{kids}] /Count {count} >>"]
+    def answer ( request: Ask ) -> Answer:
 
-    objects.append("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+        asked.append(request)
 
-    for index, text in enumerate(pages):
+        if request.url.endswith("/audio/transcriptions"): return 200, json.encode(HEARD), JSON
 
-        stream  = f"BT /F1 12 Tf 40 220 Td ({text}) Tj ET" if text else ""
-        page    = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Resources << /Font << /F1 3 0 R >> >>"
-        content = f"<< /Length {len(stream)} >>\nstream\n{stream}\nendstream"
+        body   = json.loads(request.body)
+        system = str(body["messages"][0]["content"])
+        reply  = "قراءة الصفحة" if "Read every word" in system else "مخطط الاسترداد"
 
-        objects.extend((f"{page} /Contents {5 + index * 2} 0 R >>", content))
+        if "Transcribe the attached audio" in system:
+            reply = json.dumps({ "segments": [{ "text": "أهلا", "start": 0.5, "end": 0.9 }] })
 
-    body    = b"%PDF-1.4\n"
-    offsets = []
+        return 200, json.encode({ "choices": [{ "message": { "content": reply } }] }), JSON
 
-    for number, item in enumerate(objects, 1):
+    wire  = net.mocked(answer)
+    found = Llm()
+    ears  = HEARING if hearing else CORE | {AUDIO, SCHEMA}
 
-        offsets.append(len(body))
+    eyes  = Model("eyes", BASE, name="eyes", tasks=frozenset({"ocr", "describe"}), serves=CORE | {IMAGES})
 
-        body += f"{number} 0 obj\n{item}\nendobj\n".encode()
+    found.register(Local(eyes, wire))
+    found.register(Local(Model("ears", BASE, name="ears", tasks=frozenset({"transcribe"}), serves=ears), wire))
 
-    table = "".join(f"{offset:010d} 00000 n \n" for offset in offsets)
-    tail  = f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n{table}"
-    tail += f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{len(body)}\n%%EOF\n"
-
-    return body + tail.encode()
-
-async def transcribed ( data: bytes, mime: str, name: str ) -> tuple[Part, ...]:
-
-    return (Part(f"{name} as {mime} with {len(data)} bytes", page=1),)
-
-async def silent ( data: bytes, mime: str, name: str ) -> tuple[Part, ...]:
-
-    return (Part("   "),)
-
-async def stuck ( data: bytes, mime: str, name: str ) -> tuple[Part, ...]:
-
-    await asyncio.sleep(5)
-
-    return ()
+    return found
 
 class TestVectors:
 
@@ -147,6 +139,18 @@ class TestSafety:
         expect(string.redact(text)).equals("Mail [EMAIL], call [PHONE] or [PHONE], see [URL] now.")
         expect(string.redact(text, ("email",))).starts_with("Mail [EMAIL], call +20 101")
         expect(string.inspect("plain words only").spans).equals(())
+
+    def test_card_numbers_are_redacted_only_when_the_luhn_digit_agrees ( self ) -> None:
+
+        indic = "4111 1111 1111 1111".translate({ ord("0") + digit: 0x660 + digit for digit in range(10) })
+
+        expect([
+            string.redact("pay 4111 1111 1111 1111 now"), string.redact("amex 3782-822463-10005"),
+            string.redact(f"بطاقة {indic}"), string.redact("ref 4111 1111 1111 1112"),
+            string.redact("pay 4111111111111111", ("email",)),
+        ]).equals([
+            "pay [CARD] now", "amex [CARD]", "بطاقة [CARD]", "ref 4111 1111 1111 1112", "pay 4111111111111111",
+        ])
 
     def test_injection_heuristics_survive_unicode_tricks_in_english_and_arabic ( self ) -> None:
 
@@ -285,39 +289,50 @@ class TestExtraction:
 
     async def test_files_are_read_bounded_strict_and_typed_by_content ( self, tmp_path: Path ) -> None:
 
-        reader = Extraction()
-        named  = tmp_path / "policy.pdf"
+        files   = Extraction()
+        named   = tmp_path / "policy.pdf"
 
         named.write_text("Refunds within 14 days.")
 
-        found = await reader.extract(named)
+        found = await files.extract(named)
 
-        expect((found.source, found.mime, found.text())).equals(("policy.pdf", "text/plain", "Refunds within 14 days."))
+        expect((found.source, found.mime, found.text(), found.complete())).equals(
+            ("policy.pdf", "text/plain", "Refunds within 14 days.", True),
+        )
 
         for data, reason in (
-            (b"\xff\xfe bad", "file.encoding"), (b"a\x00b", "file.type"), (b"\x7fELF\x02", "file.type"),
+            (bytes(range(128, 256)), "file.encoding"), (b"a\x00b", "file.type"), (b"\x7fELF\x02", "file.type"),
             (b"MZ\x90\x00", "file.type"), (b"#!/bin/sh\nrm -rf /", "file.type"),
+            (sample.zipped({ "a.txt": "zipped" }), "file.archive"),
         ):
 
-            await test.rejects(reader.parse("x", data), Code.VALIDATION, reason)
+            await test.rejects(files.parse("x", data), Code.VALIDATION, reason)
 
-        await test.rejects(reader.parse("x", b"x" * 11, ExtractPolicy(max_bytes=10)), Code.VALIDATION, "file.size")
-        await test.rejects(reader.parse("x", b"x" * 11, ExtractPolicy(max_chars=10)), Code.VALIDATION, "file.text")
+        await test.rejects(files.parse("x", b"x" * 11, ExtractPolicy(max_bytes=10)), Code.VALIDATION, "file.size")
+        await test.rejects(files.parse("x", b"x" * 11, ExtractPolicy(max_chars=10)), Code.VALIDATION, "file.text")
 
         (tmp_path / "linked.txt").symlink_to(named)
         os.mkfifo(tmp_path / "pipe")
 
-        await test.rejects(reader.extract(tmp_path / "linked.txt"), Code.FORBIDDEN, "file.path")
-        await test.rejects(reader.extract(tmp_path), Code.FORBIDDEN, "file.regular")
-        await test.rejects(reader.extract(tmp_path / "pipe"), Code.FORBIDDEN, "file.regular")
+        await test.rejects(files.extract(tmp_path / "linked.txt"), Code.FORBIDDEN, "file.path")
+        await test.rejects(files.extract(tmp_path), Code.FORBIDDEN, "file.regular")
+        await test.rejects(files.extract(tmp_path / "pipe"), Code.FORBIDDEN, "file.regular")
 
         with test.fails(Code.VALIDATION, "file.limits"): ExtractPolicy(seconds=0)
+
+        disguised = tmp_path / "photo.txt"
+
+        disguised.write_bytes(await files.render(sample.pdf("x"), 1, scale=0.5))
+
+        expect((await Attachment.from_path(disguised)).mime).equals("image/png")
+
+        await test.rejects(Attachment.from_path(disguised, "text/plain"), Code.VALIDATION, "llm.attachment.mime")
 
     async def test_reads_stay_inside_their_root_even_through_symlinked_folders ( self, tmp_path: Path ) -> None:
 
         root    = tmp_path / "root"
         outside = tmp_path / "outside"
-        reader  = Extraction()
+        files   = Extraction()
         policy  = ExtractPolicy(root=str(root))
 
         (root / "docs").mkdir(parents=True)
@@ -326,53 +341,178 @@ class TestExtraction:
         (outside / "b.txt").write_text("secret")
         (root / "jump").symlink_to(outside)
 
-        expect((await reader.extract(root / "docs" / "a.txt", policy)).text()).equals("inside")
+        expect((await files.extract(root / "docs" / "a.txt", policy)).text()).equals("inside")
 
-        await test.rejects(reader.extract(outside / "b.txt", policy), Code.FORBIDDEN, "file.root")
+        await test.rejects(files.extract(outside / "b.txt", policy), Code.FORBIDDEN, "file.root")
         climbed = root / "docs" / ".." / ".." / "outside" / "b.txt"
 
-        await test.rejects(reader.extract(climbed, policy), Code.FORBIDDEN, "file.root")
-        await test.rejects(reader.extract(root / "jump" / "b.txt", policy), Code.FORBIDDEN, "file.path")
+        await test.rejects(files.extract(climbed, policy), Code.FORBIDDEN, "file.root")
+        await test.rejects(files.extract(root / "jump" / "b.txt", policy), Code.FORBIDDEN, "file.path")
 
-    async def test_pdfs_parse_in_an_isolated_worker_and_media_needs_a_converter ( self, tmp_path: Path ) -> None:
+    async def test_pdfs_parse_in_a_bounded_worker_and_blank_pages_leave_nothing ( self ) -> None:
 
-        reader = Extraction()
-        pdf    = document("Refund policy: fourteen days.", "Shipping: three days.")
-        found  = await reader.parse("policy.pdf", pdf)
+        files   = Extraction()
+        pdf     = sample.pdf("Refund policy: fourteen days.", "Shipping: three days.")
+        found   = await files.parse("policy.pdf", pdf)
 
-        expect((found.mime, [part.page for part in found.parts])).equals(("application/pdf", [1, 2]))
+        expect((found.mime, [part.page for part in found.parts], found.gaps)).equals(("application/pdf", [1, 2], ()))
         expect(found.parts[0].text).contains("fourteen days")
         expect(found.parts[1].text).contains("three days")
 
-        await test.rejects(reader.parse("p.pdf", pdf, ExtractPolicy(max_pages=1)), Code.VALIDATION, "file.pdf")
-        await test.rejects(reader.parse("p.pdf", pdf, ExtractPolicy(max_chars=10)), Code.VALIDATION, "file.pdf")
-        await test.rejects(reader.parse("p.pdf", b"%PDF-1.4\ngarbage"), Code.VALIDATION, "file.pdf")
+        await test.rejects(files.parse("p.pdf", pdf, ExtractPolicy(max_pages=1)), Code.VALIDATION, "file.pages")
+        await test.rejects(files.parse("p.pdf", pdf, ExtractPolicy(max_chars=10)), Code.VALIDATION, "file.text")
+        await test.rejects(files.parse("p.pdf", b"%PDF-1.4\ngarbage"), Code.VALIDATION, "file.pdf")
+        await test.rejects(files.parse("p.pdf", pdf, ExtractPolicy(memory=1 << 20)), Code.VALIDATION, "file.broken")
 
-        blank = document("")
+        blank = await files.parse("blank.pdf", sample.pdf(""))
+        image = await files.render(pdf, 2, scale=1.0)
 
-        await test.rejects(reader.parse("scan.pdf", blank), Code.VALIDATION, "file.converter")
+        expect((blank.parts, blank.gaps, image[:8])).equals(((), (), b"\x89PNG\r\n\x1a\n"))
 
-        scanned = await reader.parse("scan.pdf", blank, converter=transcribed)
+        await test.rejects(files.render(pdf, 3), Code.VALIDATION, "file.page")
 
-        expect(scanned.text()).starts_with("scan.pdf as application/pdf")
+    async def test_office_markup_mail_and_legacy_text_come_out_as_arabic_text ( self ) -> None:
 
-        image = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+        files   = Extraction()
+        written = await files.parse("policy.docx", sample.docx(ARABIC))
+        table   = sample.xlsx("العملاء", [["المدينة", "العملاء"], ["القاهرة", "1250"]])
+        counted = await files.parse("clients.xlsx", table)
+        marked  = await files.parse("page.html", f"<html><body><h1>السياسة</h1><p>{ARABIC}</p></body></html>".encode())
+        mailed  = await files.parse("note.eml", f"From: a@b.co\r\nSubject: refund\r\n\r\n{ARABIC}\r\n".encode())
+        legacy  = await files.parse("old.txt", LEGACY)
+        noted   = await files.parse("notes.md", "# عنوان\n\nنص".encode())
 
-        await test.rejects(reader.parse("a.png", image), Code.VALIDATION, "file.converter")
-        await test.rejects(reader.parse("a.png", image, converter=silent), Code.VALIDATION, "file.conversion.empty")
-        await test.rejects(
-            reader.parse("a.png", image, ExtractPolicy(seconds=0.05), converter=stuck), Code.UNAVAILABLE,
-            "file.conversion.timeout",
+        expect((written.mime.endswith("wordprocessingml.document"), written.text().strip())).equals((True, ARABIC))
+        rows    = "\n".join(("## العملاء", f"المدينة{TAB}العملاء", f"القاهرة{TAB}1250"))
+
+        expect((counted.text(), counted.parts[0].page)).equals((rows, 1))
+        expect((marked.mime, "# السياسة" in marked.text())).equals(("text/html", True))
+        expect((mailed.mime, ARABIC in mailed.text())).equals(("message/rfc822", True))
+        expect((legacy.text(), noted.mime)).equals(("مرحبا بكم في منصة رجكس", "text/markdown"))
+        expect(noted.text()).equals("# عنوان\n\nنص")
+
+    async def test_media_yields_its_own_text_and_marks_what_needs_a_model ( self ) -> None:
+
+        files   = Extraction()
+        audio   = sample.wav(2.0, "سياسة الاسترداد")
+        heard   = await files.parse("call.wav", audio)
+        clip    = await files.clip(audio, 0.5, 1.5)
+        picture = await files.render(sample.pdf("Refund policy"), 1, scale=1.0)
+        seen    = await files.parse("page.png", picture)
+        still   = await files.still(picture)
+
+        expect((heard.mime, heard.text(), heard.gaps)).equals(
+            ("audio/wav", "سياسة الاسترداد", (Gap("speech", None, 0.0, 2.0),)),
+        )
+        expect((clip[:4], clip[8:12], len(clip))).equals((b"RIFF", b"WAVE", 44 + 16_000 * 2))
+        expect((seen.mime, seen.parts, seen.gaps)).equals(("image/png", (), (Gap("vision"),)))
+        expect(still[:3]).equals(b"\xff\xd8\xff")
+
+        await test.rejects(files.clip(audio, 2.0, 1.0), Code.VALIDATION, "file.clip")
+        broken = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+
+        await test.rejects(files.parse("a.png", broken), Code.VALIDATION, "file.image")
+
+    async def test_video_subtitles_carry_their_seconds_and_frames_follow_the_clock ( self, tmp_path: Path ) -> None:
+
+        binary = shutil.which("ffmpeg")
+
+        if binary is None: test.skip("ffmpeg builds the video fixture")
+
+        captions = tmp_path / "cues.srt"
+        movie    = tmp_path / "movie.mp4"
+        lavfi    = ("-f", "lavfi", "-i", "testsrc=size=160x120:rate=10:duration=4")
+
+        captions.write_text(f"1\n00:00:01,000 --> 00:00:02,000\n{ARABIC}\n", encoding="utf-8")
+        code, _ = await thread.command(
+            [str(binary), "-loglevel", "error", "-y", *lavfi, "-i", str(captions), "-c:v", "mpeg4", "-c:s", "mov_text",
+             str(movie)], seconds=60.0,
         )
 
-        expect((await reader.parse("a.png", image, converter=transcribed)).parts).equals(
-            (Part("a.png as image/png with 40 bytes", page=1),),
+        expect(code).equals(0)
+
+        files   = Extraction()
+        data    = movie.read_bytes()
+        found   = await files.parse("movie.mp4", data)
+        frames  = await files.frames(data, (0.5, 3.0))
+
+        expect((found.mime, [(part.text, part.second) for part in found.parts])).equals(("video/mp4", [(ARABIC, 1.0)]))
+        expect(found.gaps).equals((Gap("frames", None, 0.0, 4.0),))
+        expect([(frame.second, frame.data[:3]) for frame in frames]).equals([(0.5, JPEG), (3.0, JPEG)])
+        expect(frames[0].data).differs(frames[1].data)
+
+    def test_reversed_or_broken_arabic_is_illegible_and_presentation_forms_fold ( self ) -> None:
+
+        forward  = "تقدم منصة رجكس خدمات الذكاء الاصطناعي للمؤسسات في القاهرة"
+        backward = " ".join(word[::-1] for word in forward.split())
+        broken   = forward.replace("\u0644", "\u01c4")
+
+        expect((reader.legible(forward), reader.legible(backward), reader.legible(reader.folded(broken)))).equals(
+            (True, False, False),
+        )
+        expect(reader.folded("ﺍﻻﺻﻄﻨﺎﻋﻲ")).equals("الاصطناعي")
+        expect(reader.legible("Refund policy: fourteen days.")).true()
+
+class TestReading:
+
+    async def test_pages_pictures_and_speech_reach_the_models_their_tasks_name ( self ) -> None:
+
+        asked: list[Ask] = []
+        rag     = Rag().setup(MemoryIndex(), models(asked), settings=Settings(span=1.0))
+        page    = await rag.extract("scan.pdf", sample.scanned(), key="scan")
+        picture = await rag.extract("chart.png", await Extraction().render(sample.pdf("Refunds"), 1, scale=1.0))
+        speech  = await rag.extract("call.wav", sample.wav(2.0, "مكالمة"))
+        shown   = json.loads(asked[0].body)["messages"][-1]["content"][1]["image_url"]["url"]
+        looked  = json.loads(asked[1].body)["messages"][-1]["content"][1]["image_url"]["url"]
+
+        expect((page.id, page.mime, page.parts, page.complete())).equals(
+            ("scan", "application/pdf", (Part("قراءة الصفحة", 1),), True),
+        )
+        expect((shown[:22], looked[:23])).equals(("data:image/png;base64,", "data:image/jpeg;base64,"))
+        expect((picture.content(), picture.source)).equals(("مخطط الاسترداد", "chart.png"))
+        expect([(part.text, part.second) for part in speech.parts]).equals(
+            [("مكالمة", None), ("مرحبا", 0.25), ("مرحبا", 1.25)],
+        )
+        expect(sum(request.url.endswith("/audio/transcriptions") for request in asked)).equals(2)
+
+    async def test_a_listening_chat_model_transcribes_and_missing_models_leave_gaps_or_refuse ( self ) -> None:
+
+        asked: list[Ask] = []
+        chat   = Rag().setup(MemoryIndex(), models(asked, hearing=False))
+        heard  = await chat.extract("call.wav", sample.wav(1.0, "عنوان"))
+        bare   = Llm()
+        strict = Rag().setup(MemoryIndex(), bare, settings=Settings(partial=False))
+        loose  = await Rag().setup(MemoryIndex(), bare).extract("call.wav", sample.wav(1.0, "عنوان"))
+
+        expect([(part.text, part.second) for part in heard.parts]).equals([("عنوان", None), ("أهلا", 0.5)])
+        expect(json.loads(asked[-1].body)["messages"][-1]["content"][1]["file"]["filename"]).equals("clip-0.wav")
+        expect((loose.content(), loose.gaps, loose.complete())).equals(
+            ("عنوان", (Gap("speech", None, 0.0, 1.0),), False),
         )
 
-        disguised = tmp_path / "photo.txt"
+        blind = Rag().setup(MemoryIndex(), bare)
 
-        disguised.write_bytes(image)
+        await test.rejects(strict.extract("call.wav", sample.wav(1.0, "x")), Code.VALIDATION, "rag.extract.speech")
+        await test.rejects(blind.extract("scan.pdf", sample.scanned()), Code.VALIDATION, "rag.extract.empty")
 
-        expect((await Attachment.from_path(disguised)).mime).equals("image/png")
+    async def test_video_frames_are_described_at_their_own_seconds ( self, tmp_path: Path ) -> None:
 
-        await test.rejects(Attachment.from_path(disguised, "text/plain"), Code.VALIDATION, "llm.attachment.mime")
+        binary = shutil.which("ffmpeg")
+
+        if binary is None: test.skip("ffmpeg builds the video fixture")
+
+        movie = tmp_path / "movie.mp4"
+        lavfi = ("-f", "lavfi", "-i", "testsrc=size=160x120:rate=10:duration=4")
+        command = [str(binary), "-loglevel", "error", "-y", *lavfi, "-c:v", "mpeg4", str(movie)]
+        code, _ = await thread.command(command, seconds=60.0)
+
+        expect(code).equals(0)
+
+        asked: list[Ask] = []
+        rag   = Rag().setup(MemoryIndex(), models(asked), settings=Settings(frames=2))
+        found = await rag.extract("movie.mp4", movie.read_bytes())
+
+        described = [(part.text, part.second) for part in found.parts]
+
+        expect(described).equals([("مخطط الاسترداد", 1.0), ("مخطط الاسترداد", 3.0)])
+        expect(len(asked)).equals(2)

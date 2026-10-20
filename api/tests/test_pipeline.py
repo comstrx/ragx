@@ -25,53 +25,6 @@ def short ( job: Job ) -> str:
     return job.name.rsplit(".", 1)[-1]
 
 @pytest.mark.anyio
-class Relay:
-
-    def __init__ ( self ) -> None:
-
-        self.links  : list[asyncio.StreamWriter] = []
-        self.server : asyncio.Server | None = None
-
-    async def open ( self ) -> str:
-
-        self.server = await asyncio.start_server(self.pipe, "127.0.0.1", 0)
-
-        return f"redis://127.0.0.1:{self.server.sockets[0].getsockname()[1]}/15"
-
-    async def pipe ( self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter ) -> None:
-
-        far_reader, far_writer = await asyncio.open_connection("127.0.0.1", 6379)
-
-        self.links.extend((writer, far_writer))
-
-        async def pump ( source: asyncio.StreamReader, target: asyncio.StreamWriter ) -> None:
-
-            while chunk := await source.read(65536):
-
-                target.write(chunk)
-
-                await target.drain()
-
-            target.close()
-
-        await asyncio.gather(pump(reader, far_writer), pump(far_reader, writer), return_exceptions=True)
-
-    def sever ( self ) -> None:
-
-        for link in self.links: link.transport.abort()
-
-        self.links.clear()
-
-    async def close ( self ) -> None:
-
-        self.sever()
-
-        if self.server is not None:
-
-            self.server.close()
-
-            await self.server.wait_closed()
-
 class TestPipeline:
 
     async def test_queue_runs_retries_and_buries_jobs_in_any_driver ( self ) -> None:
@@ -313,11 +266,9 @@ class TestBrokers:
     async def test_a_severed_redis_subscription_heals_and_keeps_relaying ( self ) -> None:
 
         topic  = f"unit-{rand.hex(3)}"
-        relay  = Relay()
         left   = Socket()
         right  = Socket()
         sender = RedisDriver(left, REDIS, topic)
-        hurt   = RedisDriver(right, await relay.open(), topic)
         far    = right.attach(Connection("b", test.stub()))
 
         right.join(far, "news")
@@ -334,28 +285,31 @@ class TestBrokers:
 
             return far.outbox.qsize()
 
-        try:
+        async with test.relay("127.0.0.1", 6379) as relay:
 
-            await hurt.start()
+            hurt = RedisDriver(right, relay.url("redis", "/15"), topic)
 
-            expect(await heard(1)).equals(1)
+            try:
 
-            relay.sever()
+                await hurt.start()
 
-            for _ in range(100):
+                expect(await heard(1)).equals(1)
 
-                if hurt.describe()["lost"]: break
+                relay.sever()
 
-                await asyncio.sleep(0.02)
+                for _ in range(100):
 
-            expect(hurt.describe()).subset({ "lost": 1, "listening": True })
-            expect(await heard(2)).above(1)
+                    if hurt.describe()["lost"]: break
 
-        finally:
+                    await asyncio.sleep(0.02)
 
-            await hurt.stop()
-            await sender.stop()
-            await relay.close()
+                expect(hurt.describe()).subset({ "lost": 1, "listening": True })
+                expect(await heard(2)).above(1)
+
+            finally:
+
+                await hurt.stop()
+                await sender.stop()
 
 class TestSchedule:
 

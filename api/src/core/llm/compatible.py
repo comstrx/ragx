@@ -1,24 +1,35 @@
-from collections.abc import AsyncGenerator, Iterable, Sequence
+from collections.abc import AsyncGenerator, Sequence
 from typing import Any, ClassVar, override
 
 from core.date import date
-from core.net import Transport
-from .embedding import Embeddings, Score, embeddings, ranked
-from .message import Attachment, Chunk, Message, Options, Reply, Usage, conversation
+from core.error import Code, Fault
+from .message import EFFORTS, Attachment, Chunk, Message, Options, Reply, Usage, conversation
 from .provider import (
-    CORE, DOCUMENTS, EMBED, IMAGES, INSTRUCT, JSON, METADATA, RANK, SCHEMA, VECTORS, Provider, text_of,
+    CORE, DOCUMENTS, EMBED, HEARING, IMAGES, INSTRUCT, JSON, METADATA, RANK, SCHEMA, TOKENS, TRANSCRIBE, VECTORS,
+    Provider, text_of,
 )
+from .result import Embeddings, Score, Transcript, embeddings, ranked, transcript
 import contextlib
 
-DONE     = "[DONE]"
-OPENAI   = "https://api.openai.com/v1"
-DEEPSEEK = "https://api.deepseek.com/v1"
-OLLAMA   = "http://127.0.0.1:11434/v1"
+DONE = "[DONE]"
+WIRE = {
+    "temperature" : "temperature",
+    "top_p"       : "top_p",
+    "top_k"       : "top_k",
+    "stop"        : "stop",
+    "seed"        : "seed",
+    "presence"    : "presence_penalty",
+    "frequency"   : "frequency_penalty",
+    "effort"      : "reasoning_effort",
+}
 
 class Compatible(Provider):
 
     name         = "compatible"
     capabilities : ClassVar[frozenset[str]] = CORE | {JSON}
+    tunes        : ClassVar[frozenset[str]] = frozenset(WIRE)
+    efforts      : ClassVar[frozenset[str]] = frozenset(EFFORTS)
+    limit        : ClassVar[str] = "max_tokens"
 
     def part ( self, attachment: Attachment ) -> dict[str, Any]:
 
@@ -38,12 +49,14 @@ class Compatible(Provider):
     def body ( self, messages: Sequence[Message], options: Options, stream: bool = False ) -> dict[str, Any]:
 
         turns = conversation(messages, options)
+        tuned = { WIRE[name]: list(value) if name == "stop" else value for name, value in self.tuned(options).items() }
         payload: dict[str, Any] = {
             "model"    : self.pick(options),
             "messages" : [{ "role": message.role, "content": self.content(message) } for message in turns],
-            **options.generation(),
+            **tuned,
         }
 
+        if options.max_tokens is not None: payload[self.limit] = options.max_tokens
         if options.json: payload["response_format"] = { "type": "json_object" }
         if options.schema is not None and options.native:
             shaped = { "name": "output", "strict": options.schema.strict(), "schema": self.shaped(options.schema) }
@@ -52,7 +65,7 @@ class Compatible(Provider):
         if stream: payload["stream"] = True
         if stream: payload["stream_options"] = { "include_usage": True }
 
-        return payload
+        return { **payload, **options.extra }
 
     def usage_of ( self, data: Any ) -> Usage:
 
@@ -119,6 +132,29 @@ class Compatible(Provider):
         return ranked(data.get("results") if isinstance(data, dict) else None, len(documents))
 
     @override
+    async def tally ( self, messages: Sequence[Message], options: Options ) -> int:
+
+        root   = self._base.removesuffix("/v1")
+        turns  = self.body(messages, options)["messages"]
+        shaped = await self.post(f"{root}/apply-template", { "messages": turns }, TOKENS)
+        found  = await self.post(f"{root}/tokenize", { "content": str(shaped.get("prompt", "")) }, TOKENS)
+        tokens = found.get("tokens") if isinstance(found, dict) else None
+
+        if not isinstance(tokens, list): raise Fault(Code.UNAVAILABLE, reason="llm.tokens.response")
+
+        return len(tokens)
+
+    @override
+    async def listen ( self, media: Attachment, language: str | None ) -> Transcript:
+
+        fields = { "model": self.model, "response_format": "verbose_json", "timestamp_granularities[]": "segment" }
+        sent   = { **fields, "language": language } if language else fields
+        files  = { "file": (media.name, media.data, media.mime) }
+        data   = await self.call("POST", "/audio/transcriptions", TRANSCRIBE, files=files, data=sent)
+
+        return transcript(data, self.model, self.name)
+
+    @override
     async def models ( self ) -> list[str]:
 
         data  = await self.listing("/models")
@@ -131,57 +167,30 @@ class Compatible(Provider):
 class ChatGpt(Compatible):
 
     name         = "chatgpt"
-    model        = "gpt-5"
+    base         = "https://api.openai.com/v1"
+    keyed        = True
     capabilities : ClassVar[frozenset[str]] = CORE | {JSON, SCHEMA, IMAGES, DOCUMENTS, METADATA}
-
-    def __init__ (
-        self, key: str, model: str | None = None, base: str | None = None, wait: float = 60.0, retries: int = 1,
-        transport: Transport | None = None, name: str | None = None,
-    ) -> None:
-
-        self.missing(("key", key))
-
-        super().__init__(base or OPENAI, key, model, wait, retries, transport, name=name)
+    tunes        : ClassVar[frozenset[str]] = frozenset(WIRE) - {"top_k"}
+    limit        : ClassVar[str] = "max_completion_tokens"
 
     @override
     def abilities ( self ) -> frozenset[str]:
 
-        return VECTORS if self.model.startswith("text-embedding-") else super().abilities()
+        if self.model.startswith("text-embedding-"): return VECTORS
+        if "transcribe" in self.model or self.model.startswith("whisper"): return HEARING
 
-    @override
-    def body ( self, messages: Sequence[Message], options: Options, stream: bool = False ) -> dict[str, Any]:
-
-        payload = super().body(messages, options, stream)
-
-        if "max_tokens" in payload: payload["max_completion_tokens"] = payload.pop("max_tokens")
-
-        return payload
+        return super().abilities()
 
 class DeepSeek(Compatible):
 
     name         = "deepseek"
-    model        = "deepseek-chat"
+    base         = "https://api.deepseek.com/v1"
+    keyed        = True
     capabilities : ClassVar[frozenset[str]] = CORE | {JSON}
-
-    def __init__ (
-        self, key: str, model: str | None = None, base: str | None = None, wait: float = 60.0, retries: int = 1,
-        transport: Transport | None = None,
-    ) -> None:
-
-        self.missing(("key", key))
-
-        super().__init__(base or DEEPSEEK, key, model, wait, retries, transport)
+    tunes        : ClassVar[frozenset[str]] = frozenset({"temperature", "top_p", "stop", "presence", "frequency"})
+    efforts      : ClassVar[frozenset[str]] = frozenset()
 
 class Local(Compatible):
 
     name         = "local"
-    model        = "llama3.2"
     capabilities : ClassVar[frozenset[str]] = CORE | {JSON, IMAGES}
-
-    def __init__ (
-        self, path: str | None = None, model: str | None = None, key: str | None = None, wait: float = 120.0,
-        retries: int = 0, transport: Transport | None = None, serves: Iterable[str] | None = None,
-        name: str | None = None,
-    ) -> None:
-
-        super().__init__(path or OLLAMA, key or "", model, wait, retries, transport, serves, name)

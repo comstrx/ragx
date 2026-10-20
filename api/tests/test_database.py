@@ -1,9 +1,12 @@
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, ClassVar
 
-from core.database import Blueprint, Migrator, Schema, database
+from core.database import Blueprint, Migrator, Model, Query, Schema, database
 from core.error import Code
 from core.http import App
-from core.rand import rand
+from core.rand import Uuid, rand
 from core.test import expect, test
 import pytest
 
@@ -254,3 +257,41 @@ class TestSchema:
         expect(await database.fill(4)).equals(4)
         expect(database.describe()["idle"]).above(3)
         expect(await database.fill(0)).equals(0)
+
+    async def test_mapping_fields_bind_and_read_back_as_json_documents ( self, app: App ) -> None:
+
+        @dataclass(frozen=True, slots=True, kw_only=True)
+        class Card(Model):
+
+            table      : ClassVar[str] = f"scratch_cards_{rand.hex(3)}"
+            soft       : ClassVar[bool] = False
+            timestamps : ClassVar[bool] = False
+
+            id    : Uuid
+            facts : Mapping[str, Any]
+            extra : Mapping[str, Any] | None = None
+
+        def define ( table: Blueprint ) -> None:
+
+            table.id()
+            table.json("facts")
+            table.json("extra").nullable()
+
+        async with database.transaction() as session: await Schema(session).create(Card.table, define)
+
+        try:
+
+            cards   = Query(Card, database)
+            facts   = { "lang": "ar", "tags": ["vip"], "deep": { "n": 1 } }
+            made    = await cards.create({ "facts": facts, "extra": { "ok": True } })
+            nothing = await cards.create({ "facts": {}, "extra": None })
+            found   = test.some(await cards.find(made.id))
+
+            expect((found.facts, found.extra)).equals((facts, { "ok": True }))
+            expect((await cards.find(nothing.id) or nothing).extra).none()
+            expect(await cards.where("id", made.id).update({ "facts": { "lang": "en" } })).equals(1)
+            expect((test.some(await cards.find(made.id))).facts).equals({ "lang": "en" })
+
+        finally:
+
+            async with database.transaction() as session: await Schema(session).drop(Card.table)

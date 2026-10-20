@@ -66,7 +66,7 @@ class RagBench(Bench):
 
                 return
 
-            for records, budget in ((1000, 60.0), (5000, 80.0)):
+            for records, budget in ((1000, 50.0), (5000, 50.0)):
                 await self.indexed(records, budget, texts, vectors, asked)
 
     async def indexed (

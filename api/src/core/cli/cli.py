@@ -89,6 +89,8 @@ class Cli:
 
             self._err.write(f"{command.name}: {fault.reason or fault.code.value}: {fault.message}\n")
 
+            for name, problems in (fault.errors or {}).items(): self._err.write(f"  {name}: {'; '.join(problems)}\n")
+
             return FAILED
 
     def perform ( self, command: Command, values: dict[str, Any] ) -> int:

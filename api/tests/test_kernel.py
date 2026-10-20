@@ -363,7 +363,7 @@ class TestConfig:
 
             expect(caught.fault).some().at("message").equals("The configuration is invalid")
 
-            with test.fails(Code.INTERNAL, "validate.field.colour"): field(1, colour="red")
+            with test.fails(Code.INTERNAL, "validate.field.shade"): field(1, shade="red")
 
         for key in SCRUB: os.environ.pop(key, None)
 
@@ -421,12 +421,12 @@ class TestCli:
             ("greet", ("world", 1, False, None)), ("greet", ("ann", 3, True, None)),
             ("greet", ("world", 1, False, "dry")), ("drop", "users"),
         ])
-        refused = [cli.run(["grete"]), cli.run(["drop"]), cli.run(["greet", "-t", "x"]), cli.run(["greet", "--lod"])]
+        refused = [cli.run(["grete"]), cli.run(["drop"]), cli.run(["greet", "-t", "x"]), cli.run(["greet", "--quiet"])]
 
         expect(refused).equals([2, 2, 2, 2])
         expect(err.getvalue()).contains(
             "Unknown command 'grete'. Did you mean 'greet'?", "the following arguments are required: table",
-            "invalid int value: 'x'", "unrecognized arguments: --lod",
+            "invalid int value: 'x'", "unrecognized arguments: --quiet",
         )
         expect(cli.run(["drop", "users"])).equals(1)
         expect(err.getvalue()).contains("drop: drop.force: needs --force")

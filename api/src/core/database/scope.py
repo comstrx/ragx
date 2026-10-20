@@ -1,8 +1,10 @@
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
-from typing import Any, Self
+from types import UnionType
+from typing import Any, Self, Union, get_args, get_origin, get_type_hints
 
 from core.error import Code, Fault
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import ColumnElement, TableClause
 from .engine import Database
 from .model import Model
@@ -31,11 +33,24 @@ def listed ( value: object ) -> list[object]:
 
     return [plain(value)]
 
+def documented ( hint: object ) -> bool:
+
+    options = get_args(hint) if get_origin(hint) in (Union, UnionType) else (hint,)
+    origins = [get_origin(option) or option for option in options]
+
+    return any(isinstance(origin, type) and issubclass(origin, Mapping) for origin in origins)
+
 def table_of ( model: type[Model] ) -> TableClause:
 
     known = TABLES.get(model)
 
-    if known is None: known = TABLES[model] = sa.table(model.table, *(sa.column(name) for name in model.columns()))
+    if known is not None: return known
+
+    hints   = get_type_hints(model)
+    json    = sa.JSON().with_variant(JSONB(), "postgresql")
+    columns = [sa.column(name, json) if documented(hints.get(name)) else sa.column(name) for name in model.columns()]
+
+    known = TABLES[model] = sa.table(model.table, *columns)
 
     return known
 

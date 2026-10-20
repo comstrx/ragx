@@ -8,9 +8,10 @@ from typing import Protocol
 from core.date import date
 from core.error import Code, Fault
 from core.fs import fs
-from core.net import Client, net
+from core.net import Client, Egress
 from core.rand import rand
 from core.string import string
+import contextlib
 
 type Content = bytes | str
 
@@ -51,6 +52,7 @@ class Intake(ABC):
 
     _pattern : str
     _limit   : int
+    _egress  : Egress
     _allowed : tuple[str, ...]
     _blocked : tuple[str, ...]
 
@@ -119,18 +121,27 @@ class Intake(ABC):
         keep: bool = False, limit: int | None = None, client: Client | None = None, pattern: str | None = None,
     ) -> Stored:
 
-        source = client or net
+        source = client or self._egress.client()
         cap    = limit or self._limit
         parts: list[bytes] = []
         total  = 0
 
-        async for chunk in source.stream("GET", url):
+        try:
 
-            total += len(chunk)
+            async with contextlib.aclosing(source.stream("GET", url)) as chunks:
 
-            if total > cap: raise Fault(Code.VALIDATION, errors={ "file": [f"The file exceeds {cap // KILO} KB"] })
+                async for chunk in chunks:
 
-            parts.append(chunk)
+                    total += len(chunk)
+
+                    if total > cap:
+                        raise Fault(Code.VALIDATION, errors={ "file": [f"The file exceeds {cap // KILO} KB"] })
+
+                    parts.append(chunk)
+
+        finally:
+
+            if client is None: await source.close()
 
         original = url.split("?", 1)[0].rstrip("/").rsplit("/", 1)[-1]
         label    = name or self.name(original, keep)

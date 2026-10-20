@@ -1,5 +1,1 @@
-from .user import UserResource
-
-user = UserResource()
-
-__all__ = ["UserResource", "user"]
+__all__: list[str] = []

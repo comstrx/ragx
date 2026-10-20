@@ -1,21 +1,20 @@
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator, Mapping
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from typing import Any
 
 from core.context import Work, context
 from core.error import Code, Fault
 from core.log import log
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.engine import Dialect
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 from sqlalchemy.pool import QueuePool
-from .session import Adapter, Params, Row, Session, Statement, translate
+from .session import FAILURES, SETTING, Adapter, Params, Row, Session, Statement, checkout, translate
 import asyncio
 
 RECYCLE   = 900
-FAILURES  = (SQLAlchemyError, OSError, TimeoutError)
+IDLE      = 5.0
 RETRYABLE = frozenset({"database.serialization", "database.deadlock"})
 
 class Database:
@@ -26,6 +25,8 @@ class Database:
         self._reader: AsyncEngine | None = None
         self._adapter: Adapter | None = None
         self._current: ContextVar[Session | None] = ContextVar("transaction", default=None)
+        self._bound: ContextVar[Mapping[str, str]] = ContextVar("bound", default=frozendict())
+        self._follows: dict[str, str] = {}
 
     def ready ( self ) -> bool:
 
@@ -45,7 +46,7 @@ class Database:
 
     async def connect (
         self, adapter: Adapter, url: str, min_size: int = 1, max_size: int = 10, wait: float = 5.0,
-        options: Mapping[str, Any] | None = None,
+        options: Mapping[str, Any] | None = None, idle: float = IDLE,
     ) -> None:
 
         if self._engine is not None: return
@@ -60,6 +61,8 @@ class Database:
             async with asyncio.timeout(wait), engine.connect() as connection: await connection.execute(text("SELECT 1"))
 
         except FAILURES as error: raise translate.fault(error) from error
+
+        event.listen(engine.sync_engine.pool, "checkout", checkout(engine.dialect, idle))
 
         self._engine  = engine
         self._reader  = engine.execution_options(isolation_level="AUTOCOMMIT")
@@ -112,15 +115,37 @@ class Database:
 
         return self._current.get()
 
+    @contextmanager
+    def bound ( self, settings: Mapping[str, str] ) -> Iterator[Mapping[str, str]]:
+
+        if self._current.get() is not None: raise Fault(Code.INTERNAL, reason="database.bound.open")
+        if not all(SETTING.fullmatch(name) for name in settings): raise Fault(Code.INTERNAL, reason="database.bound")
+
+        merged = { **self._bound.get(), **settings }
+        token  = self._bound.set(merged)
+
+        try: yield merged
+        finally: self._bound.reset(token)
+
+    def follow ( self, setting: str, slot: str | None ) -> None:
+
+        if not SETTING.fullmatch(setting): raise Fault(Code.INTERNAL, reason="database.bound")
+        if slot is None: self._follows.pop(setting, None)
+        else: self._follows[setting] = slot
+
+    def settings ( self ) -> dict[str, str]:
+
+        carried = { setting: str(context.get(slot)) for setting, slot in self._follows.items() if context.has(slot) }
+
+        return { **carried, **self._bound.get() }
+
     def in_transaction ( self ) -> bool:
 
         return self._current.get() is not None
 
     def level ( self ) -> int:
 
-        found = self._current.get()
-
-        return 0 if found is None else found.depth() + 1
+        return 0 if (found := self._current.get()) is None else found.depth() + 1
 
     @asynccontextmanager
     async def session ( self ) -> AsyncGenerator[Session]:
@@ -133,7 +158,21 @@ class Database:
 
             return
 
-        async with self._open_(self._reader) as connection: yield Session(connection, self.adapter())
+        settings = self.settings()
+
+        if not settings:
+
+            async with self._open_(self._reader) as connection: yield Session(connection, self.adapter())
+
+            return
+
+        async with self._open_(self._engine) as connection, connection.begin():
+
+            reader = Session(connection, self.adapter())
+
+            await reader.bind(settings)
+
+            yield reader
 
     @asynccontextmanager
     async def transaction ( self ) -> AsyncGenerator[Session]:
@@ -154,7 +193,11 @@ class Database:
 
             try:
 
-                async with connection.begin(): yield outer
+                async with connection.begin():
+
+                    await outer.bind(self.settings())
+
+                    yield outer
 
             except BaseException:
 
@@ -210,12 +253,8 @@ class Database:
         if not isinstance(pool, QueuePool): return { "ready": True, "driver": self.adapter().name }
 
         return {
-            "ready"   : True,
-            "driver"  : self.adapter().name,
-            "size"    : pool.size(),
-            "idle"    : pool.checkedin(),
-            "busy"    : pool.checkedout(),
-            "overflow": pool.overflow(),
+            "ready": True, "driver": self.adapter().name, "size": pool.size(), "idle": pool.checkedin(),
+            "busy": pool.checkedout(), "overflow": pool.overflow(), "follows": dict(self._follows),
         }
 
     @asynccontextmanager

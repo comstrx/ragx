@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
 from core.adapter import Adapter
+from core.error import Fault
 from core.log import log
 import asyncio
 
@@ -98,10 +99,17 @@ class Broker(Adapter, ABC):
 
             log.exception("broker.rejected", broker=self.name, route=parcel.route, id=parcel.id, error=kind)
 
-            await self.reject(parcel)
+            return await self.settle(parcel, kept=False)
+
+        return await self.settle(parcel, kept=True)
+
+    async def settle ( self, parcel: Parcel, kept: bool ) -> bool:
+
+        try: await (self.ack(parcel) if kept else self.reject(parcel))
+        except Fault as fault:
+
+            log.warning("broker.unsettled", broker=self.name, route=parcel.route, id=parcel.id, reason=fault.reason)
 
             return False
 
-        await self.ack(parcel)
-
-        return True
+        return kept

@@ -5,14 +5,15 @@ from core.error import Code, Fault
 from .text import Text
 import phonenumbers, re, unicodedata
 
-type Entity = Literal["email", "phone", "url"]
+type Entity = Literal["email", "phone", "url", "card"]
 
-KINDS     : tuple[Entity, ...] = ("email", "phone", "url")
+KINDS     : tuple[Entity, ...] = ("email", "phone", "url", "card")
 LIMIT     = 200_000
 TRIES     = 200
 REGION    = "EG"
 EMAIL     = re.compile(r"(?<![\w.+-])[\w.!#$%&'*+/=?^`{|}~-]+@[\w-]+(?:\.[\w-]+)+")
 URL       = re.compile(r"\b(?:https?://|www\.)[^\s<>\"]+", re.IGNORECASE)
+CARD      = re.compile(r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)")
 LEADS     = r"(?:ignore|disregard|override|forget|bypass)"
 PRIOR     = r"(?:all\s+|any\s+)?(?:the\s+|your\s+)?(?:previous|prior|above|earlier|system|developer)"
 ORDERS    = r"(?:instructions?|rules?|prompts?|messages?|guidelines?)"
@@ -25,6 +26,16 @@ MARKERS   = (r"<\|(?:im_start|im_end|system|endoftext)\|>", r"\[/?inst\]", r"<<s
 INJECTION = re.compile("|".join((rf"{LEADS}\s+{PRIOR}\s+{ORDERS}", SHOWN, *ARABIC, *MARKERS)))
 CONTROL   = re.compile("|".join(MARKERS), re.IGNORECASE)
 FOLDING   = Text()
+
+def luhn ( digits: str ) -> bool:
+
+    total = 0
+
+    for index, char in enumerate(reversed(digits)):
+
+        total += sum(divmod(int(char) * (2 if index % 2 else 1), 10))
+
+    return total % 10 == 0
 
 @dataclass(frozen=True, slots=True)
 class Span:
@@ -66,6 +77,10 @@ class Safety:
         found = [Span("email", match.start(), match.end()) for match in EMAIL.finditer(text)]
 
         found.extend(Span("url", match.start(), match.end()) for match in URL.finditer(text))
+        found.extend(
+            Span("card", match.start(), match.end())
+            for match in CARD.finditer(text) if luhn("".join(char for char in match.group() if char.isdigit()))
+        )
         found.extend(
             Span("phone", match.start, match.end)
             for match in phonenumbers.PhoneNumberMatcher(text, region, max_tries=TRIES)

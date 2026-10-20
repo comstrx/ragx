@@ -27,6 +27,7 @@ class Blueprint:
     reindexed: list[tuple[str, str]] = field(default_factory=list)
     unforeign: list[str] = field(default_factory=list)
     note     : str | None = None
+    isolation: tuple[str, str] | None = None
 
     def column ( self, name: str, kind: Any ) -> Column:
 
@@ -211,6 +212,10 @@ class Blueprint:
     def comment ( self, text: str ) -> None:
 
         self.note = text
+
+    def isolated ( self, column: str = "tenant_id", setting: str = "app.tenant" ) -> None:
+
+        self.isolation = (column, setting)
 
     def drop_unique ( self, name: str ) -> None:
 

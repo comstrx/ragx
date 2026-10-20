@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 from core.broadcast import broadcast
 from core.cache import cache
-from core.database import Database, Migrator, Seeds, Status, adapters, outbox
+from core.database import Cluster, Database, Migrator, Seeds, Status, adapters, outbox
 from core.event import events
 from core.llm import llm
 from core.queue import queue
@@ -59,6 +59,7 @@ class Boot:
         with log.span("boot.database"):
 
             await self.connect()
+            await self.guard()
 
             if self._settings.migrate: await self.migrate()
             if self._settings.seed: await self.seed()
@@ -73,6 +74,14 @@ class Boot:
         options = adapter.options(cfg.sslmode, cfg.search_path, self._application)
 
         await self._database.connect(adapter, url, cfg.pool_min, cfg.pool_max, cfg.timeout, options)
+
+    async def guard ( self ) -> bool:
+
+        async with self._database.session() as session: bypasses = await Cluster(session).bypasses()
+
+        if bypasses: log.warning("database.bypasses_isolation", role=self._settings.username)
+
+        return bypasses
 
     def migrator ( self ) -> Migrator:
 

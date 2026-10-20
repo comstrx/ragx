@@ -7,7 +7,7 @@ ORIGINS = ("http://localhost:3000", "http://localhost:3001")
 class AppConfig(Settings, env_prefix="APP_"):
 
     name    : str  = "RagX"
-    version : str  = "0.1.0"
+    version : str  = "1.0.0"
     env     : Mode = Mode.LOCAL
     debug   : bool = False
     host    : str  = "127.0.0.1"

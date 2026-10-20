@@ -6,7 +6,7 @@ from core.exception import Handler, Target, exception
 from core.http import Request, Response, Route, Sse, Upload, http
 from core.test import Client, expect, test
 from core.validate import Shape, field
-import pytest
+import asyncio, pytest
 
 faults = Faults()
 
@@ -230,6 +230,20 @@ async def ticks () -> Response:
 
     return Response.sse(source(), ping=0)
 
+async def slow () -> Response:
+
+    async def source () -> AsyncIterator[dict[str, object]]:
+
+        for index in range(3):
+
+            await asyncio.sleep(0.06)
+
+            yield { "data": { "n": index }, "event": "tick" }
+
+        raise Fault(Code.UNAVAILABLE, reason="llm.timeout")
+
+    return Response.sse(source(), ping=0.02)
+
 async def rows () -> Response:
 
     return Response.ndjson([{ "a": 1 }, { "b": 2 }])
@@ -290,6 +304,7 @@ hosts = Route.group("/h", [
 dsl = Route.group("/d", [
     Route.post("/echo/{key}", echo, name="echo"),
     Route.get("/events", ticks, name="events"),
+    Route.get("/slow", slow, name="slow"),
     Route.get("/rows", rows, name="rows"),
     Route.get("/gone", gone, name="gone"),
     Route.post("/shaped", shaped, name="shaped"),
@@ -315,7 +330,7 @@ class TestDsl:
         expect((router.url("d.echo", key=7, page=2), http.url("d.rows"))).equals(("/d/echo/7?page=2", "/d/rows"))
         expect((router.params("d.echo"), router.has("d.gone"), http.has("nowhere"))).equals((["key"], True, False))
         expect((router.methods("/d/rows"), len(router.by_prefix("/d")), router.names()[0])).equals(
-            (["GET"], 13, "d.echo"),
+            (["GET"], 14, "d.echo"),
         )
         expect((router.describe()[0]["name"], router.find("d.old").methods)).equals(("d.echo", ("GET",)))
         expect(things.names()).equals(["things.index", "things.store", "things.show"])
@@ -384,6 +399,16 @@ class TestDsl:
                 'event: tick\nid: 1\ndata: {"n":1}\n\nevent: tick\ndata: two\n\ndata: three\n\n',
             )
             expect(lines.text()).equals('{"a":1}\n{"b":2}\n')
+
+            paced  = (await client.get("/d/slow")).ok().text().split("\n\n")
+            ticked = [frame for frame in paced if frame.startswith("event: tick")]
+
+            expect((len(ticked), paced.count(": ping") > 2)).equals((3, True))
+            failed = '{"code":"unavailable","reason":"llm.timeout","message":"The service is unavailable"}'
+
+            errors = [frame for frame in paced if frame.startswith("event: error")]
+
+            expect(errors).equals([f"event: error\ndata: {failed}"])
 
             (await client.get("/d/gone")).status(308).header("location", "/v2/items")
             (await client.get("/d/old")).status(307).header("location", "/d/rows")

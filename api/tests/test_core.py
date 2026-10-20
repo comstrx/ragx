@@ -11,7 +11,7 @@ from core.crypto import Crypto
 from core.date import Moment, Parser, date
 from core.error import Code, Fault, Faults
 from core.exception import Handler
-from core.fs import fs
+from core.fs import Bounds, fs
 from core.func import func
 from core.http import Envelope
 from core.json import json
@@ -246,6 +246,25 @@ class TestPrimitives:
         expect(len(await fs.archive.untar(tarred, tmp_path / "unt"))).equals(1)
 
         await test.rejects(fs.archive.extract(tmp_path / "nope.rar", tmp_path), Code.BAD_REQUEST, "archive.kind")
+
+        await fs.write_bytes(tmp_path / "bomb" / "zeros.bin", bytes(20 << 20))
+
+        bombs = [
+            await fs.archive.zip(tmp_path / "out" / "bomb.zip", tmp_path / "bomb" / "zeros.bin"),
+            await fs.archive.compress(tmp_path / "out" / "bomb.tar.gz", tmp_path / "bomb" / "zeros.bin"),
+        ]
+
+        for bomb in bombs:
+
+            await test.rejects(fs.archive.extract(bomb, tmp_path / "boom"), Code.BAD_REQUEST, "archive.bomb")
+
+            expect((tmp_path / "boom").exists()).falsy()
+
+        crowded = fs.archive.extract(archive, tmp_path / "few", Bounds(members=1))
+
+        await test.rejects(crowded, Code.BAD_REQUEST, "archive.bomb")
+
+        expect(len(await fs.archive.extract(bombs[0], tmp_path / "ok", Bounds(ratio=1e9)))).equals(1)
 
         await fs.write_text(cfg, "# head\nA=1\nexport B='two words'\n")
 
@@ -578,6 +597,7 @@ class TestSecurity:
         expect(verified.alive()).truthy()
         expect(0 < verified.remaining() <= 60).true()
         expect(token.bearer("Bearer  abc ")).equals("abc")
+        expect(token.basic("Basic a2V5OnNlY3JldDp3aXRoOmNvbG9ucw==")).equals(("key", "secret:with:colons"))
 
         for broken, reason in (
             (lambda: token.verify(text, kind="refresh"), "token.kind"),
@@ -586,6 +606,11 @@ class TestSecurity:
             (lambda: stranger.verify(text), "token"),
             (lambda: token.bearer("Basic abc"), "token.missing"),
             (lambda: token.bearer(None), "token.missing"),
+            (lambda: token.basic("Bearer a2V5OnNlY3JldA=="), "token.basic"),
+            (lambda: token.basic("Basic not*base64"), "token.basic"),
+            (lambda: token.basic("Basic a2V5"), "token.basic"),
+            (lambda: token.basic("Basic OnNlY3JldA=="), "token.basic"),
+            (lambda: token.basic(None), "token.basic"),
         ):
 
             with test.fails(Code.UNAUTHORIZED, reason): broken()

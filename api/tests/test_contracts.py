@@ -7,7 +7,7 @@ from core.domain import Contact, Domains
 from core.error import Fault
 from core.gateway import Payments, Payout
 from core.json import Schema, json
-from core.llm import Attachment, ChatGpt, Gemini, Message, Options
+from core.llm import Attachment, ChatGpt, Gemini, Message, Model, Options
 from core.net import Answer, Ask, Transport, net
 from core.number import Money
 from core.sms import Text, Twilio, WhatsApp
@@ -237,11 +237,12 @@ class TestContracts:
         seen: list[Ask] = []
 
         chunk  = b'data: {"choices":[{"delta":{"content":"a"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'
-        gpt    = ChatGpt("k", "gpt-5", transport=recorder(seen, [(r"/models", { "data": [] })]))
-        stream = ChatGpt("k", "gpt-5", transport=recorder(seen, [(r"/chat/completions", chunk)]))
+        gpt    = ChatGpt(Model("gpt-5", key="k"), recorder(seen, [(r"/models", { "data": [] })]))
+        stream = ChatGpt(Model("gpt-5", key="k"), recorder(seen, [(r"/chat/completions", chunk)]))
         files  = (Attachment("a.png", b"\x89PNG", "image/png"), Attachment("d.pdf", b"%PDF", "application/pdf"))
         tuned  = Options(
             system="s", temperature=0.2, max_tokens=50, top_p=0.9, stop=("END",), json=True, metadata={ "u": "1" },
+            seed=7, presence=0.5, frequency=0.2, effort="high",
         )
 
         async def drain () -> None:
@@ -250,7 +251,7 @@ class TestContracts:
 
         asked   = [Message.user("hi", *files, Attachment.text("n.txt", "x"))]
         rows    = { "data": [{ "index": 0, "embedding": [0.1, 0.2] }, { "index": 1, "embedding": [0.3, 0.4] }] }
-        vectors = ChatGpt("k", "text-embedding-3-small", transport=recorder(seen, [(r"/embeddings", rows)]))
+        vectors = ChatGpt(Model("text-embedding-3-small", key="k"), recorder(seen, [(r"/embeddings", rows)]))
         shaped  = Options(schema=ANSWER, max_tokens=20)
 
         await calls(gpt.complete(asked, tuned), gpt.models(), drain(), gpt.complete(asked, shaped))
@@ -328,18 +329,21 @@ class TestContracts:
         seen.clear()
 
         google = loaded("gemini.json")
-        gem    = Gemini("k", "gemini-x", transport=recorder(seen, [(r":generate", { "candidates": [] })]))
+        gem    = Gemini(Model("gemini-x", key="k"), recorder(seen, [(r":generate", { "candidates": [] })]))
         parts  = (Attachment("a.png", b"\x89PNG", "image/png"), Attachment("d.pdf", b"%PDF", "application/pdf"))
 
         await calls(gem.complete(
             [Message.system("s"), Message.user("hi", *parts)],
-            Options(temperature=0.2, max_tokens=50, top_p=0.9, stop=("END",), json=True),
+            Options(
+                temperature=0.2, max_tokens=50, top_p=0.9, stop=("END",), json=True, top_k=4, seed=3, presence=0.1,
+                frequency=0.1, effort="low",
+            ),
         ))
 
         await calls(gem.complete([Message.user("hi")], Options(schema=ANSWER)))
 
         rows    = { "embeddings": [{ "values": [0.1, 0.2] }, { "values": [0.3, 0.4] }] }
-        vectors = Gemini("k", "gemini-embedding-001", transport=recorder(seen, [(r":batchEmbed", rows)]))
+        vectors = Gemini(Model("gemini-embedding-001", key="k"), recorder(seen, [(r":batchEmbed", rows)]))
 
         await calls(vectors.embed(["refunds", "shipping"], query=True))
 

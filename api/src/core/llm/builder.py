@@ -5,7 +5,7 @@ from typing import Any, Self, Unpack
 from core.json import Schema
 from core.rand import rand
 from .harness import Harness, Memory
-from .message import Attachment, Message, Options, Tuning
+from .message import Attachment, Effort, Message, Options, Tuning
 from .provider import Provider
 from .session import Session, Sessions
 import copy
@@ -14,17 +14,20 @@ class Builder:
 
     def __init__ (
         self, provider: Provider, sessions: Sessions, harness: Harness | None = None, memory: Memory | None = None,
+        summarizer: Provider | None = None,
     ) -> None:
 
-        self._provider = provider
-        self._sessions = sessions
-        self._harness  = harness or Harness()
-        self._memory   = memory or Memory()
-        self._options  = Options()
+        self._provider   = provider
+        self._sessions   = sessions
+        self._harness    = harness or Harness()
+        self._memory     = memory or Memory()
+        self._summarizer = summarizer
+        self._options    = provider.spec.options
         self._files    : tuple[Attachment, ...] = ()
         self._history  : tuple[Message, ...] = ()
         self._key      : str | None = None
         self._fresh    = True
+        self._grounding: str | None = None
 
     def provider ( self ) -> Provider:
 
@@ -74,9 +77,29 @@ class Builder:
 
         return self.configure(top_p=value)
 
+    def top_k ( self, count: int ) -> Self:
+
+        return self.configure(top_k=count)
+
     def stop ( self, *sequences: str ) -> Self:
 
         return self.configure(stop=tuple(sequences))
+
+    def seed ( self, value: int ) -> Self:
+
+        return self.configure(seed=value)
+
+    def penalize ( self, presence: float | None = None, frequency: float | None = None ) -> Self:
+
+        return self.configure(presence=presence, frequency=frequency)
+
+    def effort ( self, level: Effort ) -> Self:
+
+        return self.configure(effort=level)
+
+    def extra ( self, **fields: Any ) -> Self:
+
+        return self.configure(extra={ **self._options.extra, **fields })
 
     def json ( self, enabled: bool = True ) -> Self:
 
@@ -89,6 +112,10 @@ class Builder:
     def schema ( self, shape: Schema, native: bool = True ) -> Self:
 
         return self.configure(schema=shape, native=native)
+
+    def ground ( self, sources: str | None ) -> Self:
+
+        return self.derive(grounding=sources or None)
 
     def harness ( self, policy: Harness ) -> Self:
 

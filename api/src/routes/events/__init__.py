@@ -1,8 +1,5 @@
-from app.events import UserRegistered
-from app.listeners import SendWelcomeMail
+from collections.abc import Mapping, Sequence
 
-listeners = {
-    UserRegistered: (SendWelcomeMail,),
-}
+listeners: Mapping[type, Sequence[type]] = {}
 
 __all__ = ["listeners"]

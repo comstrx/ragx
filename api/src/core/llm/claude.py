@@ -3,31 +3,23 @@ from typing import Any, ClassVar, override
 
 from core.date import date
 from core.json import Schema
-from core.net import Transport
 from .message import Attachment, Chunk, Message, Options, Reply, Usage
 from .provider import CORE, DOCUMENTS, IMAGES, METADATA, SCHEMA, Provider, text_of
 import contextlib
 
-BASE    = "https://api.anthropic.com"
-MODEL   = "claude-sonnet-5-5"
 VERSION = "2023-06-01"
 TOKENS  = 4096
 LIMITED = frozenset({"minimum", "maximum", "minLength", "maxLength", "maxItems"})
+WIRE    = { "temperature": "temperature", "top_p": "top_p", "top_k": "top_k", "stop": "stop_sequences" }
 
 class Claude(Provider):
 
     name         = "claude"
-    model        = MODEL
+    base         = "https://api.anthropic.com"
+    keyed        = True
     capabilities : ClassVar[frozenset[str]] = CORE | {SCHEMA, IMAGES, DOCUMENTS, METADATA}
-
-    def __init__ (
-        self, key: str, model: str | None = None, base: str | None = None, wait: float = 60.0, retries: int = 1,
-        transport: Transport | None = None,
-    ) -> None:
-
-        self.missing(("key", key))
-
-        super().__init__(base or BASE, key, model, wait, retries, transport)
+    tunes        : ClassVar[frozenset[str]] = frozenset({*WIRE, "effort"})
+    efforts      : ClassVar[frozenset[str]] = frozenset({"low", "medium", "high", "xhigh", "max"})
 
     @override
     def headers ( self ) -> dict[str, str]:
@@ -57,21 +49,22 @@ class Claude(Provider):
 
         system  = options.system or next((message.content for message in messages if message.role == "system"), None)
         turns   = [message for message in messages if message.role != "system"]
-        payload: dict[str, Any] = {
+        tuned   = self.tuned(options)
+        output  : dict[str, Any] = { "effort": tuned.pop("effort") } if "effort" in tuned else {}
+        payload : dict[str, Any] = {
             "model": self.pick(options), "max_tokens": options.max_tokens or TOKENS,
             "messages": [{ "role": message.role, "content": self.content(message) } for message in turns],
+            **{ WIRE[name]: list(value) if name == "stop" else value for name, value in tuned.items() },
         }
 
         if system: payload["system"] = system
-        if options.temperature is not None: payload["temperature"] = options.temperature
-        if options.top_p is not None: payload["top_p"] = options.top_p
-        if options.stop: payload["stop_sequences"] = list(options.stop)
         if options.metadata: payload["metadata"] = dict(options.metadata)
         if options.schema is not None and options.native:
-            payload["output_config"] = { "format": { "type": "json_schema", "schema": self.shaped(options.schema) } }
+            output["format"] = { "type": "json_schema", "schema": self.shaped(options.schema) }
+        if output: payload["output_config"] = output
         if stream: payload["stream"] = True
 
-        return payload
+        return { **payload, **options.extra }
 
     @override
     def shaped ( self, schema: Schema ) -> dict[str, Any]:

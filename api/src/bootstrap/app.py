@@ -11,7 +11,7 @@ from core.error import Code, Fault
 from core.exception import exception
 from core.fs import Driver, LocalDriver, Path, S3Driver, S3Options
 from core.http import App, Group, Response, Route, http
-from core.llm import ChatGpt, Claude, DeepSeek, Gemini, Local, llm
+from core.llm import Harness, Memory, llm
 from core.log import log
 from core.mail import LogMailer, Mailer, Mailgun, mail
 from core.queue import Driver as QueueDriver, MemoryDriver, RabbitDriver, SyncDriver, queue
@@ -21,15 +21,13 @@ from core.storage import storage
 from core.token import JwtAdapter, token
 from core.view import view
 from config import (
-    AppConfig, AuthConfig, BroadcastConfig, CacheConfig, DatabaseConfig, DocsConfig, EventConfig, LogConfig, MailConfig,
-    QueueConfig, StorageConfig,
+    AppConfig, AuthConfig, BroadcastConfig, CacheConfig, DatabaseConfig, DocsConfig, EventConfig, LlmConfig, LogConfig,
+    MailConfig, QueueConfig, StorageConfig,
 )
-from app import services
-from app.enums import Table
 from app.exceptions import ExceptionHandler
-from app.utils.dna import passwords
 from routes import api, channel as channels, events as subscriptions, schedule as timetable
 from .boot import Boot
+from .health import Heartbeat
 
 class Application:
 
@@ -39,6 +37,8 @@ class Application:
     def __init__ ( self ) -> None:
 
         env.load(self.root)
+
+        self.heartbeat = Heartbeat(database)
 
     def settings ( self ) -> AppConfig:
 
@@ -84,14 +84,15 @@ class Application:
 
         return config.register("event", EventConfig)
 
+    def thinking ( self ) -> LlmConfig:
+
+        return config.register("llm", LlmConfig)
+
     def boot ( self ) -> Boot:
 
         settings = self.settings()
 
-        return Boot(
-            self.source, database, self.database(), settings.name, self.queues_config(),
-            paths=("/health", f"{settings.prefix}/hello"), primers=(passwords.decoy,),
-        )
+        return Boot(self.source, database, self.database(), settings.name, self.queues_config(), paths=("/health",))
 
     def create ( self ) -> App:
 
@@ -128,7 +129,7 @@ class Application:
 
         version = settings.prefix.strip("/").replace("/", ".") or None
 
-        return Route.group("", [api.heartbeat, Route.group(settings.prefix, api.routes, name=version)])
+        return Route.group("", [self.heartbeat.route(), Route.group(settings.prefix, api.routes, name=version)])
 
     def wire ( self, settings: AppConfig ) -> int:
 
@@ -149,19 +150,18 @@ class Application:
         storage.setup(self.disks(), files.disk, files.pattern, files.max_size, files.allowed, files.blocked)
         queue.setup(self.driver(jobs), tuple(jobs.queues), jobs.tries, jobs.backoff)
         events.setup(self.bus(settings))
-        outbox.setup(Table.OUTBOX)
         queue.durable(outbox)
         events.durable(outbox)
         events.subscribe(subscriptions.listeners)
 
         if caching.driver == "redis": cache.use(RedisStore(caching.url, caching.prefix))
-        services.auth.configure(auth.access_ttl, auth.refresh_ttl)
         socket.setup(Limits(live.connections, live.outbox, live.frame, live.ping, live.drops))
 
-        if live.enabled: broadcast.setup(socket, services.auth.bearer, self.broadcaster())
+        if live.enabled: broadcast.setup(socket, None, self.broadcaster())
         if live.enabled: broadcast.durable(outbox)
 
         self.models()
+        self.heartbeat.register()
 
         return len(timetable.tasks) + len(channels.channels)
 
@@ -173,22 +173,15 @@ class Application:
 
     def models ( self ) -> int:
 
-        wait, retries = env.float("LLM_TIMEOUT", 60.0), env.int("LLM_RETRIES", 1)
-        keys          = { name: env.text(f"LLM_{name}_KEY") for name in ("OPENAI", "ANTHROPIC", "GEMINI", "DEEPSEEK") }
+        settings = self.thinking()
+        models   = settings.models()
+        names    = { model.name for model in models }
+        memory   = Memory(settings.window, settings.compact, settings.keep)
+        chosen   = settings.default if settings.default in names else None
 
-        llm.setup(env.text("LLM_DRIVER", "local"), env.float("LLM_SESSION_TTL", 3600.0))
-        llm.register(Local(env.get("LLM_LOCAL_URL"), env.get("LLM_LOCAL_MODEL"), env.get("LLM_LOCAL_KEY"), wait))
-
-        if keys["OPENAI"]: llm.register(ChatGpt(keys["OPENAI"], *self.llm("OPENAI"), wait, retries))
-        if keys["ANTHROPIC"]: llm.register(Claude(keys["ANTHROPIC"], *self.llm("ANTHROPIC"), wait, retries))
-        if keys["GEMINI"]: llm.register(Gemini(keys["GEMINI"], *self.llm("GEMINI"), wait, retries))
-        if keys["DEEPSEEK"]: llm.register(DeepSeek(keys["DEEPSEEK"], *self.llm("DEEPSEEK"), wait, retries))
+        llm.setup(models, chosen, settings.session_ttl, Harness(timeout=settings.timeout), memory, tasks=settings.tasks)
 
         return len(llm.names())
-
-    def llm ( self, name: str ) -> tuple[str | None, str | None]:
-
-        return env.get(f"LLM_{name}_MODEL"), env.get(f"LLM_{name}_URL")
 
     def ephemeral ( self, settings: AppConfig ) -> str:
 
@@ -245,3 +238,7 @@ class Application:
         if mailing.driver != "mailgun": return LogMailer()
 
         return Mailgun(mailing.mailgun_key, mailing.mailgun_domain, mailing.mailgun_region, wait=mailing.timeout)
+
+def application () -> App:
+
+    return Application().create()

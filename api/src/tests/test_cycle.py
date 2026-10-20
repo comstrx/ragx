@@ -1,132 +1,141 @@
 from dataclasses import dataclass
-from typing import override
+from typing import ClassVar, override
 
-from core.date import UTC, DateTime
+from core.database import Blueprint, Model, Schema, database
+from core.date import DateTime
+from core.error import Code
 from core.event import events
 from core.http import App
 from core.mail import LogMailer
 from core.queue import Queued, queue
-from core.rand import rand
+from core.rand import Uuid, rand
 from core.test import expect, test
-from app.enums import TokenKind
-from app.events import UserRegistered
-from app.jobs import PurgeTokens
-from app.mails import WelcomeMail
-from app.repositories import tokens, users
-from app.utils import cycle
-from routes import schedule as timetable
+from app.utils.cycle import Controller, Event, Job, Listener, Mail, Repository, Resource
 
-voices: list[str] = []
-counted: list[tuple[int, int]] = []
-OLD = DateTime(2020, 1, 1, tzinfo=UTC)
+SUFFIX = rand.hex(3)
+heard: list[str] = []
+done : list[int] = []
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Item(Model):
+
+    table : ClassVar[str] = f"scratch_items_{SUFFIX}"
+
+    id         : Uuid
+    name       : str
+    created_at : DateTime
+    updated_at : DateTime
+    deleted_at : DateTime | None = None
+
+class Items(Repository[Item]):
+
+    model = Item
+
+class Shown(Resource[Item]):
+
+    fields: tuple[str, ...] = ("id", "name", "created_at")
+
+    @override
+    def additional ( self, model: Item ) -> dict[str, object]:
+
+        return { "upper": model.name.upper() }
 
 @dataclass(frozen=True, slots=True)
-class Pinged(cycle.Event):
+class Pinged(Event):
 
     tag : str
 
-class Loud(cycle.Listener, Queued):
+class Loud(Listener, Queued):
 
     @override
     async def handle ( self, event: Pinged ) -> None:
 
-        voices.append(f"loud:{event.tag}")
+        heard.append(f"loud:{event.tag}")
 
-class Quiet(cycle.Listener):
+class Quiet(Listener):
 
     @override
     async def handle ( self, event: Pinged ) -> None:
 
-        voices.append(f"quiet:{event.tag}")
+        heard.append(f"quiet:{event.tag}")
 
-class Counting(cycle.Job):
+class Count(Job, Queued):
+
+    queue = "maintenance"
 
     @override
     async def handle ( self ) -> None:
 
-        counted.append((self.args[0], self.kwargs.get("step", 1)))
+        done.append(int(str(self.args[0])))
 
-class Count(Counting, Queued):
+class Note(Mail, Queued):
 
-    queue = "maintenance"
-
-class CountNow(Counting):
-
-    pass
+    subject = "Note for {name}"
+    html    = "layouts/mail.html"
 
 class TestCycle:
 
-    async def test_events_jobs_and_mails_queue_or_run_inline_by_inheritance (
+    async def test_the_bases_dispatch_queue_mail_page_and_render_without_any_business (
         self, app: App, outbox: LogMailer,
     ) -> None:
 
-        tag  = rand.hex(3)
-        user = await users.create({ "name": f"Job {tag}", "email": f"job-{tag}@unit.test", "password": None })
+        def define ( table: Blueprint ) -> None:
+
+            table.id()
+            table.string("name", 60)
+            table.timestamps()
+            table.soft_deletes()
+
+        async with database.transaction() as session: await Schema(session).create(Item.table, define)
 
         events.listen(Pinged, Loud, Quiet)
 
         try:
 
-            await queue.clear()
-            await queue.clear("maintenance")
+            items = Items()
+            made  = await items.create({ "name": "first" })
+            other = await items.create({ "name": "second" })
+            rows, page = await items.all(1, 1)
 
-            waited = events.until(Pinged)
-            heard  = await Pinged(tag).dispatch()
+            expect((await items.one(made.id)).name).equals("first")
+            expect((await items.update(other.id, { "name": "moved" })).name).equals("moved")
+            expect((await items.delete(made.id), await items.find(made.id), await items.restore(made.id))).equals(
+                (True, None, True),
+            )
+            expect((len(rows), page["total"], await items.count())).equals((1, 2, 2))
 
-            expect(heard).equals(2)
-            expect(voices).equals([f"quiet:{tag}"])
-            expect(waited.done()).truthy()
-            expect(waited.result().tag).equals(tag)
+            await test.rejects(items.one("not-an-id"), Code.BAD_REQUEST, "id")
+
+            shown = Shown().one(made)
+
+            expect(set(shown)).equals({ "id", "name", "created_at", "upper" })
+            expect((shown["id"], shown["upper"], str(shown["created_at"])[-1])).equals((str(made.id), "FIRST", "Z"))
+
+            tag = rand.hex(3)
+
+            expect(await Pinged(tag).dispatch()).equals(2)
+            expect(heard[-1:]).equals([f"quiet:{tag}"])
             expect(await queue.drain()).equals(1)
-            expect(voices).equals([f"quiet:{tag}", f"loud:{tag}"])
-            expect(await Count.dispatch(1, step=2)).some()
-            expect(counted).equals([])
-            expect(await queue.size("maintenance")).equals(1)
-            expect(await queue.drain("maintenance")).equals(1)
-            expect(counted).equals([(1, 2)])
-            expect(await CountNow.dispatch(3)).none()
-            expect(counted).equals([(1, 2), (3, 1)])
+            expect(heard[-2:]).equals([f"quiet:{tag}", f"loud:{tag}"])
+            expect(await Count.dispatch(7)).some()
+            expect((done, await queue.drain("maintenance"), done)).equals(([7], 1, [7]))
 
             outbox.clear()
 
-            sent = await WelcomeMail(name="Queued", app="RagX").to(f"q-{tag}@unit.test").send()
-
-            expect(sent).none()
-            expect(outbox.last()).none()
+            expect(await Note(name="Ann").to("ann@unit.test").send()).none()
             expect(await queue.drain()).equals(1)
+            expect(test.some(outbox.last()).subject).equals("Note for Ann")
 
-            queued = outbox.last()
+            await test.rejects(Note(name="x").send_now(), Code.BAD_REQUEST, "mail.to")
 
-            queued = test.some(queued)
-            expect(queued.subject).equals("Welcome to RagX, Queued")
+            replies = Controller()
 
-            now = await WelcomeMail(name="Direct", app="RagX").to(f"d-{tag}@unit.test").send_now()
+            codes   = [replies.ok({}), replies.created({}), replies.no_content(), replies.page([1], 3, 1, 1)]
 
-            expect(now.subject).equals("Welcome to RagX, Direct")
-            expect(outbox.last()).is_(now)
-
-            await tokens.remember(user, TokenKind.ACCESS, f"old-{tag}", OLD)
-
-            expect(await PurgeTokens.dispatch()).some()
-            expect(await queue.drain("maintenance")).equals(1)
-            expect(await tokens.query().where("hash", f"old-{tag}").count()).equals(0)
-
-            await UserRegistered(str(user.id), user.name, user.email).dispatch()
-
-            expect(await queue.drain()).equals(1)
-
-            welcome = outbox.last()
-
-            welcome = test.some(welcome)
-            expect(welcome.recipients).equals((user.email,))
+            expect([reply.status_code for reply in codes]).equals([200, 201, 204, 200])
 
         finally:
 
             events.forget(Pinged)
 
-            await users.query().where("id", user.id).force_delete()
-
-    def test_the_timetable_purges_tokens_on_one_server ( self ) -> None:
-
-        expect([task.name for task in timetable.tasks]).equals(["tokens.purge"])
-        expect(timetable.tasks[0].exclusive).truthy()
+            async with database.transaction() as session: await Schema(session).drop(Item.table)

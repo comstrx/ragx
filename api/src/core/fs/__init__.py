@@ -1,8 +1,8 @@
-from .archive import Archive
+from .archive import Archive, Bounds
 from .dir import Dir
 from .driver import Driver, Transfer
 from .editor import Editor
-from .extract import Converter, Extracted, Extraction, ExtractPolicy, Part
+from .extract import Extracted, Extraction, ExtractPolicy, Frame, Gap, Lack, Part
 from .file import File
 from .fs import Drivers, Fs
 from .local import LocalDriver
@@ -15,7 +15,7 @@ from pathlib import Path
 fs = Fs()
 
 __all__ = [
-    "Archive", "Change", "Converter", "Dir", "Driver", "Drivers", "Editor", "ExtractPolicy", "Extracted", "Extraction",
-    "File", "Fs", "Kind", "LocalDriver", "Part", "Path", "Pathish", "Paths", "S3Driver", "S3Options", "Scan",
-    "Transfer", "Watch", "fs",
+    "Archive", "Bounds", "Change", "Dir", "Driver", "Drivers", "Editor", "ExtractPolicy", "Extracted", "Extraction",
+    "File", "Frame", "Fs", "Gap", "Kind", "Lack", "LocalDriver", "Part", "Path", "Pathish", "Paths", "S3Driver",
+    "S3Options", "Scan", "Transfer", "Watch", "fs",
 ]

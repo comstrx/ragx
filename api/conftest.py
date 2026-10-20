@@ -1,8 +1,9 @@
 from collections.abc import AsyncIterator
 
+from core.config import env
 from core.http import App
 from core.mail import LogMailer, mail
-from core.test import Client, test
+from core.test import Client, expect, test
 from bootstrap import application
 import inspect, os, pytest
 
@@ -42,6 +43,8 @@ def anyio_backend () -> str:
 async def app () -> AsyncIterator[App]:
 
     built = application()
+
+    expect((env.text("APP_ENV"), env.text("DB_DATABASE"))).equals(("testing", ENVIRONMENT["DB_DATABASE"]))
 
     async with built.lifespan(): yield built
 

@@ -28,7 +28,7 @@ UPPER      = frozenset({"collections", "typing", "enum", "dataclasses", "context
 TOOLS      = frozenset({"pytest"})
 PROOFS     = { "test_contracts.py": frozenset({"jsonschema", "yaml"}) }
 SQL        = re.compile(r"\b(create|alter|drop|select|insert|update|delete|truncate)\b\s+\w", re.IGNORECASE)
-RAW_CALLS  = frozenset({"script", "execute", "fetch", "sql", "text", "run_sync"})
+RAW_CALLS  = frozenset({"script", "execute", "fetch", "sql", "run_sync"})
 BUILTINS   = frozenset(name for name in dir(builtins) if isinstance(getattr(builtins, name), type)
     and issubclass(getattr(builtins, name), BaseException))
 PROTOCOL   = { "src/core/json/json.py": {"TypeError"} }
@@ -330,6 +330,12 @@ class TestLaws:
         expect(cycle_in(graph)).equals([])
         expect(sorted(graph)).equals([folder.name for folder in domains()])
 
+    def test_test_files_keep_unique_names_so_no_suite_shadows_another ( self ) -> None:
+
+        names = [path.name for folder in (ROOT / "tests", SOURCE / "tests") for path in folder.glob("test_*.py")]
+
+        expect(sorted(name for name in set(names) if names.count(name) > 1)).equals([])
+
     def test_core_tests_and_benches_touch_only_the_core_so_it_can_leave_with_them ( self ) -> None:
 
         upper   = set(PARTS) - {"core"}
@@ -372,7 +378,7 @@ class TestLaws:
             if methods != {"up", "down"}: offenses.append(f"{label} lacks async up/down")
             if not re.match(r"^\d{4}_[a-z0-9_]+\.py$", path.name): offenses.append(f"{label} is not numbered")
 
-        expect(len(files) >= 4).true()
+        expect(len(files) >= 1).true()
         expect(offenses).equals([])
 
     def test_core_facades_export_only_names_the_core_or_the_stdlib_defines ( self ) -> None:

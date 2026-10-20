@@ -4,7 +4,7 @@ from core.error import Code, Fault
 from sqlalchemy.schema import CreateColumn, DropTable
 from .blueprint import Blueprint
 from .column import Column, Indexed
-from .session import Session
+from .session import SETTING, Session
 import sqlalchemy as sa
 
 type Define = Callable[[Blueprint], None]
@@ -48,6 +48,8 @@ class Schema:
         for column in blueprint.columns: await self.store(blueprint.table, column)
         for index in blueprint.indexes: await self.add_index(blueprint, index)
 
+        if blueprint.isolation is not None: await self.isolate(blueprint.table, *blueprint.isolation)
+
     async def store ( self, table: str, column: Column ) -> None:
 
         if column.storage is None: return
@@ -86,6 +88,36 @@ class Schema:
         await self.release(blueprint)
 
         if blueprint.note is not None: await self.comment(table, blueprint.note)
+        if blueprint.isolation is not None: await self.isolate(table, *blueprint.isolation)
+
+    async def isolate ( self, table: str, column: str = "tenant_id", setting: str = "app.tenant" ) -> None:
+
+        found = sa.text(
+            "SELECT format_type(atttypid, atttypmod) FROM pg_attribute "
+            "WHERE attrelid = to_regclass(:table) AND attname = :column AND NOT attisdropped",
+        )
+        kind  = await self._session.value(found, { "table": self.quote(table), "column": column })
+
+        self.require(SETTING.fullmatch(setting) is not None, "database.isolate.setting")
+        self.require(kind is not None, "database.isolate.column")
+
+        policy = self.quote(f"{table}_isolation")
+
+        for sql in self._session.adapter().isolate(self.quote(table), self.quote(column), setting, str(kind), policy):
+            await self._session.script(sql)
+
+    async def share ( self, table: str ) -> None:
+
+        for sql in self._session.adapter().share(self.quote(table), self.quote(f"{table}_isolation")):
+            await self._session.script(sql)
+
+    async def isolated ( self, table: str ) -> bool:
+
+        found = sa.text(
+            "SELECT relrowsecurity AND relforcerowsecurity FROM pg_class WHERE oid = to_regclass(:table)",
+        )
+
+        return bool(await self._session.value(found, { "table": self.quote(table) }))
 
     async def constrain ( self, blueprint: Blueprint ) -> None:
 

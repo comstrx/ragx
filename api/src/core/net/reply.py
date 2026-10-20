@@ -90,6 +90,37 @@ class Sse:
 
         return codec.parse(self.data)
 
+class Frames:
+
+    def __init__ ( self ) -> None:
+
+        self._event : dict[str, Any] = {}
+        self._data  : list[str] = []
+
+    def feed ( self, line: str ) -> Sse | None:
+
+        if line == "": return self.flush()
+        if line.startswith(":"): return None
+
+        name, _, value = line.partition(":")
+        value          = value.removeprefix(" ")
+
+        if name == "data": self._data.append(value)
+        elif name in ("event", "id"): self._event[name] = value.strip()
+        elif name == "retry" and value.strip().isdigit(): self._event["retry"] = int(value)
+
+        return None
+
+    def flush ( self ) -> Sse | None:
+
+        event, data = self._event, self._data
+
+        self._event, self._data = {}, []
+
+        if not data: return None
+
+        return Sse("\n".join(data), str(event.get("event", "message")), event.get("id"), event.get("retry"))
+
 def repeatable_of ( method: str, headers: Mapping[str, str] | None ) -> bool:
 
     named = { name.lower() for name in (headers or {}) }

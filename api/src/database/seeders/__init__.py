@@ -1,6 +1,5 @@
-from .roles import RolesSeeder
-from .users import UsersSeeder
+from core.database import Seeder
 
-seeders = (RolesSeeder(), UsersSeeder())
+seeders: tuple[Seeder, ...] = ()
 
-__all__ = ["RolesSeeder", "UsersSeeder", "seeders"]
+__all__ = ["seeders"]

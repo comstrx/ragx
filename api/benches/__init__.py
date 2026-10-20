@@ -2,6 +2,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from statistics import quantiles
 
+from core.http import Group, Route
 from core.log import log
 from core.test import Client, test
 from bootstrap import application
@@ -25,9 +26,13 @@ class Bench:
         return float(os.environ.get(f"BENCH_{label.upper()}_P99_MS", fallback)) * SCALE
 
     @asynccontextmanager
-    async def client ( self ) -> AsyncGenerator[Client]:
+    async def client ( self, *routes: Route | Group ) -> AsyncGenerator[Client]:
 
-        async with test.client(application(), "http://bench", lifespan=True) as client: yield client
+        app = application()
+
+        if routes: app.route(*routes)
+
+        async with test.client(app, "http://bench", lifespan=True) as client: yield client
 
     async def boot ( self ) -> tuple[float, float, float]:
 

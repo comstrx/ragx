@@ -5,7 +5,7 @@ from core.broadcast import broadcast
 from core.cache import cache
 from core.cli import Cli, Command
 from core.config import config, env
-from core.database import database
+from core.database import Cluster, Database, Schema, adapters, database
 from core.error import Code, Fault
 from core.event import events
 from core.json import json
@@ -13,6 +13,7 @@ from core.llm import llm
 from core.log import log
 from core.queue import queue
 from core.schedule import schedule
+from core.test import test
 from core.thread import thread
 from .app import Application
 from .boot import Boot
@@ -54,10 +55,11 @@ class Commands:
 
         return Cli("python -m bootstrap", "The RagX api", Application().settings().version, default="serve").add(
             Command("serve", self.serve, "Serve the api over http", "server"),
-            Command("check", self.check, "Boot the full lifespan once and exit", "server"),
+            Command("check", self.check, "Boot the full lifespan twice and prove nothing leaked", "server"),
             Command("runbook", self.runbook, "Print routes, queues, schedule, events and redacted config", "server"),
             Command("work", self.work, "Run the queue workers and the event consumer", "workers"),
             Command("schedule", self.schedule, "Run the scheduler without workers", "workers"),
+            Command("provision", self.provision, "Create the runtime role, its database and extensions", "database"),
             Command("migrate", self.migrate, "Apply pending migrations", "database"),
             Command("rollback", self.rollback, "Roll back the latest migration batches", "database")
                 .argument("steps", int, 1, "batches to undo")
@@ -88,12 +90,24 @@ class Commands:
 
     async def check ( self ) -> int:
 
+        first, second = [await self.cycle() for _ in range(2)]
+        changed       = [name for name, size in first.items() if second.get(name) != size]
+        leaked        = { name: [f"{first[name]} -> {second.get(name)}"] for name in changed }
+
+        if leaked: raise Fault(Code.INTERNAL, reason="check.leaked", errors=leaked)
+
+        log.info("check.passed", footprint=len(first), tasks=first["tasks"])
+
+        return 0
+
+    async def cycle ( self ) -> dict[str, int]:
+
         application = self.application()
         app         = application.create()
 
-        async with application.boot().lifespan(app): log.info("check.passed")
+        async with application.boot().lifespan(app): pass
 
-        return 0
+        return test.footprint()
 
     async def work ( self ) -> int:
 
@@ -117,6 +131,46 @@ class Commands:
             log.info(f"{role}.started")
 
             await thread.forever()
+
+        return 0
+
+    async def provision ( self ) -> int:
+
+        settings = self.application().database()
+        adapter  = adapters.resolve(settings.driver)
+        options  = adapter.options(settings.sslmode, settings.search_path, "provision")
+        admin    = Database()
+        target   = Database()
+
+        def url ( name: str ) -> str:
+
+            return adapter.url(settings.host, settings.port, name, settings.admin_username, settings.admin_password)
+
+        try:
+
+            await admin.connect(adapter, url(settings.admin_database), 1, 1, settings.timeout, options)
+
+            role = settings.username
+
+            async with admin.transaction() as session: created = await Cluster(session).role(role, settings.password)
+            async with admin.session() as session: made = await Cluster(session).database(settings.database, role)
+
+            await target.connect(adapter, url(settings.database), 1, 1, settings.timeout, options)
+
+            async with target.transaction() as session:
+                for name in settings.extensions: await Schema(session).extension(name)
+
+            async with admin.session() as session: bypasses = await Cluster(session).bypasses(settings.username)
+
+        finally:
+
+            await admin.close()
+            await target.close()
+
+        log.info(
+            "provision.done", role=settings.username, created=created, database=settings.database, made=made,
+            extensions=settings.extensions, bypasses=bypasses,
+        )
 
         return 0
 

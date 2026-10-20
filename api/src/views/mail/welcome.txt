@@ -1,7 +1,0 @@
-Welcome, {{ name }}
-
-Your {{ app }} account is ready. Sign in with your email to start.
-
-If this was not you, ignore this message.
-
--- {{ app }}

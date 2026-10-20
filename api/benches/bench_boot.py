@@ -32,7 +32,7 @@ class BootBench(Bench):
 
                 return (time.perf_counter() - started) * 1000, answer
 
-            hits = await asyncio.gather(*(first("/v1/hello") for _ in range(8)))
+            hits = await asyncio.gather(*(first("/health") for _ in range(8)))
 
         slowest = max(spent for spent, _ in hits)
 

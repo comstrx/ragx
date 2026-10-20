@@ -1,52 +1,110 @@
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator, Iterable, Mapping, Sequence
-from typing import Any, ClassVar, override
+from collections.abc import AsyncGenerator, Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import Any, ClassVar, Literal, override
 
+from core.error import Code, Fault
 from core.json import Schema
+from core.log import log
 from core.net import Remote, Sse, Transport
-from .embedding import Embeddings, Score
-from .message import Chunk, Message, Options, Reply
+from .message import Attachment, Chunk, Message, Options, Reply
+from .result import Embeddings, Score, Transcript
 
-COMPLETE  = "complete"
-STREAM    = "stream"
-MODELS    = "models"
-JSON      = "json"
-SCHEMA    = "schema"
-METADATA  = "metadata"
-IMAGES    = "images"
-DOCUMENTS = "documents"
-TEXTS     = "texts"
-AUDIO     = "audio"
-VIDEO     = "video"
-EMBED     = "embed"
-RANK      = "rank"
-INSTRUCT  = "instruct"
-CORE      = frozenset({COMPLETE, STREAM, MODELS, TEXTS})
-VECTORS   = frozenset({EMBED, MODELS})
+COMPLETE   = "complete"
+STREAM     = "stream"
+MODELS     = "models"
+JSON       = "json"
+SCHEMA     = "schema"
+METADATA   = "metadata"
+IMAGES     = "images"
+DOCUMENTS  = "documents"
+TEXTS      = "texts"
+AUDIO      = "audio"
+VIDEO      = "video"
+EMBED      = "embed"
+RANK       = "rank"
+INSTRUCT   = "instruct"
+TOKENS     = "tokens"
+TRANSCRIBE = "transcribe"
+CORE       = frozenset({COMPLETE, STREAM, MODELS, TEXTS})
+VECTORS    = frozenset({EMBED, MODELS})
+HEARING    = frozenset({TRANSCRIBE, MODELS})
+KNOWN      = frozenset({
+    COMPLETE, STREAM, MODELS, JSON, SCHEMA, METADATA, IMAGES, DOCUMENTS, TEXTS, AUDIO, VIDEO, EMBED, RANK, INSTRUCT,
+    TOKENS, TRANSCRIBE,
+})
+SMALLEST   = 256
+NEEDS      : Mapping[str, tuple[frozenset[str], ...]] = frozendict({
+    "generate"   : (frozenset({COMPLETE}),),
+    "summarize"  : (frozenset({COMPLETE}),),
+    "evaluate"   : (frozenset({COMPLETE}),),
+    "embed"      : (frozenset({EMBED}),),
+    "rank"       : (frozenset({RANK}), frozenset({COMPLETE})),
+    "ocr"        : (frozenset({COMPLETE, IMAGES}),),
+    "describe"   : (frozenset({COMPLETE, IMAGES}),),
+    "transcribe" : (frozenset({TRANSCRIBE}), frozenset({COMPLETE, AUDIO})),
+})
+
+type Task = Literal["generate", "summarize", "evaluate", "embed", "rank", "ocr", "describe", "transcribe"]
+
+@dataclass(frozen=True, slots=True)
+class Model:
+
+    model   : str = ""
+    url     : str = ""
+    key     : str = field(default="", repr=False)
+    name    : str = ""
+    driver  : str = ""
+    tasks   : frozenset[str] = frozenset()
+    serves  : frozenset[str] | None = None
+    headers : Mapping[str, str] = field(default_factory=frozendict, repr=False)
+    timeout : float = 60.0
+    retries : int = 1
+    window  : int | None = None
+    options : Options = field(default_factory=Options)
+
+    def __post_init__ ( self ) -> None:
+
+        unknown = sorted(self.tasks - NEEDS.keys())
+        foreign = sorted((self.serves or frozenset()) - KNOWN)
+
+        if unknown: raise Fault(Code.INTERNAL, reason=f"llm.task.{unknown[0]}")
+        if foreign: raise Fault(Code.INTERNAL, reason=f"llm.capability.{foreign[0]}")
+        if self.timeout <= 0 or self.retries < 0: raise Fault(Code.INTERNAL, reason="llm.model.limits")
+        if self.window is not None and self.window < SMALLEST: raise Fault(Code.INTERNAL, reason="llm.model.window")
 
 class Provider(Remote, ABC):
 
     family       : ClassVar[str] = "llm"
     capabilities : ClassVar[frozenset[str]] = CORE
+    tunes        : ClassVar[frozenset[str]] = frozenset()
+    efforts      : ClassVar[frozenset[str]] = frozenset()
+    base         : ClassVar[str] = ""
+    keyed        : ClassVar[bool] = False
     model        : str = ""
 
-    def __init__ (
-        self, base: str, key: str = "", model: str | None = None, wait: float = 60.0, retries: int = 1,
-        transport: Transport | None = None, serves: Iterable[str] | None = None, name: str | None = None,
-    ) -> None:
+    def __init__ ( self, spec: Model, transport: Transport | None = None ) -> None:
 
-        super().__init__(base, wait, retries, transport)
+        if spec.name: self.name = spec.name
+        if self.keyed: self.missing(("key", spec.key))
 
-        self._key    = key
-        self._serves = frozenset(serves) if serves is not None else None
+        self.missing(("url", spec.url or self.base), ("model", spec.model))
 
-        if model: self.model = model
-        if name: self.name = name
+        super().__init__(spec.url or self.base, spec.timeout, spec.retries, transport, spec.headers)
+
+        self.spec    = spec
+        self.model   = spec.model
+        self._key    = spec.key
+        self._serves = spec.serves
 
     @override
     def abilities ( self ) -> frozenset[str]:
 
         return self._serves if self._serves is not None else type(self).capabilities
+
+    def able ( self, task: str ) -> bool:
+
+        return any(need <= self.abilities() for need in NEEDS.get(task, ()))
 
     @override
     def headers ( self ) -> dict[str, str]:
@@ -61,6 +119,14 @@ class Provider(Remote, ABC):
 
         return options.model or self.model
 
+    def tuned ( self, options: Options ) -> dict[str, Any]:
+
+        found = { name: value for name, value in options.tuning().items() if name in self.tunes }
+
+        if "effort" in found and found["effort"] not in self.efforts: found.pop("effort")
+
+        return found
+
     def check ( self, messages: Sequence[Message], options: Options ) -> None:
 
         if options.json: self.require(JSON)
@@ -70,6 +136,10 @@ class Provider(Remote, ABC):
         for message in messages:
 
             for attachment in message.attachments: self.require(attachment.kind())
+
+        ignored = sorted(options.tuning().keys() - self.tuned(options).keys())
+
+        if ignored: log.debug("llm.options.ignored", provider=self.name, options=ignored)
 
     async def complete ( self, messages: Sequence[Message], options: Options ) -> Reply:
 
@@ -97,6 +167,20 @@ class Provider(Remote, ABC):
 
         return await self.scores(query, documents)
 
+    async def count ( self, messages: Sequence[Message], options: Options ) -> int:
+
+        self.require(TOKENS)
+
+        return await self.tally(messages, options)
+
+    async def transcribe ( self, media: Attachment, language: str | None = None ) -> Transcript:
+
+        self.require(TRANSCRIBE)
+
+        if not media.mime.startswith(("audio/", "video/")): raise Fault(Code.VALIDATION, reason="llm.transcribe.media")
+
+        return await self.listen(media, language)
+
     @abstractmethod
     async def answer ( self, messages: Sequence[Message], options: Options ) -> Reply: ...
 
@@ -113,6 +197,14 @@ class Provider(Remote, ABC):
     async def scores ( self, query: str, documents: Sequence[str] ) -> tuple[Score, ...]:
 
         raise self.unsupported(RANK)
+
+    async def tally ( self, messages: Sequence[Message], options: Options ) -> int:
+
+        raise self.unsupported(TOKENS)
+
+    async def listen ( self, media: Attachment, language: str | None ) -> Transcript:
+
+        raise self.unsupported(TRANSCRIBE)
 
     def shaped ( self, schema: Schema ) -> dict[str, Any]:
 
@@ -133,7 +225,10 @@ class Provider(Remote, ABC):
     @override
     def describe ( self ) -> dict[str, Any]:
 
-        return { **super().describe(), "model": self.model, "keyed": bool(self._key) }
+        return {
+            **super().describe(), "model": self.model, "keyed": bool(self._key), "tasks": sorted(self.spec.tasks),
+            "tunes": sorted(self.tunes), "efforts": sorted(self.efforts),
+        }
 
 def text_of ( value: object ) -> str:
 

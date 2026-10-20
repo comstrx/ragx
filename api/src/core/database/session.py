@@ -5,20 +5,41 @@ from urllib.parse import quote
 from core.error import Code, Fault
 from sqlalchemy import text
 from sqlalchemy.engine import Dialect
-from sqlalchemy.exc import DBAPIError, InterfaceError, OperationalError, SQLAlchemyError, TimeoutError as PoolTimeout
+from sqlalchemy.exc import (
+    DBAPIError, DisconnectionError, InterfaceError, OperationalError, SQLAlchemyError, TimeoutError as PoolTimeout,
+)
 from sqlalchemy.ext.asyncio import AsyncConnection
 from sqlalchemy.sql import Executable
-import asyncio
+import asyncio, re, time
 
 type Row = dict[str, Any]
 type Statement = Executable
 type Params = Mapping[str, object] | None
 CONFLICT    = ("23505",)
-REFERENCE   = ("23503",)
+REFERENCE   = ("23503", "23001")
 VALIDATION  = ("23502", "23514", "22")
 CONNECTION  = ("08", "53", "57P")
+PRIVILEGE   = "42501"
+SETTING     = re.compile(r"[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*")
 SERIAL      = "40001"
 DEADLOCK    = "40P01"
+FAILURES    = (SQLAlchemyError, OSError, TimeoutError)
+
+def checkout ( dialect: Dialect, idle: float ) -> Callable[[Any, Any, Any], None]:
+
+    def pinged ( connection: Any, record: Any, _proxy: Any ) -> None:
+
+        now  = time.monotonic()
+        last = record.info.get("used", now)
+
+        record.info["used"] = now
+
+        if now - last < idle: return
+
+        try: dialect.do_ping(connection)
+        except (dialect.loaded_dbapi.Error, *FAILURES) as error: raise DisconnectionError from error
+
+    return pinged
 
 class Adapter(Protocol):
 
@@ -31,6 +52,12 @@ class Adapter(Protocol):
     def lock ( self, key: int ) -> str: ...
 
     def truncate ( self, table: str ) -> str: ...
+
+    def isolate ( self, table: str, column: str, setting: str, kind: str, policy: str ) -> list[str]: ...
+
+    def share ( self, table: str, policy: str ) -> list[str]: ...
+
+    def bind ( self, count: int ) -> str: ...
 
 class PostgresAdapter:
 
@@ -45,7 +72,7 @@ class PostgresAdapter:
 
     def options ( self, sslmode: str, search_path: str, application: str ) -> dict[str, Any]:
 
-        settings = { "application_name": application }
+        settings = { "application_name": application, "timezone": "UTC" }
         if search_path: settings["search_path"] = search_path
 
         ssl: bool | None = { "disable": False, "allow": None, "prefer": None }.get(sslmode, True)
@@ -59,6 +86,27 @@ class PostgresAdapter:
     def truncate ( self, table: str ) -> str:
 
         return f'TRUNCATE TABLE "{table}" RESTART IDENTITY CASCADE'
+
+    def isolate ( self, table: str, column: str, setting: str, kind: str, policy: str ) -> list[str]:
+
+        owned = f"{column} = NULLIF(current_setting('{setting}', true), '')::{kind}"
+
+        return [
+            f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY", f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY",
+            f"DROP POLICY IF EXISTS {policy} ON {table}",
+            f"CREATE POLICY {policy} ON {table} USING ({owned}) WITH CHECK ({owned})",
+        ]
+
+    def share ( self, table: str, policy: str ) -> list[str]:
+
+        return [
+            f"DROP POLICY IF EXISTS {policy} ON {table}", f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY",
+            f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY",
+        ]
+
+    def bind ( self, count: int ) -> str:
+
+        return "SELECT " + ", ".join(f"set_config(:name{index}, :value{index}, true)" for index in range(count))
 
 class Adapters:
 
@@ -141,6 +189,7 @@ class Translate:
         if state == DEADLOCK: return Fault(Code.CONFLICT, reason="database.deadlock")
         if state.startswith(CONFLICT): return Fault(Code.CONFLICT, reason=name)
         if state.startswith(REFERENCE): return Fault(Code.BAD_REQUEST, reason=name)
+        if state == PRIVILEGE: return Fault(Code.FORBIDDEN, reason="database.privilege")
         if state.startswith(VALIDATION): return Fault(Code.VALIDATION, reason=name, errors=self._errors_(error))
         if state.startswith(CONNECTION) or error.connection_invalidated:
             return Fault(Code.UNAVAILABLE, reason="database")
@@ -236,3 +285,12 @@ class Session:
     async def truncate ( self, table: str ) -> None:
 
         await self.script(self._adapter.truncate(table))
+
+    async def bind ( self, settings: Mapping[str, str] ) -> None:
+
+        named: dict[str, object] = {}
+
+        for index, (name, value) in enumerate(settings.items()):
+            named |= { f"name{index}": name, f"value{index}": value }
+
+        if named: await self.script(self._adapter.bind(len(settings)), named)
