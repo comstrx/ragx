@@ -2,6 +2,12 @@
 
 Every release of RagX, one section per tag, one block per part.
 
+## v1.2.4 — 2026-10-21
+
+### infra
+
+- Infra 0.2.2. The HAProxy Runtime API reply is refused only when its first line is an error. `show stat` carries each server's last health-check reason, so a replica answering its health path with a 404 (`File not found`) made every stats read look like a refusal: readiness counts, candidate probes and slot retirement failed, and the v1.2.3 deploy stopped with a misleading `Slot green still serves sessions`.
+
 ## v1.2.3 — 2026-10-21
 
 ### api

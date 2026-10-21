@@ -263,14 +263,14 @@ Images are built with `image build api|web TAG [SPEC]`; the release pipeline pub
 
 ## Verification
 
-The gate is `bash src/main.sh test --check`: bash syntax, ShellCheck at the pinned version over the bundle, the laws above, and 68 isolated tests. The tests cover:
+The gate is `bash src/main.sh test --check`: bash syntax, ShellCheck at the pinned version over the bundle, the laws above, and 69 isolated tests. The tests cover:
 
 - literal data, refusals and grammars; the TOML subset (trailing comments, dotted and duplicate tables, leading zeros, escapes) and keys kept in file order; every embedded asset equal to its file, with or without a final newline;
 - precedence, schema and validation; the env file chain, `ENV_FILE` plain and base64, `parse-content`, and `GITHUB_TOKEN` filling the GHCR and GitHub credentials while staying transient;
 - redaction in every output and secrets kept out of argv for SSH, curl, git, the `aws-cli` container (`s3://` and `gs://`) and Docker; SSH material given as content or base64, the `auto` method and refused paths;
 - atomic failures, locks and state;
 - bundle determinism and release isolation;
-- render immutability, edge protocols and stats parsing; relay binds on `unix@` sockets with no published port and no QUIC, firewall ports and protocols per mode, and the trusted-proxy `set-src` rules from literal and fetched ranges, the recorded fallback and a changed source;
+- render immutability, edge protocols and stats parsing, with Runtime API refusals read from the first reply line only, so a health-check reason such as `File not found` inside `show stat` stays data; relay binds on `unix@` sockets with no published port and no QUIC, firewall ports and protocols per mode, and the trusted-proxy `set-src` rules from literal and fetched ranges, the recorded fallback and a changed source;
 - GitOps payloads, export relocation and the control-plane CA and API key;
 - application env files passed through byte for byte, mounted read-only and pinned by digest, unsafe variable names refused unevaluated, staged beside but never inside the infrastructure settings, and reconcile waiting for a stale server env;
 - release names derived from `VERSION` and the settings revision, kept by operational changes, moved by env and pinned changes, and overridden by an explicit `RELEASE`;
