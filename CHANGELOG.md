@@ -2,6 +2,12 @@
 
 Every release of RagX, one section per tag, one block per part.
 
+## v1.2.3 — 2026-10-21
+
+### api
+
+- A cancelled RabbitMQ `get` lets its in-flight `basic.get` finish under a shield and returns a message that arrived late to the queue before the cancellation propagates. Cancelling the RPC used to make aiormq close the broker's shared channel, so stopping workers mid-pull broke the next operation on the same broker (the v1.2.2 release gate failed on a purge after `jobs.stop()`) and stranded the fetched message until the channel closed. A test cancels a pull at six points around the RPC on every broker and proves the broker stays usable and the message stays queued.
+
 ## v1.2.2 — 2026-10-21
 
 ### api
