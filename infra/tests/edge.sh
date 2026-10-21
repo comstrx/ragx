@@ -191,6 +191,32 @@ test-edge-stats () {
     expect-fail haproxy-field "${stats}" api_blue replica9 4
 
 }
+test-edge-runtime () {
+
+    local stats=""
+
+    mkdir -p "${TMPDIR}/bin"
+    printf '%s\n' '#!/usr/bin/env bash' 'cat > /dev/null' 'cat "${TMPDIR}/runtime.reply"' > "${TMPDIR}/bin/docker"
+    chmod 700 "${TMPDIR}/bin/docker"
+    PATH="${TMPDIR}/bin:${PATH}"
+
+    {
+        printf '# pxname,svname,qcur,qmax,scur\n'
+        printf 'api_green,replica1,0,0,0,0,128,,,,,,,,,,,DOWN,,,,,,,,,,,,,,,,,,,L7STS,404,,,,,,,,,,,,,,,,,,-1,File not found,,,,,,,,Layer7 wrong status\n'
+        printf 'api_green,BACKEND,0,0,0,0,128,,,,,,,,,,,DOWN\n'
+    } > "${TMPDIR}/runtime.reply"
+
+    stats="$(haproxy-stats edge-container)"
+    expect-contains "${stats}" 'File not found' 'a health check reason inside the stats is data, not a refusal'
+    haproxy-idle edge-container api_green
+
+    printf 'No such server.\n' > "${TMPDIR}/runtime.reply"
+    expect-error 'HAProxy refused: set' haproxy-state edge-container api_green replica1 drain
+
+    printf "Unknown command: 'shw stat'\n" > "${TMPDIR}/runtime.reply"
+    expect-error 'HAProxy refused: show' haproxy-stats edge-container
+
+}
 test-edge-limits () {
 
     local directory="${TMPDIR}/edge" text=""

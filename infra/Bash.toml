@@ -1,5 +1,5 @@
 name = "ragx-infra"
-version = "0.2.1"
+version = "0.2.2"
 stack = "native"
 
 [paths]

@@ -213,7 +213,7 @@ haproxy-runtime () {
     [[ -n "${container}" ]] || { err "Edge container not running"; return; }
     output="$(printf '%s\n' "${instruction}" | docker exec -i "${container}" nc -w 3 127.0.0.1 9999)" || { err "HAProxy runtime API unreachable"; return; }
 
-    case "${output}" in
+    case "${output%%$'\n'*}" in
         *'Unknown command'*|*'not found'*|*"Can't "*|*'Permission denied'*|*'No such'*) err "HAProxy refused: ${instruction%% *}"; return ;;
     esac
 
