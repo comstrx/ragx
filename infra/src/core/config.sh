@@ -46,14 +46,15 @@ cfg-load () {
 
     local file="${1}" policy="${2:-any}" origin="${3:-file}" key=""
     local -A parsed=()
+    local -a order=()
 
-    parse-pairs parsed "${file}" || return
+    parse-pairs parsed "${file}" env order || return
 
-    for key in "${!parsed[@]}"; do
+    for key in "${order[@]}"; do
         [[ "${policy}" != known ]] || cfg-has "${key}" || { err "Unknown setting in ${file}: ${key}"; return; }
     done
 
-    for key in "${!parsed[@]}"; do
+    for key in "${order[@]}"; do
         cfg-set "${key}" "${parsed[${key}]}" "${origin}"
     done
 

@@ -7,6 +7,9 @@ fixture-tree () {
     printf 'PUBLIC=safe\n' > "${root}/.env.example"
     printf 'SECRET=bundle-sentinel\n' > "${root}/.env.local"
     printf 'asset\n' > "${root}/src/template/value"
+    printf 'no newline' > "${root}/src/template/raw"
+    printf 'blank\n\n' > "${root}/src/template/blank"
+    : > "${root}/src/template/empty"
     printf '%s\n' 'declare -gi LOADED="${LOADED:-0}"' 'LOADED+=1' > "${root}/src/core/once.sh"
     printf 'exit 99\n' > "${root}/src/core/unused.sh"
     printf '%s\n' 'err () { printf "%s\n" "$*" >&2; return 1; }' 'out () { printf "%s\n" "$@"; }' \
@@ -33,6 +36,11 @@ test-bundle-deterministic () {
     expect-absent "${text}" bundle-sentinel
     expect-absent "${text}" test-fixture
     expect-contains "${text}" "'src/template/value') cat <<'ASSET_"
+
+    for name in value raw blank empty; do
+        expect-equal "$(bash -c 'source <(sed "\$d" "$1"); embedded-asset "$2" | od -An -c' _ "${root}/out/one" "src/template/${name}")" \
+            "$(od -An -c < "${root}/src/template/${name}")" "embedded ${name} keeps its exact bytes"
+    done
 
     bundle-create "${root}" "${root}/out/dev" dev src specs src/template src/main.sh bootstrap/index.sh
     expect-contains "$(fs-read "${root}/out/dev")" test-fixture

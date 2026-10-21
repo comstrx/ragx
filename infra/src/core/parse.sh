@@ -149,7 +149,8 @@ parse-string () {
                 t)              _decoded+=$'\t' ;;
                 b)              _decoded+=$'\b' ;;
                 f)              _decoded+=$'\f' ;;
-                \\|\"|\'|\$)    _decoded+="${char}" ;;
+                \\|\")          _decoded+="${char}" ;;
+                \'|\$)          [[ "${kind}" == env ]] || return 1; _decoded+="${char}" ;;
                 *)              return 1 ;;
             esac
 
@@ -185,8 +186,9 @@ parse-string () {
 parse-pairs () {
 
     local -n _pairs="${1}"
-    local file="${2}" kind="${3:-env}" line="" key="" value="" decoded="" section="" pending="" open=false number=0
-    local -A seen=()
+    local file="${2}" kind="${3:-env}" _sequence="${4:-}" line="" key="" value="" decoded="" section="" pending="" open=false number=0
+    local -A seen=() sections=()
+    local -a _listed=()
 
     [[ -f "${file}" && ! -L "${file}" ]] || { err "Regular file required: ${file}"; return; }
     (( $(wc -c < "${file}") <= 1048576 )) || { err "Configuration exceeds 1 MiB: ${file}"; return; }
@@ -207,7 +209,10 @@ parse-pairs () {
             parse-trim line "${line}"
             [[ -n "${line}" && "${line}" != \#* ]] || continue
 
-            if [[ "${kind}" == toml && "${line}" =~ ^\[([a-z][a-z0-9_.-]*)\]$ ]]; then
+            if [[ "${kind}" == toml && "${line}" == \[* ]]; then
+                [[ "${line}" =~ ^\[[[:space:]]*([a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*)[[:space:]]*\][[:space:]]*(#.*)?$ ]] || { err "Invalid table at ${file}:${number}"; return; }
+                [[ -z "${sections[${BASH_REMATCH[1]}]+x}" ]] || { err "Duplicate table: ${BASH_REMATCH[1]}"; return; }
+                sections["${BASH_REMATCH[1]}"]=1
                 section="${BASH_REMATCH[1]}."
                 continue
             fi
@@ -221,10 +226,10 @@ parse-pairs () {
             else
                 [[ "${key}" =~ ^[a-z][a-z0-9_-]*$ ]] || { err "Invalid key at ${file}:${number}"; return; }
                 key="${section}${key}"
-                [[ "${value}" == \"* || "${value}" == \'* || "${value}" =~ ^[0-9]+$ || "${value}" == true || "${value}" == false ]] || {
-                    err "Unsupported manifest value type: ${key}"
-                    return
-                }
+                if [[ "${value}" != \"* && "${value}" != \'* ]]; then
+                    parse-trim value "${value%%#*}"
+                    [[ "${value}" =~ ^(0|[1-9][0-9]{0,17})$ || "${value}" == true || "${value}" == false ]] || { err "Unsupported manifest value type: ${key}"; return; }
+                fi
             fi
 
         fi
@@ -239,11 +244,21 @@ parse-pairs () {
 
         seen["${key}"]=1
         _pairs["${key}"]="${decoded}"
+        _listed+=( "${key}" )
         pending=""
 
     done < "${file}"
 
     [[ -z "${pending}" ]] || { err "Unterminated value: ${pending}"; return; }
+    [[ -z "${_sequence}" ]] || parse-order "${_sequence}" "${_listed[@]}"
+
+}
+parse-order () {
+
+    local -n _ordered="${1}"
+
+    shift
+    _ordered=( "$@" )
 
 }
 

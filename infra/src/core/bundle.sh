@@ -48,9 +48,15 @@ bundle-assets () {
         bundle-relative "${relative}" || { err "Invalid asset name: ${relative}"; return; }
         digest="$(fs-hash "${file}")" || return
 
-        printf "        '%s') cat <<'ASSET_%s'\n" "${relative}" "${digest}"
-        fs-read "${file}" || return
-        printf '\nASSET_%s\n        ;;\n' "${digest}"
+        if [[ -s "${file}" && -n "$(tail -c 1 -- "${file}")" ]]; then
+            printf "        '%s') printf '%%s' \"\$(cat <<'ASSET_%s'\n" "${relative}" "${digest}"
+            fs-read "${file}" || return
+            printf '\nASSET_%s\n)\"\n        ;;\n' "${digest}"
+        else
+            printf "        '%s') cat <<'ASSET_%s'\n" "${relative}" "${digest}"
+            fs-read "${file}" || return
+            printf 'ASSET_%s\n        ;;\n' "${digest}"
+        fi
 
     done
 

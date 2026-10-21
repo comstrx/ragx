@@ -72,6 +72,37 @@ test-parse-manifest () {
     expect-error 'Unsupported manifest value type' parse-pairs parsed "${file}" toml
 
 }
+test-parse-manifest-grammar () {
+
+    local file="${TMPDIR}/Bash.toml"
+    local -A parsed=()
+    local -a order=()
+
+    printf '%s\n' 'zeta = 0 # inline' 'alpha = true   # flag' '[ paths ] # table' 'entry = "a # b" # kept' '[tools.extra]' 'level = 12' > "${file}"
+    parse-pairs parsed "${file}" toml order
+
+    expect-equal "${parsed[zeta]}" 0
+    expect-equal "${parsed[alpha]}" true
+    expect-equal "${parsed[paths.entry]}" 'a # b'
+    expect-equal "${parsed[tools.extra.level]}" 12
+    expect-equal "${order[*]}" 'zeta alpha paths.entry tools.extra.level' 'keys keep the file order'
+
+    printf '%s\n' '[paths]' 'a = "x"' '[paths]' 'b = "y"' > "${file}"
+    expect-error 'Duplicate table: paths' parse-pairs parsed "${file}" toml
+
+    printf '%s\n' 'count = 007' > "${file}"
+    expect-error 'Unsupported manifest value type: count' parse-pairs parsed "${file}" toml
+
+    printf '%s\n' "name = \"it\\'s\"" > "${file}"
+    expect-error 'Invalid value for name' parse-pairs parsed "${file}" toml
+
+    printf '%s\n' '[[array]]' > "${file}"
+    expect-error 'Invalid table' parse-pairs parsed "${file}" toml
+
+    printf '%s\n' '[paths..x]' > "${file}"
+    expect-error 'Invalid table' parse-pairs parsed "${file}" toml
+
+}
 test-parse-grammars () {
 
     local image="" digest=""
