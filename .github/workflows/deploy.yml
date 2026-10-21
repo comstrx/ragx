@@ -105,7 +105,7 @@ jobs:
         run: git merge-base --is-ancestor HEAD origin/main || { echo "::error::${TAG} is not on main"; exit 1; }
 
   images:
-    name: images ${{ needs.plan.outputs.tag }}
+    name: images
     needs: plan
     if: needs.plan.outputs.action == 'deploy'
     runs-on: ubuntu-latest
