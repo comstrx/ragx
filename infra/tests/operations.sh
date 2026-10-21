@@ -466,6 +466,11 @@ remote="${!#}"
 [[ "${mode}" != down ]] || exit 255
 [[ "${mode}" != skip || "${remote}" != *" 'start' "* ]] || exit 255
 [[ "${mode}" != flaky || "${calls}" != 1 ]] || exit 255
+if [[ "${mode}" == cut && "${remote}" =~ \'start\'\ \'app\'\ \'\.infra/jobs\'\ \'([^\']+)\' ]]; then
+    mkdir -p "${HOME}/app/.infra/jobs"
+    : > "${HOME}/app/.infra/jobs/${BASH_REMATCH[1]}.claim"
+    exit 255
+fi
 if [[ "${mode}" == drop && "${calls}" == 1 ]]; then
     bash -c "${remote}" > /dev/null 2>&1 &
     /bin/sleep 1
@@ -527,6 +532,13 @@ SSH
     expect-equal "${status}" 3 "a start lost before the job existed runs it once again: ${output}"
     expect-contains "${output}" 'Connection lost before remote job'
     expect-equal "$(grep -c 'step flaky' <<< "${output}")" 1 'the job runs exactly once'
+
+    printf cut > "${TMPDIR}/mode"
+    rm -f -- "${TMPDIR}/calls"
+    output="$(native-server-run cut 2>&1)" && err "A start cut off after its claim was accepted"
+    expect-contains "${output}" 'was claimed but its start was cut off, so it may be running'
+    expect-absent "${output}" 'starting it again' 'a claimed job is never started twice'
+    expect-equal "$(fs-read "${TMPDIR}/calls")" 2 'one start and one status query'
 
     printf skip > "${TMPDIR}/mode"
     rm -f -- "${TMPDIR}/calls"

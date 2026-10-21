@@ -96,6 +96,7 @@ native-server-run () {
                 (( status != 255 )) || lost=true
                 continue
             ;;
+            68) err "Remote job ${id} was claimed but its start was cut off, so it may be running; read ${directory}/${jobs}/${id}.out before running it again"; return ;;
             69) err "Remote job ${id} ended without a status; read ${directory}/${jobs}/${id}.err"; return ;;
         esac
 

@@ -150,8 +150,8 @@ base=$jobs/$id
 case $action in
     start)
         mkdir -p -- "$jobs" && chmod 700 "./$jobs" || exit 73
-        [[ ! -e "$base.pid" ]] || exit 65
         find "$jobs" -type f -mtime +14 -delete 2>/dev/null
+        ( set -o noclobber; : > "$base.claim" ) 2>/dev/null || exit 65
         while IFS= read -r -d '' pair; do export "$pair"; done
         : > "$base.out"
         : > "$base.err"
@@ -161,7 +161,7 @@ case $action in
         printf '%s\n' "$!" > "$base.pid"
         ;;
     follow|status)
-        [[ -f "$base.pid" ]] || exit 66
+        [[ -f "$base.pid" ]] || { [[ ! -f "$base.claim" ]] || exit 68; exit 66; }
         ;;
     *)
         exit 64
