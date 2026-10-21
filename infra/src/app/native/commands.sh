@@ -13,7 +13,7 @@ STACK_COMMANDS=(
     'scale|Operate|scale|Apply the replica counts, draining connections before removing a replica'
     'start|Operate|start|Start the data services, the current release and the edge'
     'stop|Operate|stop --force|Stop the edge and the current release; the data services keep running'
-    'uninstall|Operate|uninstall --force|Remove the edge, application and data containers; volumes stay'
+    'uninstall|Operate|uninstall --force|Remove the edge, both release slots, the monitoring and the data containers; volumes stay'
     'monitor|Operate|monitor|Check health, write the platform metrics and notify on a state change'
     'notify|Operate|notify MESSAGE [--channel NAME]|Send a message to every configured channel, or to one'
     'edge|Edge and certificates|edge apply|Apply edge changes after validation, restoring the previous edge on failure'

@@ -1,4 +1,5 @@
 source-include module/docker.sh || return
+source-include module/monitoring.sh || return
 
 native-rollback () {
 
@@ -158,11 +159,21 @@ native-uninstall () {
 }
 native-uninstall-locked () {
 
+    local root="${CONFIG[STATE_ROOT]}" slot="" release="" removed=""
+
     native-compose-edge down || return
-    native-compose-app "${CONFIG[RELEASE]}" --profile worker --profile scheduler down || return
+
+    for slot in blue green; do
+        release="$(state-read "${root}" "slot-${slot}" 2>/dev/null)" || release=""
+        [[ -n "${release}" ]] || continue
+        native-compose-app "${release}" --profile worker --profile scheduler down || return
+        removed+="${removed:+, }${release}"
+    done
+
+    [[ ! -f "${root}/monitor/monitor.yaml" ]] || monitoring-compose "${root}/monitor" down --remove-orphans || return
     native-compose-data down || return
 
-    native-announce service.uninstalled "the edge, ${CONFIG[RELEASE]} and the data containers were removed by an operator; data volumes stay"
+    native-announce service.uninstalled "the edge, the releases ${removed:-none}, the monitoring and the data containers were removed by an operator; data volumes stay"
     ui-result uninstall true safe
 
 }

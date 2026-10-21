@@ -415,6 +415,34 @@ test-operations-rejected () {
     expect-equal "$(fs-read "${TMPDIR}/rollback")" 'superseded by r0'
 
 }
+test-operations-uninstall () {
+
+    local root="" calls=""
+
+    fixture-release
+    config-derive
+    root="${CONFIG[STATE_ROOT]}"
+
+    mkdir -p "${TMPDIR}/bin" "${root}/monitor"
+    printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$*" >> "${TMPDIR}/docker.calls"' > "${TMPDIR}/bin/docker"
+    chmod 700 "${TMPDIR}/bin/docker"
+    PATH="${TMPDIR}/bin:${PATH}"
+
+    : > "${root}/monitor/monitor.yaml"
+    state-write "${root}" slot-blue r1
+    state-write "${root}" slot-green r2
+
+    native-uninstall-locked > /dev/null
+    calls="$(fs-read "${TMPDIR}/docker.calls")"
+
+    expect-contains "${calls}" '--project-name shop-edge -f' 'the edge goes down'
+    expect-contains "${calls}" '--project-name shop-r1 -f' 'the blue release goes down'
+    expect-contains "${calls}" '--project-name shop-r2 -f' 'the green release kept for rollback goes down too'
+    expect-contains "${calls}" '--project-name shop-monitor -f' 'the monitoring goes down'
+    expect-contains "${calls}" '--project-name shop-data -f' 'the data services go down'
+    expect-equal "$(grep -c ' down' <<< "${calls}")" 5
+
+}
 test-operations-remote-job () {
 
     local output="" status=0
