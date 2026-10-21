@@ -2,7 +2,7 @@
 
 Every release of RagX, one section per tag, one block per part.
 
-## Unreleased
+## v1.1.1 — 2026-10-21
 
 ### web
 
