@@ -2,6 +2,12 @@
 
 Every release of RagX, one section per tag, one block per part.
 
+## v1.2.1 — 2026-10-21
+
+### infra
+
+- Infra 0.2.1. The API image upgrades its Debian packages at build time, as the web image already does with Alpine, so an OS security fix ships before the pinned base image is rebuilt upstream: the v1.2.0 deploy was stopped by Trivy on `ca-certificates` (DSA-6572-1, the emSign roots), which the newest `python:3.15-slim` still carried.
+
 ## v1.2.0 — 2026-10-21
 
 ### infra
