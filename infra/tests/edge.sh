@@ -213,7 +213,7 @@ test-edge-runtime () {
     printf 'No such server.\n' > "${TMPDIR}/runtime.reply"
     expect-error 'HAProxy refused: set' haproxy-state edge-container api_green replica1 drain
 
-    printf "Unknown command: 'shw stat'\n" > "${TMPDIR}/runtime.reply"
+    printf "Unknown command: 'show stats'\n" > "${TMPDIR}/runtime.reply"
     expect-error 'HAProxy refused: show' haproxy-stats edge-container
 
 }
