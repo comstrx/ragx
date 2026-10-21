@@ -46,7 +46,7 @@ Retries sit where a transient failure would otherwise fail an operation, and onl
 - image pulls and registry logins: three attempts, 5 and 10 seconds apart;
 - image pushes: three attempts, 20 and 40 seconds apart, which covers GHCR granting a brand-new package to the repository after its first push;
 - `server stage` uploads: three attempts (they are atomic and checksum-verified);
-- a `server run` start lost before the job existed: started again up to three times; a connection lost after the start follows the job instead of starting it twice;
+- a `server run` start that never reached the server: started again up to three times. The server claims each job id atomically before launching it, so a start cut off after its claim is reported as possibly running and never repeated, and a connection lost after the start follows the job;
 - HTTPS reads (`GET`, downloads): curl `--retry 3 --retry-connrefused`; writes to remote APIs are never repeated blindly;
 - offsite backups: aws-cli standard retry mode with five attempts, which never repeats an authentication failure;
 - notifications: `NOTIFY_RETRIES`.
@@ -275,7 +275,7 @@ The gate is `bash src/main.sh test --check`: bash syntax, ShellCheck at the pinn
 - application env files passed through byte for byte, mounted read-only and pinned by digest, unsafe variable names refused unevaluated, staged beside but never inside the infrastructure settings, and reconcile waiting for a stale server env;
 - release names derived from `VERSION` and the settings revision, kept by operational changes, moved by env and pinned changes, and overridden by an explicit `RELEASE`;
 - backup naming, checksum, notification and listing; the restore flow, its failure path and refusals; the swap SQL with psql-quoted names; extension entries skipped from the dump catalog;
-- the remote job protocol run end to end through a fake SSH: the exit status, a dropped connection, a start lost before the job existed (run once more, exactly once), a job that never started, an unreachable host, `-e` overrides forwarded without the SSH target, and an unknown action refused before any connection;
+- the remote job protocol run end to end through a fake SSH: the exit status, a dropped connection, a start lost before the job existed (run once more, exactly once), a start cut off after its claim (reported, never repeated), a job that never started, an unreachable host, `-e` overrides forwarded without the SSH target, and an unknown action refused before any connection;
 - transient credentials kept out of staged settings and forwarded over stdin, rejected releases refused by deploy and skipped by reconcile, the instant switch to a retained release, delivery settings;
 - the command line: flags with values, flag validation per command, routing of server commands over SSH with their arguments and flags, suggestions for commands and actions, the overview and per-command manual with its Actions section and aligned flags, `--version`, `config` with sources, and a manual that matches the dispatch action by action;
 - notifications on all three channels with secrets out of argv, `notify` flags limited to one channel and validated like settings, the webhook signature checked against OpenSSL, retries, silent success without channels, and every raised event declared; the deploy plan for each decision; the doctor checks; backup verification;
