@@ -2,6 +2,13 @@
 
 Every release of RagX, one section per tag, one block per part.
 
+## Unreleased
+
+### infra
+
+- `uninstall` removes both release slots and the monitoring with the edge and the data services, so no container of the project stays behind (the slot kept for rollback and the monitoring used to survive it).
+- Deploy retries a refused image push twice, since GHCR grants a brand-new package to the repository only after its first push; the images job keeps a static name.
+
 ## v1.1.0 — 2026-10-21
 
 ### api
