@@ -10,7 +10,7 @@ declare -ga BOOTSTRAP_COMMANDS=(
     'prepare|Tool|prepare|Install the checksum-pinned ShellCheck into the build tools'
 )
 declare -ga STACK_COMMANDS=() COMMAND_GROUPS=()
-declare -gA COMMAND_FLAGS=() COMMAND_ABOUT=() COMMAND_NOTES=() COMMAND_EXAMPLES=() COMMAND_WHERE=()
+declare -gA COMMAND_FLAGS=() COMMAND_ACTIONS=() COMMAND_ABOUT=() COMMAND_NOTES=() COMMAND_EXAMPLES=() COMMAND_WHERE=()
 
 COMMAND_FLAGS[config]='--changed=List only the settings whose value differs from the default'
 COMMAND_FLAGS[test]='--check=Run the check gate before the tests|--list=List the test names without running them'
@@ -92,6 +92,7 @@ bootstrap-overview () {
     local group="" row="" name="" section="" usage="" summary="" UI_WIDTH=0
 
     while IFS='|' read -r name section usage summary; do
+        usage="$(bootstrap-usage "${name}" "${usage}")" || return
         (( ${#usage} <= UI_WIDTH )) || UI_WIDTH="${#usage}"
     done < <(bootstrap-commands)
 
@@ -104,7 +105,9 @@ bootstrap-overview () {
     for group in "${COMMAND_GROUPS[@]}" Tool; do
         ui-section "${group}"
         while IFS='|' read -r name section usage summary; do
-            [[ "${section}" != "${group}" ]] || ui-row "${usage}" "${summary}"
+            [[ "${section}" == "${group}" ]] || continue
+            usage="$(bootstrap-usage "${name}" "${usage}")" || return
+            ui-row "${usage}" "${summary}"
         done < <(bootstrap-commands)
     done
 
@@ -118,7 +121,7 @@ bootstrap-overview () {
 }
 bootstrap-globals () {
 
-    local UI_WIDTH=14
+    local UI_WIDTH=13
 
     ui-section 'Global flags'
     ui-row '--config FILE' 'Load this env file instead of the automatic choice; repeatable, later files win'
@@ -132,30 +135,32 @@ bootstrap-globals () {
 }
 bootstrap-manual () {
 
-    local command="${1}" row="" name="" usage="" summary="" entry="" flag="" text="" UI_WIDTH=12
+    local command="${1}" row="" name="" usage="" summary="" entry=""
     local -a entries=()
 
     row="$(bootstrap-row "${command}")" || { bootstrap-unknown "${command}"; return; }
 
     IFS='|' read -r name _ usage summary <<< "${row}"
+    usage="$(bootstrap-usage "${name}" "${usage}")" || return
 
     out "infra ${usage}"
     out "${summary}."
     [[ -z "${COMMAND_ABOUT[${name}]:-}" ]] || { printf '\n'; fold -s -w 100 <<< "${COMMAND_ABOUT[${name}]}" | sed 's/ *$//'; }
 
+    if [[ -n "${COMMAND_ACTIONS[${name}]:-}" ]]; then
+        ui-section Actions
+        bootstrap-entries "${COMMAND_ACTIONS[${name}]}" default
+    fi
+
     if [[ -n "${COMMAND_FLAGS[${name}]:-}" ]]; then
         ui-section Flags
-        IFS='|' read -r -a entries <<< "${COMMAND_FLAGS[${name}]}"
-        for entry in "${entries[@]}"; do
-            flag="${entry%%=*}"
-            text="${entry#*=}"
-            ui-row "${flag}" "${text}"
-        done
+        bootstrap-entries "${COMMAND_FLAGS[${name}]}"
     fi
 
     if [[ "${COMMAND_WHERE[${name}]:-}" == server ]]; then
         ui-section Where
-        ui-row "Runs on SSH_HOST over SSH when it is set, or here with --local; the server reads its staged settings"
+        ui-row "Runs on SSH_HOST over SSH when it is set, or here with --local; the server reads its staged settings,"
+        ui-row "and -e overrides travel with the command over SSH stdin for that run"
     fi
 
     if [[ -n "${COMMAND_NOTES[${name}]:-}" ]]; then
@@ -175,7 +180,36 @@ bootstrap-manual () {
     fi
 
     ui-section 'Global flags'
-    ui-row '--config FILE, --project DIR, --target HOST, -e KEY=VALUE; see infra help'
+    ui-row '--config FILE, --project DIR, --target HOST, --local, -e KEY=VALUE; see infra help'
+
+}
+bootstrap-usage () {
+
+    local name="${1}" usage="${2}" actions=""
+
+    [[ "${usage}" == *'{actions}'* ]] || { out "${usage}"; return 0; }
+    actions="$(cli-actions "${COMMAND_ACTIONS[${name}]:-}")" || return
+
+    out "${usage//\{actions\}/[${actions// /|}]}"
+
+}
+bootstrap-entries () {
+
+    local mark="${2:-}" entry="" text="" UI_WIDTH=0
+    local -a entries=()
+
+    IFS='|' read -r -a entries <<< "${1}"
+
+    for entry in "${entries[@]}"; do
+        entry="${entry%%=*}"
+        (( ${#entry} <= UI_WIDTH )) || UI_WIDTH="${#entry}"
+    done
+
+    for entry in "${entries[@]}"; do
+        text="${entry#*=}"
+        [[ -z "${mark}" ]] || { text+=" (${mark})"; mark=""; }
+        ui-row "${entry%%=*}" "${text}"
+    done
 
 }
 bootstrap-version () {
@@ -200,7 +234,7 @@ bootstrap-config () {
 
     local key="" UI_WIDTH=0
 
-    (( $# <= 1 )) || { err "Usage: config [KEY] [--changed]"; return; }
+    (( $# <= 1 )) || { err "Usage: infra config [KEY] [--changed]"; return; }
     [[ -z "${1:-}" ]] || { cfg-show "${1}"; return; }
 
     for key in "${CONFIG_SCHEMA[@]}"; do

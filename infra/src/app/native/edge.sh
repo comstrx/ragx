@@ -424,6 +424,6 @@ native-probe-socket () {
 }
 native-edge () {
 
-    cli-dispatch native-edge "${1:-apply}" apply "${@:2}"
+    native-dispatch edge "$@"
 
 }

@@ -83,7 +83,12 @@ docker-login () {
 
     local host="${1}" user="${2}" credential="${3}"
 
-    printf '%s\n' "${credential}" | docker-client login "${host}" --username "${user}" --password-stdin >/dev/null || { err "Registry login failed: ${host}"; return; }
+    run-retry 3 5 docker-login-once "${host}" "${user}" "${credential}" || { err "Registry login failed: ${host}"; return; }
+
+}
+docker-login-once () {
+
+    printf '%s\n' "${3}" | docker-client login "${1}" --username "${2}" --password-stdin >/dev/null
 
 }
 docker-logout () {
@@ -95,14 +100,14 @@ docker-pull () {
 
     parse-image "${1:-}" || { err "Invalid image reference: ${1:-}"; return; }
 
-    docker-client pull --quiet "${1}" >/dev/null || { err "Image pull failed: ${1}"; return; }
+    run-retry 3 5 docker-client pull --quiet "${1}" >/dev/null || { err "Image pull failed: ${1}"; return; }
 
 }
 docker-push () {
 
     parse-image "${1:-}" || { err "Invalid image reference: ${1:-}"; return; }
 
-    docker-client push --quiet "${1}" >/dev/null || { err "Image push failed: ${1}"; return; }
+    run-retry 3 20 docker-client push --quiet "${1}" >/dev/null || { err "Image push failed: ${1}"; return; }
 
 }
 docker-present () {

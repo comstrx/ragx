@@ -84,11 +84,42 @@ cli-dispatch () {
     local prefix="${1}" action="${2}" allowed="${3}"
 
     shift 3
-
-    [[ " ${allowed} " == *" ${action} "* ]] || { err "Unknown command: ${action} (expected: ${allowed})"; return; }
+    cli-allowed "${prefix#*-}" "${action}" "${allowed}" || return
     declare -F "${prefix}-${action}" >/dev/null || { err "Unsupported operation: ${action}"; return; }
 
     "${prefix}-${action}" "$@"
+
+}
+cli-allowed () {
+
+    local label="${1}" action="${2}" allowed="${3}" suggestion="" expected=""
+    local -a names=()
+
+    [[ " ${allowed} " != *" ${action} "* ]] || return 0
+    read -r -a names <<< "${allowed}"
+
+    suggestion="$(cli-suggest "${action}" "${names[@]}")"
+    expected="${allowed// /, }"
+    (( ${#names[@]} < 2 )) || expected="${expected%, *} or ${names[-1]}"
+
+    err "Unknown ${label} action: ${action}${suggestion:+; did you mean ${suggestion}?} (expected ${expected})"
+
+}
+cli-actions () {
+
+    local entry="" listed=""
+    local -a entries=()
+
+    IFS='|' read -r -a entries <<< "${1:-}"
+
+    for entry in "${entries[@]}"; do
+        entry="${entry%%=*}"
+        listed+="${listed:+ }${entry%% *}"
+    done
+
+    [[ -n "${listed}" ]] || { err "No actions declared"; return; }
+
+    out "${listed}"
 
 }
 cli-switches () {

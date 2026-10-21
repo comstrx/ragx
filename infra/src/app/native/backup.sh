@@ -3,7 +3,7 @@ source-include module/s3.sh || return
 
 native-backup () {
 
-    cli-dispatch native-backup "${1:-create}" 'create list verify' "${@:2}"
+    native-dispatch backup "$@"
 
 }
 native-backup-create () {
@@ -84,7 +84,7 @@ native-backup-list () {
 }
 native-backup-verify () {
 
-    (( $# <= 1 )) || { err "Usage: backup verify [BACKUP]"; return; }
+    (( $# <= 1 )) || { err "Usage: infra backup verify [BACKUP]"; return; }
     docker-ready || return
     fs-dir "${CONFIG[STATE_ROOT]}" || return
 
@@ -148,7 +148,7 @@ native-size () {
 }
 native-restore () {
 
-    (( $# <= 1 )) || { err "Usage: restore [BACKUP] --force"; return; }
+    (( $# <= 1 )) || { err "Usage: infra restore [BACKUP] --force"; return; }
     cli-flag --force || { err "Restore replaces the live database; rerun with --force"; return; }
     docker-ready || return
     fs-dir "${CONFIG[STATE_ROOT]}" || return

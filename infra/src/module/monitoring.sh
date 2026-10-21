@@ -12,7 +12,7 @@ monitoring-render () {
 
     if [[ -n "${receivers}" ]]; then
         alerting=$'alerting:\n  alertmanagers:\n    - static_configs: [{targets: [\'alertmanager:9093\']}]\n'
-        alertmanager="$(template-text "${templates}/alertmanager.yaml.tpl")" || return
+        alertmanager="$(template-text "${templates}/alertmanager-service.yaml.tpl")" || return
     fi
 
     cfg-set MONITOR_ALERTING "${alerting}"

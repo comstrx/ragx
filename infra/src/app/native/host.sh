@@ -4,7 +4,7 @@ source-include module/launchd.sh || return
 
 native-docker () {
 
-    cli-dispatch native-docker "${1:-status}" 'status install' "${@:2}"
+    native-dispatch docker "$@"
 
 }
 native-docker-status () {
@@ -25,7 +25,7 @@ native-docker-install () {
 }
 native-timer () {
 
-    cli-dispatch native-timer "${1:-list}" 'install remove list' "${@:2}"
+    native-dispatch timer "$@"
 
 }
 native-timer-install () {
@@ -36,7 +36,7 @@ native-timer-install () {
     case "${command}" in
         reconcile|backup|monitor) arguments=( "${command}" ) ;;
         renew)                    arguments=( tls renew ) ;;
-        *)                        err "Usage: timer install reconcile|backup|monitor|renew SECONDS"; return ;;
+        *)                        err "Usage: infra timer install monitor|backup|renew|reconcile SECONDS"; return ;;
     esac
 
     parse-positive "${seconds}" || { err "Timer interval must be a positive number of seconds"; return; }
@@ -59,7 +59,7 @@ native-timer-remove () {
 
     local name="${CONFIG[COMPOSE_PROJECT]}-${1:-}"
 
-    [[ "${1:-}" =~ ^(reconcile|backup|monitor|renew)$ ]] || { err "Usage: timer remove reconcile|backup|monitor|renew"; return; }
+    [[ "${1:-}" =~ ^(reconcile|backup|monitor|renew)$ ]] || { err "Usage: infra timer remove monitor|backup|renew|reconcile"; return; }
 
     if is-linux; then ! systemd-present "${name}" || systemd-remove "${name}"
     elif is-macos; then launchd-remove "${name}"

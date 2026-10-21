@@ -6,7 +6,7 @@ native-notify () {
 
     local channels="" channel=""
 
-    (( $# > 0 )) || { err "Usage: notify MESSAGE"; return; }
+    (( $# > 0 )) || { err "Usage: infra notify MESSAGE [--channel NAME]"; return; }
     native-notify-flags || return
     channel="$(cli-value --channel)" || channel=""
     channels="$(native-channels)"

@@ -3,7 +3,7 @@ source-include module/registry.sh || return
 
 native-registry () {
 
-    cli-dispatch native-registry "${1:-host}" 'host reference login push logout' "${@:2}"
+    native-dispatch registry "$@"
 
 }
 native-registry-host () {
@@ -45,7 +45,7 @@ native-registry-logout () {
 }
 native-image () {
 
-    cli-dispatch native-image "${1:-digest}" 'build digest remote' "${@:2}"
+    native-dispatch image "$@"
 
 }
 native-image-build () {
@@ -53,7 +53,7 @@ native-image-build () {
     local component="${1:-}" tag="${2:-}" spec="${3:-}" root="${TOOL_ROOT%/*}" dockerfile="" build=""
     local -a arguments=()
 
-    [[ "${component}" == api || "${component}" == web ]] || { err "Usage: image build api|web TAG [SPEC]"; return; }
+    [[ "${component}" == api || "${component}" == web ]] || { err "Usage: infra image build api|web REFERENCE [SPEC]"; return; }
     [[ "${TOOL_BUNDLED:-false}" != true ]] || { err "Image builds need the monorepo checkout"; return; }
     parse-image "${tag}" || { err "Invalid image tag: ${tag}"; return; }
 
@@ -62,7 +62,7 @@ native-image-build () {
             arguments=( --build-arg "PYTHON_IMAGE=${CONFIG[IMAGE_PYTHON]}" --build-arg "UV_IMAGE=${CONFIG[IMAGE_UV]}" )
         ;;
         web)
-            [[ "${spec}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || { err "Usage: image build web TAG SPEC"; return; }
+            [[ "${spec}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || { err "Usage: infra image build web REFERENCE SPEC"; return; }
             [[ -z "${CONFIG[WEB_SPEC_VARIABLE]}" ]] || build="${CONFIG[WEB_SPEC_VARIABLE]}=${spec}"
             if [[ -n "${CONFIG[WEB_API_VARIABLE]}" ]]; then
                 cfg-require API_HOST || return

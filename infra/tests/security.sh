@@ -154,10 +154,10 @@ test-secret-tool-credentials () {
     local log="${TMPDIR}/tool.args"
 
     mkdir -p "${TMPDIR}/bin"
-    printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$@" > "${TMPDIR}/tool.args"' 'printf "%s\n" "${AWS_SECRET_ACCESS_KEY:-}" > "${TMPDIR}/aws.env"' > "${TMPDIR}/bin/docker"
+    printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$@" > "${TMPDIR}/tool.args"' 'printf "%s\n" "${AWS_SECRET_ACCESS_KEY:-}" > "${TMPDIR}/aws.env"' \
+        '[[ " $* " != *" --password-stdin "* ]] || cat > "${TMPDIR}/docker.stdin"' > "${TMPDIR}/bin/docker"
     chmod 700 "${TMPDIR}/bin/docker"
     PATH="${TMPDIR}/bin:${PATH}"
-    docker-client () { printf '%s\n' "$@" > "${log}"; cat > "${TMPDIR}/docker.stdin"; }
 
     printf 'dump\n' > "${TMPDIR}/file"
     cfg-set BACKUP_KEY key-id
@@ -231,7 +231,7 @@ CURL
     expect-contains "$(native-notify hello 2>&1)" 'No notification channel is configured; nothing sent'
     expect-equal "$(native-announce deploy.succeeded 'r2 is live' 2>&1)" '' 'no channel means silent success'
     expect-fail test -e "${TMPDIR}/curl.count"
-    expect-error 'Usage: notify MESSAGE' native-notify
+    expect-error 'Usage: infra notify MESSAGE [--channel NAME]' native-notify
 
     cli-parse notify hello --channel telegram --token 123456:flag-sentinel-token-0123456789 --chat -1009
     native-notify hello >/dev/null

@@ -5,7 +5,7 @@ STACK_COMMANDS=(
     'rollback|Release|rollback|Reject the pending release, or switch back to the retained previous release'
     'render|Release|render|Render and pin the release files without deploying them'
     'recover|Release|recover --force|Clear a dead deploy lock and resume the pending release'
-    'backup|Data|backup [create/list/verify] [BACKUP]|Dump the database with a checksum, list the dumps, or prove one restores'
+    'backup|Data|backup {actions} [BACKUP]|Dump the database with a checksum, list the dumps, or prove one restores'
     'restore|Data|restore [BACKUP] --force|Replace the live database with a dump, the latest by default, keeping the old one'
     'status|Operate|status|Show the releases, phase, slots, desired state, latest backup and channels'
     'doctor|Operate|doctor|Check runtime, settings, env files, disk, edge, certificate, data, backups, timers and channels'
@@ -16,20 +16,20 @@ STACK_COMMANDS=(
     'uninstall|Operate|uninstall --force|Remove the edge, both release slots, the monitoring and the data containers; volumes stay'
     'monitor|Operate|monitor|Check health, write the platform metrics and notify on a state change'
     'notify|Operate|notify MESSAGE [--channel NAME]|Send a message to every configured channel, or to one'
-    'edge|Edge and certificates|edge apply|Apply edge changes after validation, restoring the previous edge on failure'
-    'tls|Edge and certificates|tls issue/renew/present/import [CERT KEY]|Issue, renew, check or import the edge certificate'
-    'dns|Edge and certificates|dns check/set [HOST]|Inspect or upsert the DNS_PROVIDER record of a routed host'
-    'firewall|Edge and certificates|firewall ports/apply [--force]|List the edge ports, or open them on the active host firewall'
-    'server|Server and runtime|server inspect/stage/run/install|Prepare and operate the SSH target'
-    'docker|Server and runtime|docker status/install|Inspect or install the pinned Docker runtime'
-    'timer|Server and runtime|timer install/remove/list [NAME] [SECONDS]|Schedule the monitor, backup, renew or reconcile runs'
+    'edge|Edge and certificates|edge {actions}|Apply edge changes after validation, restoring the previous edge on failure'
+    'tls|Edge and certificates|tls {actions} [CERT KEY]|Check, issue, renew or import the edge certificate'
+    'dns|Edge and certificates|dns {actions} [HOST]|Inspect or upsert the DNS_PROVIDER record of a routed host'
+    'firewall|Edge and certificates|firewall {actions} [--force]|List the edge ports, or open them on the active host firewall'
+    'server|Server and runtime|server {actions}|Prepare and operate the SSH target'
+    'docker|Server and runtime|docker {actions}|Inspect or install the pinned Docker runtime'
+    'timer|Server and runtime|timer {actions} [NAME] [SECONDS]|Schedule the monitor, backup, renew or reconcile runs'
     'reconcile|GitOps and control plane|reconcile [--force]|Fetch the desired state from Git and deploy it once the server matches'
     'watch|GitOps and control plane|watch|Reconcile forever, every GITOPS_INTERVAL seconds'
     'export|GitOps and control plane|export [DIRECTORY]|Write the secret-free Compose artifact and the desired state'
     'publish|GitOps and control plane|publish|Commit the desired state and tag release-RELEASE in one atomic push'
-    'portainer|GitOps and control plane|portainer install/registry|Install the private control plane or register the pull credential'
-    'image|Images|image build/digest/remote|Build an application image, or read its local or registry digest'
-    'registry|Images|registry host/reference/login/push/logout|Resolve, log in to and push to the image registry'
+    'portainer|GitOps and control plane|portainer {actions}|Install the private control plane or register the pull credential'
+    'image|Images|image {actions} ...|Read an image digest, locally or in the registry, or build an application image'
+    'registry|Images|registry {actions}|Resolve, log in to and push to the image registry'
 )
 
 COMMAND_FLAGS[deploy]='--dry-run=Print the decision and check its inputs; change nothing|--force=Ship a release this server rejected, or switch a manual stage live'
@@ -48,7 +48,7 @@ COMMAND_FLAGS[recover]='--force=Required: confirms the deploy that held the lock
 COMMAND_ABOUT[recover]='For a deploy whose process died holding the lock: removes the lock only when its owner no longer runs, then resumes the pending release.'
 COMMAND_EXAMPLES[recover]='infra status|infra recover --force'
 
-COMMAND_ABOUT[backup]='create, the default, dumps the database into BACKUP_DIR, checks the archive, writes its SHA-256, copies both to BACKUP_URI (s3:// or gs://) when set and prunes dumps older than BACKUP_DAYS except the latest. list shows the dumps newest first. verify restores a dump into a scratch database and drops it, proving it restores without touching live data.'
+COMMAND_ACTIONS[backup]='create=Dump the database, check the archive, write its SHA-256, copy both to BACKUP_URI (s3:// or gs://) and prune dumps older than BACKUP_DAYS|list=Show the dumps, newest first|verify [BACKUP]=Restore a dump, the latest by default, into a scratch database, count its tables and drop it'
 COMMAND_NOTES[backup]='The backup timer runs create every BACKUP_INTERVAL seconds|Notifies backup.succeeded or backup.failed'
 COMMAND_EXAMPLES[backup]='infra backup|infra backup list|infra backup verify|infra backup verify 20261020T112013Z-jcQdcHui.dump'
 
@@ -89,31 +89,31 @@ COMMAND_NOTES[notify]='With no channel configured it sends nothing and succeeds|
 COMMAND_FLAGS[notify]='--channel NAME=Send to this channel only: telegram, slack or webhook|--token TOKEN=Telegram bot token (TELEGRAM_BOT_TOKEN)|--chat ID=Telegram chat (TELEGRAM_CHAT_ID)|--hook URL=Slack incoming webhook (SLACK_WEBHOOK_URL)|--url URL=Custom webhook endpoint (WEBHOOK_URL)|--secret SECRET=HMAC key that signs the custom webhook (WEBHOOK_SECRET)'
 COMMAND_EXAMPLES[notify]='infra notify "maintenance at 22:00 UTC"|infra notify "deployed" --channel telegram --token "$BOT" --chat -1001234567890|infra notify "deployed" --channel slack --hook "$SLACK_HOOK"|infra notify "deployed" --channel webhook --url https://hooks.example.com/infra --secret "$SIGNING_KEY"'
 
-COMMAND_ABOUT[edge]='Renders the HAProxy configuration and Compose file, validates them in a scratch container, then reloads seamlessly, or recreates the edge when its ports change, restoring the previous edge on any failure.'
-COMMAND_NOTES[edge]='deploy refuses to run while the live edge differs from the rendered one|Upserts the records of every routed host when DNS_PROVIDER is set|Refreshes the TRUSTED_PROXIES lists published at https URLs and keeps the recorded ones when unreachable|Notifies edge.rolled-back'
-COMMAND_EXAMPLES[edge]='infra edge apply'
+COMMAND_ACTIONS[edge]='apply=Render the HAProxy configuration and Compose file, validate them in a scratch container, then reload seamlessly, or recreate the edge when its ports change'
+COMMAND_NOTES[edge]='Any failure restores the previous edge and notifies edge.rolled-back|deploy refuses to run while the live edge differs from the rendered one|Upserts the records of every routed host when DNS_PROVIDER is set|Refreshes the TRUSTED_PROXIES lists published at https URLs and keeps the recorded ones when unreachable|EDGE_SOCKETS switches between published ports and a TCP relay such as nginx stream; the change recreates the edge'
+COMMAND_EXAMPLES[edge]='infra edge apply|infra -e EDGE_SOCKETS=/srv/edge edge apply'
 
-COMMAND_ABOUT[tls]='issue requests an ACME certificate (HTTP-01 through the edge, or DNS-01 through DNS_PROVIDER), renew renews it, present reports whether one exists and import installs CERT and KEY.'
+COMMAND_ACTIONS[tls]='present=Report whether the edge holds a certificate|issue=Request an ACME certificate for every routed host: HTTP-01 through the edge, or DNS-01 through DNS_PROVIDER|renew=Renew the certificate when it nears expiry and reload the edge|import CERT KEY=Install a certificate and key issued elsewhere'
 COMMAND_NOTES[tls]='The renew timer runs every RENEW_INTERVAL seconds; a failed renewal notifies tls.renewal-failed'
-COMMAND_EXAMPLES[tls]='infra tls issue|infra tls import site.pem site.key|infra tls present'
+COMMAND_EXAMPLES[tls]='infra tls|infra tls issue|infra tls import site.pem site.key'
 
-COMMAND_ABOUT[dns]='check prints the DNS_PROVIDER record of HOST, API_HOST by default; set upserts it to DNS_ADDRESS, proxied by the provider when DNS_PROXIED=true.'
+COMMAND_ACTIONS[dns]='check [HOST]=Print the DNS_PROVIDER record of HOST, API_HOST by default|set [HOST]=Upsert the record of HOST to DNS_ADDRESS, proxied by the provider when DNS_PROXIED=true'
 COMMAND_EXAMPLES[dns]='infra dns check|infra dns set grafana.example.com'
 
+COMMAND_ACTIONS[firewall]='ports=List what the edge needs: TCP for HTTP and HTTPS, UDP for HTTP/3 unless a relay owns the ports|apply=Open those ports on an active ufw or firewalld; never removes a rule'
 COMMAND_FLAGS[firewall]='--force=Required by apply: changes the host firewall'
-COMMAND_ABOUT[firewall]='ports lists what the edge needs: TCP for HTTP and HTTPS, UDP for HTTP/3. apply opens them on an active ufw or firewalld and never removes a rule.'
 COMMAND_EXAMPLES[firewall]='infra firewall ports|infra firewall apply --force'
 
-COMMAND_ABOUT[server]='inspect checks SSH and the remote Docker; stage uploads the release bundle, the infrastructure settings and the application env files; run executes a command there as a detached job that survives a dropped connection; install installs Docker remotely.'
-COMMAND_NOTES[server]='Flags after -- belong to the remote command|Credentials from the process environment are never staged; run hands them to that one command over SSH stdin'
-COMMAND_EXAMPLES[server]='infra server stage|infra server run -- deploy --dry-run|infra server run status'
+COMMAND_ACTIONS[server]='inspect=Check SSH, Bash 5 and Docker on SSH_HOST|stage=Upload the release bundle, the settings and the application env files|run [--] COMMAND=Run an infra command there as a detached job that survives a dropped connection|install=Install the pinned Docker runtime on SSH_HOST'
+COMMAND_NOTES[server]='Flags after -- belong to the remote command|Credentials from the process environment are never staged; run hands them to that one command over SSH stdin|Uploads retry, and a start lost before the job existed runs again; a dropped connection follows the job instead of restarting it'
+COMMAND_EXAMPLES[server]='infra server inspect|infra server stage|infra server run -- deploy --dry-run|infra server run status'
 
-COMMAND_ABOUT[docker]='status prints the engine and Compose versions and whether Docker runs rootless; install installs the checksum-pinned packages on Ubuntu 24.04 and refuses to replace a runtime.'
-COMMAND_EXAMPLES[docker]='infra docker status|infra server install'
+COMMAND_ACTIONS[docker]='status=Print the engine and Compose versions and whether Docker runs rootless|install=Install the checksum-pinned packages on Ubuntu 24.04; refuses to replace a runtime'
+COMMAND_EXAMPLES[docker]='infra docker|infra server install'
 
-COMMAND_ABOUT[timer]='install writes a systemd user timer, or a launchd agent on macOS, running NAME every SECONDS from the staged bundle; remove stops and deletes it; list shows the timers of this project.'
+COMMAND_ACTIONS[timer]='list=Show the timers of this project|install NAME SECONDS=Run NAME every SECONDS from the staged bundle: a systemd user timer, or a launchd agent on macOS|remove NAME=Stop and delete the timer of NAME'
 COMMAND_NOTES[timer]='NAME: monitor, backup, renew or reconcile|deploy installs monitor, backup and renew, and reconcile under GitOps|User timers outlive SSH sessions only with loginctl enable-linger'
-COMMAND_EXAMPLES[timer]='infra timer list|infra timer install backup 21600|infra timer remove reconcile'
+COMMAND_EXAMPLES[timer]='infra timer|infra timer install backup 21600|infra timer remove reconcile'
 
 COMMAND_FLAGS[reconcile]='--force=Deploy the desired release even though this server rejected it'
 COMMAND_ABOUT[reconcile]='Reads the desired branch, checks the protected release tag and the Compose checksum, waits while the staged env files or the settings revision differ from the desired state, skips a release this server rejected, then deploys.'
@@ -126,14 +126,14 @@ COMMAND_EXAMPLES[export]='infra export deploy|infra -e VERSION=v1-4-0 export /tm
 COMMAND_ABOUT[publish]='Commits application.yaml and desired.env to GITOPS_BRANCH and tags release-RELEASE in one atomic push. Repeating it is idempotent; a tag that holds another desired state is refused.'
 COMMAND_EXAMPLES[publish]='GITOPS_USER=x-access-token GITOPS_TOKEN=... infra publish'
 
-COMMAND_ABOUT[portainer]='install runs Portainer CE on loopback behind a private CA and creates an API key; registry registers the pull credential.'
+COMMAND_ACTIONS[portainer]='install=Run Portainer CE on loopback behind a private CA and create an API key|registry=Register the pull credential with Portainer'
 COMMAND_NOTES[portainer]='It holds the Docker socket: reach it through SSH port forwarding only'
 COMMAND_EXAMPLES[portainer]='infra portainer install|infra portainer registry'
 
-COMMAND_ABOUT[image]='build builds api or a web SPEC from the monorepo on pinned base images; digest prints the local repository digest; remote prints the registry digest of a reference without pulling it.'
+COMMAND_ACTIONS[image]='digest REFERENCE=Print the local repository digest of an image|build COMPONENT REFERENCE [SPEC]=Build the api image, or with COMPONENT web the image of SPEC, from the monorepo on pinned base images|remote REFERENCE=Print the registry digest of a reference without pulling it'
 COMMAND_EXAMPLES[image]='infra image build api ghcr.io/org/api:v1|infra image build web ghcr.io/org/client:v1 client|infra image remote ghcr.io/org/api:v1'
 
-COMMAND_ABOUT[registry]='host and reference print the registry host and a full image reference; login and logout pass the token on stdin; push pushes a built image.'
+COMMAND_ACTIONS[registry]='host=Print the registry host of REGISTRY_DRIVER|reference COMPONENT TAG=Print the full image reference of a component|login=Log in with REGISTRY_USER and REGISTRY_TOKEN, the token on stdin|push REFERENCE=Push a built image, retrying while the registry refuses it|logout=Log out of the registry'
 COMMAND_EXAMPLES[registry]='infra registry reference api v1-4-0|infra registry login'
 
 COMMAND_WHERE=(
@@ -141,3 +141,24 @@ COMMAND_WHERE=(
     [scale]=server [start]=server [stop]=server [uninstall]=server [monitor]=server [edge]=server [tls]=server
     [firewall]=server [timer]=server [reconcile]=server [watch]=server [portainer]=server
 )
+
+native-dispatch () {
+
+    local command="${1}" allowed=""
+
+    shift
+    allowed="$(cli-actions "${COMMAND_ACTIONS[${command}]:-}")" || return
+
+    cli-dispatch "native-${command}" "${1:-${allowed%% *}}" "${allowed}" "${@:2}"
+
+}
+native-allowed () {
+
+    local command="${1}" allowed=""
+
+    [[ -n "${COMMAND_ACTIONS[${command}]:-}" && -n "${2:-}" ]] || return 0
+    allowed="$(cli-actions "${COMMAND_ACTIONS[${command}]}")" || return
+
+    cli-allowed "${command}" "${2}" "${allowed}"
+
+}

@@ -157,7 +157,12 @@ native-doctor-edge () {
 
     [[ -f "${CONFIG[STATE_ROOT]}/edge/edge.yaml" ]] || { out "warn not applied yet; run infra edge apply"; return 0; }
     native-edge-alive || { out "fail the edge is not running; run infra start"; return 0; }
-    [[ -n "${CONFIG[EDGE_SOCKETS]}" ]] || { out "ok listening on ${CONFIG[BIND_ADDRESS]}:${CONFIG[HTTPS_PORT]} ($(native-protocols))"; return 0; }
+    if [[ -z "${CONFIG[EDGE_SOCKETS]}" ]]; then
+        docker-rootless || { out "ok listening on ${CONFIG[BIND_ADDRESS]}:${CONFIG[HTTPS_PORT]} ($(native-protocols))"; return 0; }
+        out "warn listening on ${CONFIG[BIND_ADDRESS]}:${CONFIG[HTTPS_PORT]} through rootless Docker, whose port forwarding shows every client as the network gateway to logs, RATE_LIMIT_IP and TRUSTED_PROXIES; relay through EDGE_SOCKETS to keep client addresses"
+        return 0
+    fi
+
     native-edge-sockets 2>/dev/null || { out "fail uid 1000 cannot write ${CONFIG[EDGE_SOCKETS]}; run: $(native-edge-grant)"; return 0; }
     out "ok relayed through ${CONFIG[EDGE_SOCKETS]}/http.sock and https.sock with the PROXY protocol ($(native-protocols))"
 

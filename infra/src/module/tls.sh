@@ -118,7 +118,7 @@ tls-import () {
 
     local certificate="${1:-}" key="${2:-}" public="" private=""
 
-    [[ -f "${certificate}" && -f "${key}" ]] || { err "Usage: tls import CERTIFICATE KEY"; return; }
+    [[ -f "${certificate}" && -f "${key}" ]] || { err "Usage: infra tls import CERT KEY"; return; }
     need openssl || return
 
     public="$(openssl x509 -in "${certificate}" -pubkey -noout)" || { err "Unreadable certificate: ${certificate}"; return; }

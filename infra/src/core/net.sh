@@ -19,6 +19,7 @@ net-request () {
     credential="${credential//\\/\\\\}"
     credential="${credential//\"/\\\"}"
 
+    [[ "${method}" != GET ]] || arguments+=( --retry 3 --retry-connrefused --retry-max-time 60 )
     [[ -z "${body}" ]] || arguments+=( --header 'Content-Type: application/json' --data-binary "@${body}" )
     [[ -z "${authority}" ]] || arguments+=( --cacert "${authority}" )
 
@@ -49,7 +50,7 @@ net-download () {
     temporary="$(fs-temp-file)" || return
 
     if curl --disable --fail --silent --show-error --location --max-redirs 3 --proto '=https' --proto-redir '=https' \
-        --connect-timeout 10 --max-time 300 --output "${temporary}" --url "${url}"; then
+        --connect-timeout 10 --max-time 300 --retry 3 --retry-connrefused --output "${temporary}" --url "${url}"; then
 
         actual="$(fs-hash "${temporary}")" || status=$?
 

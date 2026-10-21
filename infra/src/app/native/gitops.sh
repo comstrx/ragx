@@ -142,7 +142,7 @@ native-portainer-context () {
 }
 native-portainer () {
 
-    cli-dispatch native-portainer "${1:-install}" 'install registry' "${@:2}"
+    native-dispatch portainer "$@"
 
 }
 native-portainer-install () {

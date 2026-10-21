@@ -1,6 +1,6 @@
 native-server () {
 
-    cli-dispatch native-server "${1:-inspect}" 'inspect stage run install' "${@:2}"
+    native-dispatch server "$@"
 
 }
 native-server-inspect () {
@@ -32,8 +32,8 @@ native-server-stage () {
 
     settings="$(fs-temp-file)" || return
     template-env "${settings}" "${keys[@]}" || status=$?
-    (( status != 0 )) || ssh-upload "${bundle}" "${CONFIG[REMOTE_DIR]}/infra" 700 || status=$?
-    (( status != 0 )) || ssh-upload "${settings}" "${CONFIG[REMOTE_DIR]}/.env.production" 600 || status=$?
+    (( status != 0 )) || run-retry 3 3 ssh-upload "${bundle}" "${CONFIG[REMOTE_DIR]}/infra" 700 || status=$?
+    (( status != 0 )) || run-retry 3 3 ssh-upload "${settings}" "${CONFIG[REMOTE_DIR]}/.env.production" 600 || status=$?
     (( status != 0 )) || native-stage-env API "${settings}" || status=$?
     (( status != 0 )) || native-stage-env WEB "${settings}" || status=$?
     rm -f -- "${settings}"
@@ -53,12 +53,12 @@ native-stage-env () {
 
     content="$(native-env-content "${app}")" || return
     printf '%s\n' "${content}" | fs-write "${file}" 600 || return
-    ssh-upload "${file}" "${CONFIG[REMOTE_DIR]}/.env.${app,,}" 600
+    run-retry 3 3 ssh-upload "${file}" "${CONFIG[REMOTE_DIR]}/.env.${app,,}" 600
 
 }
 native-server-run () {
 
-    local directory="${CONFIG[REMOTE_DIR]:-}" jobs="${MANIFEST[paths.cache]}/jobs" id="" key="" result="" status=0 probe=0 attempt=0
+    local directory="${CONFIG[REMOTE_DIR]:-}" jobs="${MANIFEST[paths.cache]}/jobs" id="" key="" result="" status=0 probe=0 attempt=0 starts=1 lost=false
     local -a transient=()
 
     cfg-require REMOTE_DIR || return
@@ -71,9 +71,8 @@ native-server-run () {
 
     id="$(date -u +%Y%m%dT%H%M%SZ)-${RANDOM}${RANDOM}"
 
-    for key in "${transient[@]}"; do
-        printf '%s=%s\0' "${key}" "${CONFIG[${key}]}"
-    done | ssh-job start "${directory}" "${jobs}" "${id}" "$@" || status=$?
+    native-server-launch "${directory}" "${jobs}" "${id}" "$@" || status=$?
+    (( status != 255 )) || lost=true
 
     while (( status != 0 )); do
 
@@ -86,7 +85,17 @@ native-server-run () {
                 (( status != 255 )) || { warn "Connection lost; replaying remote job ${id}"; ssh-job follow "${directory}" "${jobs}" "${id}" < /dev/null || true; }
                 return "${result}"
             ;;
-            66) err "Remote job ${id} did not start"; return ;;
+            66)
+                [[ "${lost}" == true && "${starts}" -lt 3 ]] || { err "Remote job ${id} did not start"; return; }
+                starts=$(( starts + 1 ))
+                warn "Connection lost before remote job ${id} started; starting it again (${starts}/3)"
+                sleep "$(( starts * 3 ))"
+                status=0
+                lost=false
+                native-server-launch "${directory}" "${jobs}" "${id}" "$@" || status=$?
+                (( status != 255 )) || lost=true
+                continue
+            ;;
             69) err "Remote job ${id} ended without a status; read ${directory}/${jobs}/${id}.err"; return ;;
         esac
 
@@ -101,6 +110,25 @@ native-server-run () {
     done
 
 }
+native-server-launch () {
+
+    local directory="${1}" jobs="${2}" id="${3}" key="" pair=""
+    local -a transient=()
+
+    shift 3
+    mapfile -t transient < <(native-server-transient)
+
+    {
+        for key in "${transient[@]}"; do
+            printf '%s=%s\0' "${key}" "${CONFIG[${key}]}"
+        done
+
+        for pair in "${CLI_OVERRIDES[@]}"; do
+            [[ "${pair}" == SSH_* || "${pair}" == REMOTE_* ]] || printf '%s\0' "${pair}"
+        done
+    } | ssh-job start "${directory}" "${jobs}" "${id}" "$@"
+
+}
 native-route () {
 
     local command="${1}"
@@ -108,6 +136,7 @@ native-route () {
 
     shift
     [[ -n "${CONFIG[SSH_HOST]}" ]] || { "native-${command}" "$@"; return; }
+    native-allowed "${command}" "${1:-}" || return
 
     mapfile -t forwarded < <(native-route-flags)
     info "Running ${command} on ${CONFIG[SSH_USER]}@${CONFIG[SSH_HOST]}"

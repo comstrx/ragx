@@ -76,7 +76,10 @@ test-cli-parse () {
     expect-error 'Unknown flag: --JSON' cli-parse --JSON
     expect-error 'Unknown flag: -x' cli-parse -x
     expect-error 'Expected KEY=VALUE after -e' cli-parse -e lower=value
-    expect-error 'Unknown command: drop' cli-dispatch native-tls drop 'issue renew'
+    expect-error 'Unknown tls action: drop (expected issue or renew)' cli-dispatch native-tls drop 'issue renew'
+    expect-error 'Unknown backup action: lst; did you mean list? (expected create, list or verify)' cli-dispatch native-backup lst 'create list verify'
+    expect-equal "$(cli-actions 'present=a|issue=b|import CERT KEY=c (x=y)')" 'present issue import'
+    expect-error 'No actions declared' cli-actions ''
 
     cli-parse notify hello --channel=telegram --token 123:abc --chat -1001 --force
     expect-equal "$(cli-value --channel)" telegram
@@ -184,7 +187,7 @@ test-template-filters () {
 }
 test-cli-help () {
 
-    local output="" name="" group="" usage="" summary=""
+    local output="" name="" group="" usage="" summary="" actions="" action="" column="" line=""
 
     output="$(bash "${TOOL_BIN}" --project "${TMPDIR}" help)"
     expect-contains "${output}" 'Ships, guards and operates one server'
@@ -202,6 +205,23 @@ test-cli-help () {
     expect-contains "$(bash "${TOOL_BIN}" --project "${TMPDIR}" -h)" 'Global flags'
     expect-contains "$(bash "${TOOL_BIN}" --project "${TMPDIR}" help test)" '--list'
     expect-error 'Unknown command: restroe; did you mean restore?' bash "${TOOL_BIN}" --project "${TMPDIR}" help restroe
+
+    output="$(bash "${TOOL_BIN}" --project "${TMPDIR}" help backup)"
+    expect-contains "${output}" 'infra backup [create|list|verify] [BACKUP]'
+    expect-contains "${output}" $'\nActions\n'
+    expect-contains "${output}" 'prune dumps older than BACKUP_DAYS (default)' 'the first action is marked as the default'
+    expect-contains "${output}" '  verify [BACKUP]  Restore a dump'
+
+    output="$(bash "${TOOL_BIN}" --project "${TMPDIR}" help notify | sed -n '/^Flags$/,/^$/p' | grep -- '--')"
+    while IFS= read -r line; do
+        [[ "${line}" =~ ^(\ \ --[a-z-]+(\ [A-Z]+)?\ +) ]] || err "Unexpected flag row: ${line}"
+        [[ -z "${column}" ]] || expect-equal "${#BASH_REMATCH[1]}" "${column}" "every flag description starts in one column: ${line}"
+        column="${#BASH_REMATCH[1]}"
+    done <<< "${output}"
+    expect-contains "${output}" '  --secret SECRET  HMAC key'
+    expect-contains "${output}" '  --chat ID        Telegram chat'
+
+    expect-error 'Unknown timer action: lst; did you mean list?' bash "${TOOL_BIN}" --project "${TMPDIR}" --local timer lst
 
     expect-contains "$(bash "${TOOL_BIN}" --project "${TMPDIR}" --version)" "${MANIFEST[name]} ${MANIFEST[version]} (stack native"
     expect-equal "$(bash "${TOOL_BIN}" --project "${TMPDIR}" version)" "$(bash "${TOOL_BIN}" --project "${TMPDIR}" --version)"
@@ -226,8 +246,18 @@ test-cli-help () {
         [[ -n "${group}" && -n "${usage}" && -n "${summary}" ]] || err "${name} has an incomplete row"
     done < <(printf '%s\n' "${STACK_COMMANDS[@]}")
 
-    for name in "${!COMMAND_ABOUT[@]}" "${!COMMAND_NOTES[@]}" "${!COMMAND_EXAMPLES[@]}" "${!COMMAND_FLAGS[@]}" "${!COMMAND_WHERE[@]}"; do
+    for name in "${!COMMAND_ABOUT[@]}" "${!COMMAND_NOTES[@]}" "${!COMMAND_EXAMPLES[@]}" "${!COMMAND_FLAGS[@]}" "${!COMMAND_WHERE[@]}" "${!COMMAND_ACTIONS[@]}"; do
         bootstrap-row "${name}" >/dev/null || err "The manual describes an unknown command: ${name}"
+    done
+
+    for name in "${!COMMAND_ACTIONS[@]}"; do
+        usage="$(bootstrap-usage "${name}" "$(bootstrap-row "${name}" | cut -d'|' -f3)")"
+        actions="$(cli-actions "${COMMAND_ACTIONS[${name}]}")"
+        expect-contains "${usage}" "${name} [${actions// /|}]" "the overview of ${name} lists its actions, the default first"
+        for action in ${actions}; do
+            declare -F "native-${name}-${action}" >/dev/null || err "${name} ${action} is listed without a native-${name}-${action} function"
+        done
+        [[ "$(declare -f "native-${name}")" == *"native-dispatch ${name} "* ]] || err "native-${name} must dispatch through the action table"
     done
 
 }

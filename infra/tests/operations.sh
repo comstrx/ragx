@@ -73,13 +73,13 @@ test-operations-guards () {
     expect-error 'Repeat with --force' native-uninstall
     expect-error 'recover --force removes a dead lock' native-recover
     expect-error 'Install timers from the staged release bundle' native-timer-install backup 3600
-    expect-error 'Usage: timer install' native-timer-install shell 60
-    expect-error 'Usage: restore [BACKUP] --force' native-restore one two
+    expect-error 'Usage: infra timer install' native-timer-install shell 60
+    expect-error 'Usage: infra restore [BACKUP] --force' native-restore one two
     expect-error 'Restore replaces the live database; rerun with --force' native-restore
     expect-error 'stop takes the edge and the current release offline' native-stop
-    expect-error 'Usage: timer remove reconcile|backup|monitor|renew' native-timer-remove shell
-    expect-error 'Unknown command: drop' native-tls drop
-    expect-error 'Usage: image build api|web TAG [SPEC]' native-image-build other example/x:1
+    expect-error 'Usage: infra timer remove monitor|backup|renew|reconcile' native-timer-remove shell
+    expect-error 'Unknown tls action: drop (expected present, issue, renew or import)' native-tls drop
+    expect-error 'Usage: infra image build api|web REFERENCE [SPEC]' native-image-build other example/x:1
     expect-error 'Image builds need the monorepo checkout' native-image-build api example/api:1
 
     cfg-set PROJECT shop
@@ -451,6 +451,7 @@ test-operations-remote-job () {
     cat > "${HOME}/app/infra" <<'INFRA'
 #!/usr/bin/env bash
 printf 'step %s\n' "$*"
+printf 'env API_REPLICAS=%s SSH_HOST=%s\n' "${API_REPLICAS:-unset}" "${SSH_HOST:-unset}"
 /bin/sleep 2
 printf 'warned\n' >&2
 printf 'done\n'
@@ -464,6 +465,7 @@ printf '%s' "${calls}" > "${TMPDIR}/calls"
 remote="${!#}"
 [[ "${mode}" != down ]] || exit 255
 [[ "${mode}" != skip || "${remote}" != *" 'start' "* ]] || exit 255
+[[ "${mode}" != flaky || "${calls}" != 1 ]] || exit 255
 if [[ "${mode}" == drop && "${calls}" == 1 ]]; then
     bash -c "${remote}" > /dev/null 2>&1 &
     /bin/sleep 1
@@ -496,6 +498,15 @@ SSH
     expect-contains "${output}" 'step restore one.dump --force' 'positional arguments and flags reach the server'
     cli-parse
 
+    cli-parse -e API_REPLICAS=4 -e SSH_HOST=198.51.100.9 scale
+    output="$(native-route scale 2>&1)" || true
+    expect-contains "${output}" 'env API_REPLICAS=4 SSH_HOST=unset' '-e overrides travel with the command, never the SSH target'
+    cli-parse
+
+    rm -f -- "${TMPDIR}/calls"
+    expect-error 'Unknown backup action: lst; did you mean list?' native-route backup lst
+    expect-fail test -e "${TMPDIR}/calls"
+
     cfg-set SSH_HOST ''
     expect-contains "$(native-route plan)" 'stack' 'without SSH_HOST the command runs here'
     cfg-set SSH_HOST 203.0.113.10
@@ -509,8 +520,18 @@ SSH
     expect-contains "${output}" 'step second'
     expect-contains "${output}" 'done'
 
+    printf flaky > "${TMPDIR}/mode"
+    rm -f -- "${TMPDIR}/calls"
+    status=0
+    output="$(native-server-run flaky 2>&1)" || status=$?
+    expect-equal "${status}" 3 "a start lost before the job existed runs it once again: ${output}"
+    expect-contains "${output}" 'Connection lost before remote job'
+    expect-equal "$(grep -c 'step flaky' <<< "${output}")" 1 'the job runs exactly once'
+
     printf skip > "${TMPDIR}/mode"
+    rm -f -- "${TMPDIR}/calls"
     expect-error 'did not start' native-server-run third
+    expect-equal "$(fs-read "${TMPDIR}/calls")" 6 'three starts and three status queries, then it gives up'
 
     printf down > "${TMPDIR}/mode"
     expect-error 'is unreachable; if it started it keeps running' native-server-run fourth
@@ -712,5 +733,16 @@ test-operations-doctor () {
     expect-equal "$(native-doctor-channels)" 'ok slack'
     expect-contains "$(native-doctor-timers)" 'warn checked only from the staged release bundle'
     expect-contains "$(native-doctor-edge)" 'warn not applied yet'
+
+    mkdir -p "${root}/edge"
+    printf 'services: {}\n' > "${root}/edge/edge.yaml"
+    native-edge-alive () { :; }
+    native-edge-sockets () { :; }
+    docker-rootless () { :; }
+    expect-contains "$(native-doctor-edge)" 'warn listening on 127.0.0.1:443 through rootless Docker' 'rootless port forwarding hides client addresses'
+    docker-rootless () { return 1; }
+    expect-contains "$(native-doctor-edge)" 'ok listening on 127.0.0.1:443'
+    cfg-set EDGE_SOCKETS /srv/edge
+    expect-contains "$(native-doctor-edge)" 'ok relayed through /srv/edge/http.sock' 'a relay keeps client addresses even on rootless Docker'
 
 }

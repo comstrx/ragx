@@ -5,7 +5,7 @@ source-include module/haproxy.sh || return
 
 native-dns () {
 
-    cli-dispatch native-dns "${1:-check}" 'check set' "${@:2}"
+    native-dispatch dns "$@"
 
 }
 native-dns-check () {
@@ -49,7 +49,7 @@ native-dns-driver () {
 }
 native-tls () {
 
-    cli-dispatch native-tls "${1:-present}" 'issue renew present import' "${@:2}"
+    native-dispatch tls "$@"
 
 }
 native-tls-issue () {
@@ -82,7 +82,7 @@ native-tls-import () {
 }
 native-firewall () {
 
-    cli-dispatch native-firewall "${1:-ports}" 'ports apply' "${@:2}"
+    native-dispatch firewall "$@"
 
 }
 native-firewall-ports () {
