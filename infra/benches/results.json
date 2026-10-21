@@ -387,6 +387,7 @@
     "failure": "a moment beyond the archive (a row committed but not yet archived): PostgreSQL stopped during recovery, the restore noticed the restart within 17 s, moved the previous data directory back and every row, the unarchived one included, was there on timeline 3",
     "guard": "edge apply with API_READY_PATH changed from / to /health was refused naming the live release; --force applied it with a warning and the API answered 503 as documented; edge apply with the old path restored 200",
     "offsite": "backup archive with fake keys ran aws s3 sync as uid 999 and reached Google (SignatureDoesNotMatch) and AWS (InvalidAccessKeyId); the secret appeared in no output; a real upload stays unverified",
-    "teardown": "uninstall, timers, the WAL archive removed from inside a container, volumes, networks, images and directories; the neighbor's container, network, images and folders untouched"
+    "teardown": "uninstall, timers, the WAL archive removed from inside a container, volumes, networks, images and directories; the neighbor's container, network, images and folders untouched",
+    "release": "tag v1.3.0: every gate green, release published, Deploy called with DEPLOY_AUTO=true built and shipped the real API and the super, admin and client images (api /health 200, super and admin 200, client 307), archiving on with the flag at mode 600; a dispatched backup wrote the dump and the first base, a dispatched deploy changed nothing; restore --at brought a dropped 1,000-row table back on the real stack in 19.5 s and the API reported its database ready again without a restart"
   }
 }
