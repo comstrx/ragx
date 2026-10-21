@@ -103,6 +103,7 @@ check-file = false
 
 [default.extend-words]
 brin = "brin"
+certifi = "certifi"
 hel = "hel"
 "JOD" = "JOD"
 juxt = "juxt"

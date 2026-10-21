@@ -4,6 +4,10 @@ Every release of RagX, one section per tag, one block per part.
 
 ## v1.1.1 — 2026-10-21
 
+### api
+
+- certifi 2026.10.19, which drops the emSign roots whose intermediate CA keys were compromised (GHSA-6q48-6c7w-9gw2, critical).
+
 ### web
 
 - A locale in the url is stripped with every leading slash and backslash collapsed into one, so `/en//evil.test` redirects to `/evil.test` instead of the protocol-relative `//evil.test` the export release server used to send as an open redirect.
