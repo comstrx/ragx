@@ -5,7 +5,7 @@ from core.error import Code
 from core.rand import rand
 from core.test import expect, test
 from core.thread import thread
-import asyncio, pytest
+import asyncio, contextlib, pytest
 
 AMQP = "amqp://guest:guest@127.0.0.1:5672/"
 
@@ -89,6 +89,35 @@ class TestBroker:
         await asyncio.wait_for(listening, 3.0)
 
         expect(sorted(heard)).equals(["orders.paid", "users.created.admin"])
+
+    async def test_a_cancelled_get_keeps_the_broker_usable_and_the_message_queued ( self, broker: Broker ) -> None:
+
+        queue = f"work-{rand.hex(3)}"
+
+        expect(await broker.purge(queue)).equals(0)
+
+        for turn in range(30):
+
+            await broker.publish(queue, b"kept", key=f"k{turn}")
+
+            expect(await thread.poll(lambda: _sized(broker, queue, 1), 0.05, 3.0)).true()
+
+            pull   = asyncio.ensure_future(broker.get(queue, 1.0))
+            parcel = None
+
+            for _ in range(turn % 6): await asyncio.sleep(0)
+
+            pull.cancel()
+
+            with contextlib.suppress(asyncio.CancelledError): parcel = await pull
+
+            parcel = parcel or await broker.get(queue, 2.0)
+
+            expect(parcel.id if parcel else None).equals(f"k{turn}")
+
+            if parcel: await broker.ack(parcel)
+
+        expect(await broker.size(queue)).equals(0)
 
 class TestFacade:
 

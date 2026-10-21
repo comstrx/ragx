@@ -133,13 +133,30 @@ class RabbitBroker(Broker):
 
         while True:
 
-            try: found = await live.get(no_ack=False, fail=False, timeout=RPC)
-            except FAULT as error: raise self.unavailable(error) from error
+            found = await self._fetch_(live)
 
             if found is not None: return self._parcel_(found, queue)
             if date.stamp() >= deadline: return None
 
             await asyncio.sleep(min(NAP, max(deadline - date.stamp(), 0.0)))
+
+    async def _fetch_ ( self, live: AbstractQueue ) -> AbstractIncomingMessage | None:
+
+        rpc = asyncio.ensure_future(live.get(no_ack=False, fail=False, timeout=RPC))
+
+        try: return await asyncio.shield(rpc)
+        except asyncio.CancelledError:
+            await self._release_(rpc)
+            raise
+        except FAULT as error: raise self.unavailable(error) from error
+
+    async def _release_ ( self, rpc: asyncio.Future[AbstractIncomingMessage | None] ) -> None:
+
+        with contextlib.suppress(*FAULT, asyncio.CancelledError):
+
+            late = await asyncio.shield(rpc)
+
+            if late is not None: await late.reject(requeue=True)
 
     def _parcel_ ( self, found: AbstractIncomingMessage, route: str ) -> Parcel:
 
