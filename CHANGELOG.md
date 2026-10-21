@@ -2,6 +2,12 @@
 
 Every release of RagX, one section per tag, one block per part.
 
+## v1.2.2 — 2026-10-21
+
+### api
+
+- The RabbitMQ recovery test now waits until the redelivered job is acknowledged before cutting the broker, and after the outage asserts what AMQP guarantees: no job is lost, the new job runs once, and the redelivered job may run once more, since an acknowledgement in flight when the connection drops is lost and the broker delivers the job again. It used to expect exactly once and failed about one run in ten (the v1.2.1 release gate); a traced failure showed `[1, 2, 2, 2, 3]`.
+
 ## v1.2.1 — 2026-10-21
 
 ### infra
