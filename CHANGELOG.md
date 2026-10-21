@@ -2,6 +2,22 @@
 
 Every release of RagX, one section per tag, one block per part.
 
+## v1.2.0 — 2026-10-21
+
+### infra
+
+- Infra 0.2.0. Commands with actions declare them once in `COMMAND_ACTIONS`, the default first: the dispatch, the overview usage (`backup [create|list|verify] [BACKUP]`) and a new Actions section in every manual read that table, flags print in one aligned column, headings and command columns are colored on a terminal (`NO_COLOR` turns it off), and a mistyped action names the closest one and the alternatives.
+- A routed command forwards its `-e` overrides over SSH stdin, never `SSH_*` or `REMOTE_*` and never in argv, so `infra -e API_REPLICAS=4 scale` acts on the server (the overrides used to be dropped silently), and an unknown action is refused before any SSH connection.
+- Retries where repeating is safe: image pulls and registry logins, image pushes (20 s and 40 s, GHCR's grant delay, moved from the Deploy workflow into `infra registry push`), `server stage` uploads, a `server run` start lost before the job existed (run exactly once), curl `--retry` on HTTPS reads, and aws-cli's standard mode with five attempts for offsite backups.
+- The release bundle embeds every asset byte for byte (each asset used to gain a trailing newline), and `Bash.toml` is read by a stricter TOML subset: trailing comments after values and tables, dotted tables declared once, no leading zeros, no escapes TOML lacks; settings keep their file order, so `infra config` prints them as the schema lists them.
+- Validation now covers `TLS_EMAIL`, `HEALTH_CA` and `PORTAINER_CA` (a comma could add mount options), `GITOPS_BRANCH`, `BACKUP_REGION`, `REGISTRY_NAMESPACE`, `SSH_HOST`, `SSH_USER` and `REMOTE_DIR`.
+- `doctor` warns when rootless Docker publishes the edge, since its port forwarding shows every client as the network gateway to logs, per-IP limits and trusted proxies; the relay mode keeps client addresses.
+- `.env.example`, `.env.production` and `.env.local` hold the same 127 keys in the same order under the same short comments, each followed by a blank line; the Alertmanager service fragment is `alertmanager-service.yaml.tpl`, distinct from its configuration template.
+
+### global
+
+- Deploy pushes each image once through `infra registry push`, which owns the retry.
+
 ## v1.1.1 — 2026-10-21
 
 ### api
