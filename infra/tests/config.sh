@@ -266,6 +266,34 @@ test-config-validation () {
     cfg-set MIGRATION_POLICY none
     config-validate
 
+    cfg-set GITOPS_BRANCH '--upload-pack=touch'
+    cfg-set TLS_EMAIL 'ops at example'
+    cfg-set HEALTH_CA '/ca.pem,target=/etc'
+    cfg-set BACKUP_REGION 'us east'
+    cfg-set REGISTRY_NAMESPACE 'Org/Team'
+    cfg-set SSH_HOST 'deploy@203.0.113.7'
+    cfg-set SSH_USER '-oProxyCommand=x'
+    cfg-set REMOTE_DIR /srv/ragx
+    output="$(config-validate 2>&1)" && err "Unsafe operator inputs were accepted"
+    expect-contains "${output}" 'Invalid GITOPS_BRANCH: expected branch'
+    expect-contains "${output}" 'Invalid TLS_EMAIL: expected email'
+    expect-contains "${output}" 'Invalid HEALTH_CA: expected path'
+    expect-contains "${output}" 'Invalid BACKUP_REGION: expected region'
+    expect-contains "${output}" 'Invalid REGISTRY_NAMESPACE: expected namespace'
+    expect-contains "${output}" 'Invalid SSH_HOST: expected target'
+    expect-contains "${output}" 'Invalid SSH_USER: expected user'
+    expect-contains "${output}" 'Invalid REMOTE_DIR: expected relative'
+
+    cfg-set GITOPS_BRANCH desired/main
+    cfg-set TLS_EMAIL ops+tls@example.co.uk
+    cfg-set HEALTH_CA /etc/ssl/health-ca.pem
+    cfg-set BACKUP_REGION me-central-1
+    cfg-set REGISTRY_NAMESPACE org-team
+    cfg-set SSH_HOST 203.0.113.7
+    cfg-set SSH_USER deploy
+    cfg-set REMOTE_DIR apps/ragx
+    config-validate
+
     cfg-set GITOPS_URL https://git.example.test/org/deploy
     output="$(config-validate 2>&1)" && err "Invalid delivery settings were accepted"
     expect-contains "${output}" 'GITOPS settings are partial; missing GITOPS_USER, GITOPS_TOKEN'

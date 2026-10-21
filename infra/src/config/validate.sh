@@ -27,6 +27,12 @@ config-valid () {
         variable)   [[ "${value}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] ;;
         extensions) [[ "${value}" =~ ^([a-z][a-z0-9_]{0,62}(,[a-z][a-z0-9_]{0,62})*)?$ ]] ;;
         header)     [[ "${value}" =~ ^[A-Za-z][A-Za-z0-9-]{0,63}$ ]] ;;
+        email)      [[ "${value}" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,63}$ ]] ;;
+        branch)     git-ref "${value}" ;;
+        region)     [[ "${value}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] ;;
+        namespace)  [[ "${value}" =~ ^[a-z0-9]+([._-][a-z0-9]+)*$ ]] ;;
+        target)     [[ "${value}" =~ ^[A-Za-z0-9][A-Za-z0-9.:-]*$ ]] ;;
+        user)       [[ "${value}" =~ ^[A-Za-z_][A-Za-z0-9_.-]*$ ]] ;;
         proxies)    config-proxies "${value}" ;;
         relative)   fs-relative "${value}" ;;
         command)    [[ "${value}" =~ [^[:space:]] && "${value}" != *$'\n'* ]] ;;
@@ -114,6 +120,14 @@ config-validate () {
     config-check retries NOTIFY_RETRIES || failed=1
     config-check-set variable API_RELEASE_VARIABLE WEB_SPEC_VARIABLE WEB_API_VARIABLE || failed=1
     config-check-set command API_MIGRATE_COMMAND || failed=1
+    config-check branch GITOPS_BRANCH || failed=1
+    config-check-set email TLS_EMAIL || failed=1
+    config-check-set path HEALTH_CA PORTAINER_CA || failed=1
+    config-check-set region BACKUP_REGION || failed=1
+    config-check-set namespace REGISTRY_NAMESPACE || failed=1
+    config-check-set target SSH_HOST || failed=1
+    config-check-set user SSH_USER || failed=1
+    config-check-set relative REMOTE_DIR || failed=1
 
     [[ "${CONFIG[DB_USER]}" != postgres ]] || { err "DB_USER must not be the PostgreSQL superuser"; failed=1; }
     [[ "${CONFIG[GITOPS_DESIRED]}" != "${CONFIG[GITOPS_COMPOSE]}" ]] || { err "GITOPS_DESIRED and GITOPS_COMPOSE must differ"; failed=1; }
