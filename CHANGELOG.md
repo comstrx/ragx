@@ -2,6 +2,14 @@
 
 Every release of RagX, one section per tag, one block per part.
 
+## v1.3.0 — 2026-10-21
+
+### infra
+
+- Infra 0.3.0. Point-in-time recovery. `BACKUP_ROOT` holds `sql/` for the dumps and `wal/` for the archive, mirrored under `BACKUP_URI`. With `BACKUP_WAL=true` PostgreSQL archives its WAL at least once a minute, each `backup` takes a base backup and prunes bases and segments older than `BACKUP_DAYS`, `backup archive` (and the archive timer, every `BACKUP_ARCHIVE_INTERVAL` seconds) copies the archive offsite without ever deleting there, and `restore --at TIME --force` brings the whole cluster back to that second, keeping the previous data directory and putting it back if recovery stops. Archiving is always configured and acts only while `/wal/enabled` exists, so `BACKUP_WAL` toggles without a data migration or a restart. `doctor` reports archiving and the oldest reachable moment, and `monitor` turns degraded when archiving fails.
+- `edge apply` refuses a readiness path or port the live release does not serve, naming the change and the release, unless `--force` accepts the gap.
+- `BACKUP_DAYS=1` in every env file. Dumps now live in `sql/` locally and offsite; dumps an older version left at the root of `BACKUP_ROOT` are no longer listed, and a deployment created before this change recreates its data services once to mount the archive.
+
 ## v1.2.4 — 2026-10-21
 
 ### infra
