@@ -128,7 +128,6 @@
     "export": "the desired Compose artifact keeps ${API_REPLICAS}, ${DEPLOY_SLOT} and ${RELEASE_ROOT}, carries no host path or secret, and validates with docker compose under Portainer-style variables"
   },
   "unverified": [
-    "The release.yml and deploy.yml runs themselves on GitHub, including the secret mapping, the DEPLOY_ACTORS gate and the DEPLOY_AUTO call from Release: their steps call the commands proven above, and zizmor passes",
     "Telegram delivery with a real bot token: the request shape, token secrecy and failure handling are pinned by offline tests",
     "Docker Hub private push and pull: no Docker Hub credentials were supplied; the driver differs from GHCR only in host and Portainer type, both covered by offline tests",
     "public UDP 443 through a cloud firewall and Let's Encrypt issuance: they need a public domain and an open cloud firewall; the HTTP-01 route and the certbot arguments are verified",
@@ -354,5 +353,18 @@
     "cloudflare": "with Cloudflare's list trusted (then CLOUDFLARE_PROXIED, now TRUSTED_PROXIES and TRUSTED_HEADER) edge apply recorded 22 ranges; PROXY from 173.245.48.5 logged CF-Connecting-IP 203.0.113.9; PROXY from 198.51.100.7 kept 198.51.100.7",
     "trusted_header": "2026-10-20 local check on haproxytech/haproxy-alpine:3.4.7: req.hdr_ip(X-Forwarded-For,-1) from a trusted peer turned '6.6.6.6, 203.0.113.9' into 203.0.113.9, two headers into the last, '2001:db8::5' into itself; 'nope' and an untrusted peer kept the peer address; haproxy -c passed",
     "gcs": "gs:// upload with fake HMAC keys reached storage.googleapis.com: SignatureDoesNotMatch on PutObject"
+  },
+  "release_lab": {
+    "date": "2026-10-21",
+    "path": "tag v1.1.0 → Release (gates, GitHub release) → Deploy called with DEPLOY_AUTO=true; then Deploy dispatched by hand from main; rootless Docker 29.9.1 on a 4 vCPU / 16 GB host shared with another product's production container, which stayed untouched",
+    "auto_deploy": "Release run 39512104914: every gate green on Linux and macOS, release published, images job built and scanned the API and the super, admin and client images for the deployment's address, deploy job shipped them over SSH with a restrict key; GHCR refused the first push of each brand-new package until it granted the repository, hence a bounded push retry",
+    "manual_deploy": "workflow_dispatch from main: backup (2 dumps listed), deploy into relay mode, deploy back to standalone, deploy of an env change, rollback; images reused by tag and address when the address did not change",
+    "standalone": "api, super, admin, client and grafana over HTTP/2 with X-Release, HSTS and Alt-Svc h3; HTTP/3 200 through the published UDP port; 308 from 18080 to the https port; the admin CSP connect-src names the deployment's API origin",
+    "relay": "EDGE_SOCKETS pointed at a socket directory granted to uid 166535 behind a user-level nginx stream relay with proxy_protocol: no published edge port, no UDP, sockets mode 666, 308 to the relay's https port, HAProxy logged clients 127.0.0.2, .3 and .4 from distinct sources, and the web images were rebuilt for the relay's address",
+    "guards": "a candidate needing more unreserved Docker memory than the host had (the neighbor holds a 6 GiB limit) was rejected and the live release restored; the retention guard refused a deploy while the previous slot was kept for rollback",
+    "switch_under_load": "18,122 health requests across a release switch and a dispatched rollback: all 200, max 0.096 s; the rollback switched back in about 12 s",
+    "doctor": "every check green on the server; Prometheus reported 5 targets up",
+    "offsite_routes": "from the server, the pinned aws-cli image with fake keys reached storage.googleapis.com (SignatureDoesNotMatch) for gs:// and s3.us-east-1.amazonaws.com (InvalidAccessKeyId) for s3://",
+    "teardown": "the first uninstall left the slot kept for rollback and the monitoring running; uninstall was fixed to remove both slots and the monitoring, rerun from a restaged bundle, and every project container, volume, network, image, timer, directory and the CI key were removed"
   }
 }
