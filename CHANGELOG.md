@@ -4,6 +4,10 @@ Every release of RagX, one section per tag, one block per part.
 
 ## Unreleased
 
+### web
+
+- A locale in the url is stripped with every leading slash and backslash collapsed into one, so `/en//evil.test` redirects to `/evil.test` instead of the protocol-relative `//evil.test` the export release server used to send as an open redirect.
+
 ### infra
 
 - `uninstall` removes both release slots and the monitoring with the edge and the data services, so no container of the project stays behind (the slot kept for rollback and the monitoring used to survive it).
