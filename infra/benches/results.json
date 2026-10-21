@@ -377,5 +377,16 @@
     "limitation": "the edge renders readiness paths and ports from the staged settings, so a deploy that changes API_READY_PATH (here / to /health) fails the live slot's health checks at edge apply until the new release switches in: 10,353 requests answered 503 during that window. Per-slot readiness is the next fix",
     "rootless": "rootless Docker's port forwarding presents every standalone client as the bridge gateway (172.19.0.1): per-IP limits and logs see one address; the relay keeps real clients; doctor now warns",
     "teardown": "uninstall, timers, volumes, networks, images, directories, the nginx relay, the CI key (refused afterwards), the GitHub environment secrets and DEPLOY_AUTO removed; the neighbor's container, network, images and folders untouched"
+  },
+  "wal_lab": {
+    "date": "2026-10-21",
+    "path": "infra from a checkout over SSH on the shared rootless-Docker host, an API-only release on the pinned python:3.15-slim image, a fresh data stack with the WAL archive",
+    "archiving": "archive_mode=on, archive_timeout=60; /wal owned by uid 999 (host subuid 166534) mode 700; pg_switch_wal archived a segment within seconds with failed_count 0",
+    "base": "backup wrote sql/<stamp>.dump and wal/base/<stamp> (base.tar.gz 4.2 MB, backup_manifest, label); the start segment computed from the manifest LSN, 000000010000000000000004, matched the .backup file PostgreSQL archived, and pg_archivecleanup removed the older segments",
+    "point_in_time": "three committed rows, then DELETE plus a marker row; restore --at the second between them brought the three rows back without the marker in 16 s, on timeline 2, recovery settings reset, a new base taken; a second cycle on timeline 2 restored a later row after a TRUNCATE in 19 s with pending_restart 0 and 322 probes all 200",
+    "failure": "a moment beyond the archive (a row committed but not yet archived): PostgreSQL stopped during recovery, the restore noticed the restart within 17 s, moved the previous data directory back and every row, the unarchived one included, was there on timeline 3",
+    "guard": "edge apply with API_READY_PATH changed from / to /health was refused naming the live release; --force applied it with a warning and the API answered 503 as documented; edge apply with the old path restored 200",
+    "offsite": "backup archive with fake keys ran aws s3 sync as uid 999 and reached Google (SignatureDoesNotMatch) and AWS (InvalidAccessKeyId); the secret appeared in no output; a real upload stays unverified",
+    "teardown": "uninstall, timers, the WAL archive removed from inside a container, volumes, networks, images and directories; the neighbor's container, network, images and folders untouched"
   }
 }
