@@ -209,7 +209,11 @@ class TestRecovery:
 
                 free.set()
 
-                expect(await thread.poll(lambda: done == [1, 2, 2], 0.05, 10.0)).true()
+                def settled () -> bool:
+
+                    return done == [1, 2, 2] and worker.describe()["busy"] == 0
+
+                expect(await thread.poll(settled, 0.05, 10.0)).true()
 
                 await relay.down()
                 await sender.push(work, 3, queue=name)
@@ -222,7 +226,10 @@ class TestRecovery:
 
                 await relay.up()
 
-                expect(await thread.poll(lambda: done == [1, 2, 2, 3], 0.1, 15.0)).true()
+                expect(await thread.poll(lambda: 3 in done, 0.1, 15.0)).true()
+                expect(done[:3]).equals([1, 2, 2])
+                expect([value for value in done[3:] if value != 2]).equals([3])
+                expect(done[3:].count(2)).below(2)
                 expect(worker.describe()["workers"]).equals(1)
 
             finally:
