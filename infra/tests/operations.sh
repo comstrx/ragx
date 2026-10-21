@@ -31,12 +31,15 @@ test-operations-topology () {
 }
 test-operations-backup-retention () {
 
-    local root="${CONFIG[BACKUP_ROOT]}" name=""
+    local root="${CONFIG[BACKUP_SQL_ROOT]}" name=""
 
-    expect-equal "${root}" "${CONFIG[STATE_ROOT]}/backups"
+    expect-equal "${root}" "${CONFIG[STATE_ROOT]}/backups/sql"
+    expect-equal "${CONFIG[BACKUP_WAL_ROOT]}" "${CONFIG[STATE_ROOT]}/backups/wal"
     cfg-set BACKUP_DIR /srv/backups
     config-derive
     expect-equal "${CONFIG[BACKUP_ROOT]}" /srv/backups
+    expect-equal "${CONFIG[BACKUP_SQL_ROOT]}" /srv/backups/sql
+    expect-equal "${CONFIG[BACKUP_WAL_ROOT]}" /srv/backups/wal
     cfg-set BACKUP_DIR ''
     config-derive
 
@@ -77,7 +80,7 @@ test-operations-guards () {
     expect-error 'Usage: infra restore [BACKUP] --force' native-restore one two
     expect-error 'Restore replaces the live database; rerun with --force' native-restore
     expect-error 'stop takes the edge and the current release offline' native-stop
-    expect-error 'Usage: infra timer remove monitor|backup|renew|reconcile' native-timer-remove shell
+    expect-error 'Usage: infra timer remove monitor|backup|archive|renew|reconcile' native-timer-remove shell
     expect-error 'Unknown tls action: drop (expected present, issue, renew or import)' native-tls drop
     expect-error 'Usage: infra image build api|web REFERENCE [SPEC]' native-image-build other example/x:1
     expect-error 'Image builds need the monorepo checkout' native-image-build api example/api:1
@@ -281,10 +284,11 @@ test-operations-monitor () {
 
     fixture-release
     config-derive
+    cfg-set BACKUP_WAL false
     root="${CONFIG[STATE_ROOT]}"
-    mkdir -p "${root}/backups"
-    printf 'dump' > "${root}/backups/latest.dump"
-    state-write "${root}/backups" latest latest.dump
+    mkdir -p "${root}/backups/sql"
+    printf 'dump' > "${root}/backups/sql/latest.dump"
+    state-write "${root}/backups/sql" latest latest.dump
     fixture-telegram
     printf 'yes' > "${TMPDIR}/serving"
 
@@ -555,9 +559,10 @@ test-operations-backup-restore () {
     local -a dumps=()
 
     fixture-release
+    cfg-set BACKUP_WAL false
     config-derive
     fixture-telegram
-    root="${CONFIG[BACKUP_ROOT]}"
+    root="${CONFIG[BACKUP_SQL_ROOT]}"
 
     printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$@" >> "${TMPDIR}/docker.args"' "printf dump-bytes" > "${TMPDIR}/bin/docker"
     chmod 700 "${TMPDIR}/bin/docker"
@@ -725,11 +730,11 @@ test-operations-doctor () {
     expect-equal "$(native-doctor-env)" 'fail API env content missing: export API_ENV_FILE or stage .env.api'
 
     expect-contains "$(native-doctor-backup)" 'warn no backup recorded yet'
-    mkdir -p "${root}/backups"
-    printf dump > "${root}/backups/a.dump"
-    state-write "${root}/backups" latest a.dump
+    mkdir -p "${root}/backups/sql"
+    printf dump > "${root}/backups/sql/a.dump"
+    state-write "${root}/backups/sql" latest a.dump
     expect-contains "$(native-doctor-backup)" 'ok a.dump, 0h old'
-    touch -t 200001010000 "${root}/backups/a.dump"
+    touch -t 200001010000 "${root}/backups/sql/a.dump"
     expect-contains "$(native-doctor-backup)" 'older than BACKUP_MAX_AGE'
 
     expect-equal "$(native-doctor-release)" 'warn no release deployed yet'
@@ -756,5 +761,127 @@ test-operations-doctor () {
     expect-contains "$(native-doctor-edge)" 'ok listening on 127.0.0.1:443'
     cfg-set EDGE_SOCKETS /srv/edge
     expect-contains "$(native-doctor-edge)" 'ok relayed through /srv/edge/http.sock' 'a relay keeps client addresses even on rootless Docker'
+
+}
+test-operations-backup-wal () {
+
+    local calls="${TMPDIR}/data.calls" archive="${TMPDIR}/wal"
+
+    fixture-release
+    cfg-set BACKUP_DAYS 3
+    cfg-set BACKUP_URI s3://bucket/prefix
+    cfg-set BACKUP_KEY key-id
+    cfg-set BACKUP_SECRET wal-sentinel-secret
+    mkdir -p "${TMPDIR}/bin" "${archive}"
+    printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$@" > "${TMPDIR}/docker.args"' > "${TMPDIR}/bin/docker"
+    chmod 700 "${TMPDIR}/bin/docker"
+    PATH="${TMPDIR}/bin:${PATH}"
+
+    native-compose-data () {
+
+        printf '%s\n' "$*" >> "${TMPDIR}/data.calls"
+
+        case "$*" in
+            *backup_manifest*) printf '1 1 A2000028\n' ;;
+            *wal_segment_size*) printf '16MB\n' ;;
+            *'ps -q postgres'*) printf 'pg-container\n' ;;
+        esac
+
+    }
+    docker-inspect () {
+
+        printf '%s\n' "${TMPDIR}/wal"
+
+    }
+
+    cfg-set BACKUP_WAL false
+    native-backup-base
+    expect-contains "$(fs-read "${calls}")" 'rm -f /wal/enabled' 'switching WAL off removes the flag'
+    expect-absent "$(fs-read "${calls}")" pg_basebackup 'no base backup while WAL is off'
+
+    : > "${calls}"
+    cfg-set BACKUP_WAL true
+    native-backup-base
+
+    expect-contains "$(fs-read "${calls}")" ': > /wal/enabled'
+    expect-contains "$(fs-read "${calls}")" 'pg_basebackup -U "$POSTGRES_USER" -D "/wal/base/$1.part" --format=tar --gzip --wal-method=none --checkpoint=fast'
+    expect-contains "$(fs-read "${calls}")" ' 0000000100000001000000A2 ' 'the start segment comes from the manifest LSN and the segment size'
+    expect-contains "$(fs-read "${calls}")" 'pg_archivecleanup /wal/archive "$segment"'
+    expect-contains "$(fs-read "${calls}")" ' prune 2' 'base backups older than BACKUP_DAYS go'
+    expect-contains "$(fs-read "${TMPDIR}/docker.args")" $'--user\n999:999'
+    expect-contains "$(fs-read "${TMPDIR}/docker.args")" "type=bind,source=${archive},target=/sync,readonly"
+    expect-contains "$(fs-read "${TMPDIR}/docker.args")" $'sync\n--only-show-errors\n--exclude\nenabled'
+    expect-contains "$(fs-read "${TMPDIR}/docker.args")" $'/sync\ns3://bucket/prefix/wal'
+    expect-absent "$(fs-read "${TMPDIR}/docker.args")" --delete 'an offsite copy is never pruned by a sync'
+    expect-absent "$(fs-read "${TMPDIR}/docker.args")" wal-sentinel-secret
+
+    expect-equal "$(postgresql-bytes 16MB)" 16777216
+    expect-equal "$(postgresql-bytes 1GB)" 1073741824
+    expect-error 'Unexpected wal_segment_size' postgresql-bytes 16kB
+    expect-error 'Invalid base backup name' postgresql-base 'x;y' native-compose-data exec -T postgres
+
+}
+test-operations-restore-point () {
+
+    local output=""
+
+    fixture-release
+    fixture-telegram
+    state-write "${CONFIG[STATE_ROOT]}" current r1
+
+    postgresql-bases () {
+
+        printf '%s\n' '20261021T000000Z 000000010000000000000009 20261021T000150Z' '20261020T000000Z 000000010000000000000003 20261020T000210Z'
+
+    }
+    native-wait-data () { :; }
+    native-current () { cfg-set RELEASE r1; }
+    native-archive-source () { out /srv/wal; }
+    native-backup-dump () { out /srv/backups/sql/saved.dump; }
+    native-background-stop () { printf 'background stop %s\n' "$1" >> "${TMPDIR}/flow"; }
+    native-background-start () { printf 'background start %s\n' "$1" >> "${TMPDIR}/flow"; }
+    native-compose-data () { printf 'data %s\n' "$*" >> "${TMPDIR}/flow"; }
+    postgresql-unpack () { printf 'unpack %s %s %s %s\n' "$2" "$4" "$5" "$3" >> "${TMPDIR}/flow"; }
+    postgresql-repack () { printf 'repack %s\n' "$2" >> "${TMPDIR}/flow"; }
+    postgresql-settle () { printf 'settle\n' >> "${TMPDIR}/flow"; }
+    native-replay () { [[ ! -f "${TMPDIR}/stuck" ]]; }
+    native-probe-public () { :; }
+    native-backup-base () { printf 'base\n' >> "${TMPDIR}/flow"; }
+    native-probe-public || err "The public probe stub must answer"
+
+    output="$(native-restore-point 20261021T120000Z 2>&1)"
+    expect-contains "$(fs-read "${TMPDIR}/flow")" 'unpack shop-postgres 20261021T000000Z 2026-10-21 12:00:00+00 /srv/wal' 'the newest base finished before the moment is used'
+    expect-contains "$(fs-read "${TMPDIR}/flow")" $'background stop r1\ndata stop postgres'
+    expect-contains "$(fs-read "${TMPDIR}/flow")" $'data start postgres\nsettle\ndata restart postgres' 'a restart drops the recovery target from memory'
+    expect-contains "$(fs-read "${TMPDIR}/flow")" $'background start r1\nbase' 'a new base anchors the new timeline'
+    expect-contains "${output}" 'restore: changed=true'
+    expect-contains "$(fs-read "${TMPDIR}/telegram")" 'the database was restored to 2026-10-21 12:00:00+00 from base 20261021T000000Z'
+
+    : > "${TMPDIR}/flow"
+    native-restore-point 20261021T000100Z > /dev/null 2>&1
+    expect-contains "$(fs-read "${TMPDIR}/flow")" 'unpack shop-postgres 20261020T000000Z' 'a base still running at the moment is skipped'
+
+    expect-error 'No base backup finished before 2026-10-19 12:00:00+00' native-restore-point 20261019T120000Z
+
+    : > "${TMPDIR}/flow"
+    : > "${TMPDIR}/stuck"
+    expect-error 'the previous data is back' native-restore-point 20261021T120000Z
+    expect-contains "$(fs-read "${TMPDIR}/flow")" 'repack shop-postgres'
+    expect-absent "$(fs-read "${TMPDIR}/flow")" settle
+    expect-contains "$(fs-read "${TMPDIR}/flow")" 'background start r1' 'the worker and scheduler come back after a failed restore'
+
+    cfg-set BACKUP_WAL false
+    expect-error 'needs BACKUP_WAL=true' native-restore-point 20261021T120000Z
+
+    expect-equal "$(native-moment 2026-10-20T22:59:30Z)" 20261020T225930Z
+    expect-equal "$(native-moment '2026-10-20 22:59:30')" 20261020T225930Z
+    expect-error 'Name the moment in UTC' native-moment 21/10/2026
+    expect-error 'is in the future' native-moment 2999-01-01T00:00:00Z
+
+    cli-parse restore one.dump --at 2026-10-21T22:59:30Z --force
+    expect-error 'a BACKUP or --at TIME, not both' native-restore one.dump
+    cli-parse restore --at 2026-10-21T22:59:30Z
+    expect-error 'rerun with --force' native-restore
+    cli-parse
 
 }

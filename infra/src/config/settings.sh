@@ -129,6 +129,8 @@ config-derive () {
     cfg-set COMPOSE_PROJECT "${CONFIG[PROJECT]:-unconfigured}"
     cfg-set STATE_ROOT "${CONFIG[PROJECT_ROOT]}/${MANIFEST[paths.cache]}/${CONFIG[COMPOSE_PROJECT]}"
     cfg-set BACKUP_ROOT "${CONFIG[BACKUP_DIR]:-${CONFIG[STATE_ROOT]}/backups}"
+    cfg-set BACKUP_SQL_ROOT "${CONFIG[BACKUP_ROOT]}/sql"
+    cfg-set BACKUP_WAL_ROOT "${CONFIG[BACKUP_ROOT]}/wal"
     cfg-set WEB_ENABLED false
     [[ -z "${CONFIG[WEB_IMAGES]}" ]] || cfg-set WEB_ENABLED true
     config-github

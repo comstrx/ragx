@@ -58,7 +58,7 @@ native-status () {
 }
 native-backup-age () {
 
-    local root="${CONFIG[BACKUP_ROOT]}" latest="" modified=""
+    local root="${CONFIG[BACKUP_SQL_ROOT]}" latest="" modified=""
 
     latest="$(state-read "${root}" latest)" || return
     modified="$(fs-modified "${root}/${latest}")" || return
@@ -70,7 +70,7 @@ native-doctor () {
 
     local check="" verdict="" detail="" failed=0 warned=0 mark=""
 
-    for check in runtime docker settings env disk edge certificate data release backup timers channels; do
+    for check in runtime docker settings env disk edge certificate data release backup wal timers channels; do
 
         IFS=' ' read -r verdict detail < <("native-doctor-${check}" 2>/dev/null || out "fail the check itself failed")
 
@@ -203,12 +203,37 @@ native-doctor-release () {
     out "ok ${current} (${phase:-complete})"
 
 }
+native-doctor-wal () {
+
+    local bases="" oldest=""
+
+    cfg-true BACKUP_WAL || { out "ok off; restores use the dumps"; return 0; }
+    native-data-healthy || { out "warn unchecked while the data services are down"; return 0; }
+    native-compose-data exec -T postgres test -f /wal/enabled || { out "warn archiving is not switched on yet; run infra deploy or infra backup"; return 0; }
+    native-archive-healthy || { out "fail archiving fails; read the PostgreSQL log and the space under the WAL archive"; return 0; }
+
+    bases="$(postgresql-bases native-compose-data exec -T postgres | sort)" || bases=""
+    [[ -n "${bases}" ]] || { out "warn archiving, but no base backup yet; run infra backup"; return 0; }
+    read -r _ _ oldest <<< "${bases%%$'\n'*}"
+
+    out "ok archiving every 60s at most; point in time back to ${oldest}"
+
+}
+native-archive-healthy () {
+
+    local archived="" failed=""
+
+    read -r archived failed < <(postgresql-archiver native-compose-data exec -T postgres) || return 0
+    [[ "${failed}" =~ ^-?[0-9]+$ && "${archived}" =~ ^-?[0-9]+$ ]] || return 0
+    (( failed < 0 || (archived >= 0 && archived <= failed) ))
+
+}
 native-doctor-backup () {
 
     local age=""
 
     age="$(native-backup-age 2>/dev/null)" || { out "warn no backup recorded yet; run infra backup"; return 0; }
-    (( $(date +%s) - $(fs-modified "${CONFIG[BACKUP_ROOT]}/${age%%,*}") <= CONFIG[BACKUP_MAX_AGE] )) || { out "fail ${age}; older than BACKUP_MAX_AGE"; return 0; }
+    (( $(date +%s) - $(fs-modified "${CONFIG[BACKUP_SQL_ROOT]}/${age%%,*}") <= CONFIG[BACKUP_MAX_AGE] )) || { out "fail ${age}; older than BACKUP_MAX_AGE"; return 0; }
     out "ok ${age}"
 
 }

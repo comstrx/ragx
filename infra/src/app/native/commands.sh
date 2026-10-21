@@ -6,7 +6,7 @@ STACK_COMMANDS=(
     'render|Release|render|Render and pin the release files without deploying them'
     'recover|Release|recover --force|Clear a dead deploy lock and resume the pending release'
     'backup|Data|backup {actions} [BACKUP]|Dump the database with a checksum, list the dumps, or prove one restores'
-    'restore|Data|restore [BACKUP] --force|Replace the live database with a dump, the latest by default, keeping the old one'
+    'restore|Data|restore [BACKUP] [--at TIME] --force|Replace the live database with a dump, or the whole cluster as it was at a moment'
     'status|Operate|status|Show the releases, phase, slots, desired state, latest backup and channels'
     'doctor|Operate|doctor|Check runtime, settings, env files, disk, edge, certificate, data, backups, timers and channels'
     'plan|Operate|plan|Describe the stack, mode, driver, protocols, integrations and state root'
@@ -48,14 +48,14 @@ COMMAND_FLAGS[recover]='--force=Required: confirms the deploy that held the lock
 COMMAND_ABOUT[recover]='For a deploy whose process died holding the lock: removes the lock only when its owner no longer runs, then resumes the pending release.'
 COMMAND_EXAMPLES[recover]='infra status|infra recover --force'
 
-COMMAND_ACTIONS[backup]='create=Dump the database, check the archive, write its SHA-256, copy both to BACKUP_URI (s3:// or gs://) and prune dumps older than BACKUP_DAYS|list=Show the dumps, newest first|verify [BACKUP]=Restore a dump, the latest by default, into a scratch database, count its tables and drop it'
-COMMAND_NOTES[backup]='The backup timer runs create every BACKUP_INTERVAL seconds|Notifies backup.succeeded or backup.failed'
-COMMAND_EXAMPLES[backup]='infra backup|infra backup list|infra backup verify|infra backup verify 20261020T112013Z-jcQdcHui.dump'
+COMMAND_ACTIONS[backup]='create=Dump the database into sql/ with its SHA-256 and, with BACKUP_WAL, take a base backup into wal/; copy both to BACKUP_URI and prune what is older than BACKUP_DAYS|list=Show the dumps, newest first, and the base backups a point-in-time restore can start from|verify [BACKUP]=Restore a dump, the latest by default, into a scratch database, count its tables and drop it|archive=Copy the WAL archive and base backups to BACKUP_URI/wal; the archive timer runs it every BACKUP_ARCHIVE_INTERVAL seconds'
+COMMAND_NOTES[backup]='The backup timer runs create every BACKUP_INTERVAL seconds|With BACKUP_WAL=true PostgreSQL archives its WAL into wal/archive at least every 60 seconds, so a restore can reach any second since the oldest kept base backup|Offsite copies never delete: give the bucket a lifecycle rule for retention|Notifies backup.succeeded or backup.failed'
+COMMAND_EXAMPLES[backup]='infra backup|infra backup list|infra backup verify|infra backup verify 20261020T112013Z-jcQdcHui.dump|infra backup archive'
 
-COMMAND_FLAGS[restore]='--force=Required: replaces the live database'
+COMMAND_FLAGS[restore]='--at TIME=Restore the whole database cluster to this UTC moment, YYYY-MM-DDTHH:MM:SSZ, from a base backup and the WAL archive|--force=Required: replaces the live database'
 COMMAND_ABOUT[restore]='Checks the dump, saves the live database as a new backup, restores into a scratch database, stops the worker and scheduler, then swaps by rename; the old database stays as <db>_before_<stamp>.'
-COMMAND_NOTES[restore]='Without BACKUP the latest dump is restored, so restoring again without a name undoes a restore|The API keeps serving through the copy; the rename ends its database sessions, which failed requests for about 3 seconds at 600 requests per second in the lab|Notifies restore.succeeded or restore.failed'
-COMMAND_EXAMPLES[restore]='infra backup list|infra restore --force|infra restore 20261020T112013Z-jcQdcHui.dump --force'
+COMMAND_NOTES[restore]='Without BACKUP the latest dump is restored, so restoring again without a name undoes a restore|--at stops PostgreSQL, unpacks the newest base backup finished before TIME, replays the archive up to TIME and keeps the previous data directory beside it; the API answers 503 meanwhile|The API keeps serving through the copy; the rename ends its database sessions, which failed requests for about 3 seconds at 600 requests per second in the lab|Notifies restore.succeeded or restore.failed'
+COMMAND_EXAMPLES[restore]='infra backup list|infra restore --force|infra restore 20261020T112013Z-jcQdcHui.dump --force|infra restore --at 2026-10-21T22:59:30Z --force'
 
 COMMAND_EXAMPLES[status]='infra status|infra server run status'
 
@@ -90,7 +90,8 @@ COMMAND_FLAGS[notify]='--channel NAME=Send to this channel only: telegram, slack
 COMMAND_EXAMPLES[notify]='infra notify "maintenance at 22:00 UTC"|infra notify "deployed" --channel telegram --token "$BOT" --chat -1001234567890|infra notify "deployed" --channel slack --hook "$SLACK_HOOK"|infra notify "deployed" --channel webhook --url https://hooks.example.com/infra --secret "$SIGNING_KEY"'
 
 COMMAND_ACTIONS[edge]='apply=Render the HAProxy configuration and Compose file, validate them in a scratch container, then reload seamlessly, or recreate the edge when its ports change'
-COMMAND_NOTES[edge]='Any failure restores the previous edge and notifies edge.rolled-back|deploy refuses to run while the live edge differs from the rendered one|Upserts the records of every routed host when DNS_PROVIDER is set|Refreshes the TRUSTED_PROXIES lists published at https URLs and keeps the recorded ones when unreachable|EDGE_SOCKETS switches between published ports and a TCP relay such as nginx stream; the change recreates the edge'
+COMMAND_FLAGS[edge]='--force=Apply a readiness path or port the live release does not serve, accepting failed health checks until the next release switches in'
+COMMAND_NOTES[edge]='Any failure restores the previous edge and notifies edge.rolled-back|A change of API_READY_PATH, WEB_READY_PATH, API_PORT or WEB_PORT is refused while the live release serves the old value, unless --force|deploy refuses to run while the live edge differs from the rendered one|Upserts the records of every routed host when DNS_PROVIDER is set|Refreshes the TRUSTED_PROXIES lists published at https URLs and keeps the recorded ones when unreachable|EDGE_SOCKETS switches between published ports and a TCP relay such as nginx stream; the change recreates the edge'
 COMMAND_EXAMPLES[edge]='infra edge apply|infra -e EDGE_SOCKETS=/srv/edge edge apply'
 
 COMMAND_ACTIONS[tls]='present=Report whether the edge holds a certificate|issue=Request an ACME certificate for every routed host: HTTP-01 through the edge, or DNS-01 through DNS_PROVIDER|renew=Renew the certificate when it nears expiry and reload the edge|import CERT KEY=Install a certificate and key issued elsewhere'
@@ -112,7 +113,7 @@ COMMAND_ACTIONS[docker]='status=Print the engine and Compose versions and whethe
 COMMAND_EXAMPLES[docker]='infra docker|infra server install'
 
 COMMAND_ACTIONS[timer]='list=Show the timers of this project|install NAME SECONDS=Run NAME every SECONDS from the staged bundle: a systemd user timer, or a launchd agent on macOS|remove NAME=Stop and delete the timer of NAME'
-COMMAND_NOTES[timer]='NAME: monitor, backup, renew or reconcile|deploy installs monitor, backup and renew, and reconcile under GitOps|User timers outlive SSH sessions only with loginctl enable-linger'
+COMMAND_NOTES[timer]='NAME: monitor, backup, archive, renew or reconcile|deploy installs monitor, backup and renew, archive when BACKUP_WAL and BACKUP_URI are set, and reconcile under GitOps|User timers outlive SSH sessions only with loginctl enable-linger'
 COMMAND_EXAMPLES[timer]='infra timer|infra timer install backup 21600|infra timer remove reconcile'
 
 COMMAND_FLAGS[reconcile]='--force=Deploy the desired release even though this server rejected it'

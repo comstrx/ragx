@@ -75,9 +75,10 @@ config-validate () {
     config-check positive HEALTH_TIMEOUT WARMUP_SECONDS DRAIN_TIMEOUT RETENTION_SECONDS || failed=1
     config-check positive EDGE_MAXCONN BACKEND_MAXCONN GITOPS_INTERVAL BACKUP_MAX_AGE BACKUP_DAYS PORTAINER_ENDPOINT || failed=1
     config-check positive VERIFY_SECONDS VERIFY_FAILURES VERIFY_INTERVAL MONITOR_INTERVAL BACKUP_INTERVAL RENEW_INTERVAL || failed=1
+    config-check positive BACKUP_ARCHIVE_INTERVAL || failed=1
     config-check replicas API_REPLICAS || failed=1
     config-check workers WORKER_REPLICAS || failed=1
-    config-check boolean TLS_ENABLED HTTP3_ENABLED METRICS_ENABLED DNS_PROXIED || failed=1
+    config-check boolean TLS_ENABLED HTTP3_ENABLED METRICS_ENABLED DNS_PROXIED BACKUP_WAL || failed=1
     config-check path API_READY_PATH WEB_READY_PATH API_ENV_MOUNT WEB_ENV_MOUNT API_STORAGE_MOUNT || failed=1
     config-check relative GITOPS_DESIRED GITOPS_COMPOSE || failed=1
     config-check extensions DB_EXTENSIONS || failed=1

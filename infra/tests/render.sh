@@ -85,6 +85,12 @@ test-render-artifacts () {
     text="$(fs-read "${directory}/data.yaml")"
     expect-contains "${text}" "name: 'shop-postgres'"
     expect-absent "${text}" 'sentinel'
+    expect-contains "${text}" "source: \"${CONFIG[STATE_ROOT]}/backups/wal\""
+    expect-contains "${text}" 'target: /wal'
+    expect-contains "${text}" '- archive_mode=on'
+    expect-contains "${text}" '- archive_timeout=60'
+    expect-contains "${text}" "'archive_command=test ! -f /wal/enabled || test -f /wal/archive/%f || { cp %p /wal/archive/%f.part && mv /wal/archive/%f.part /wal/archive/%f; }'"
+    expect-contains "$(fs-read "${directory}/pg_hba.conf")" $'local all postgres peer\nlocal replication postgres peer\nlocal all all reject'
 
 }
 test-render-immutable () {

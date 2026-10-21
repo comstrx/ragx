@@ -15,12 +15,14 @@ native-monitor () {
     native-serving "${release}" || reasons+=( "${release} is not serving on every replica and the public endpoint" )
     native-data-healthy || reasons+=( "data services are unhealthy" )
 
-    if latest="$(state-read "${CONFIG[BACKUP_ROOT]}" latest 2>/dev/null)"; then
-        backup="$(fs-modified "${CONFIG[BACKUP_ROOT]}/${latest}")" || return
+    if latest="$(state-read "${CONFIG[BACKUP_SQL_ROOT]}" latest 2>/dev/null)"; then
+        backup="$(fs-modified "${CONFIG[BACKUP_SQL_ROOT]}/${latest}")" || return
         (( now - backup <= CONFIG[BACKUP_MAX_AGE] )) || reasons+=( "the latest backup is $(( (now - backup) / 3600 ))h old" )
     else
         reasons+=( "no backup is recorded" )
     fi
+
+    ! cfg-true BACKUP_WAL || native-archive-healthy || reasons+=( "WAL archiving is failing" )
 
     if cfg-true TLS_ENABLED; then
         expiry="$(native-certificate-expiry)" || expiry=0
@@ -197,6 +199,12 @@ native-timers () {
         native-timer-install reconcile "${CONFIG[GITOPS_INTERVAL]}" >/dev/null || warn "The reconcile timer is not installed"
     else
         native-timer-remove reconcile || warn "The reconcile timer is still installed"
+    fi
+
+    if cfg-true BACKUP_WAL && [[ -n "${CONFIG[BACKUP_URI]}" ]]; then
+        native-timer-install archive "${CONFIG[BACKUP_ARCHIVE_INTERVAL]}" >/dev/null || warn "The archive timer is not installed"
+    else
+        native-timer-remove archive || warn "The archive timer is still installed"
     fi
 
 }

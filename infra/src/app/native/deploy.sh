@@ -350,6 +350,7 @@ native-volumes () {
     done
 
     docker-volume "${owner}-storage" "${owner}" 10001 "${CONFIG[IMAGE_POSTGRES]}" || return
+    native-archive-root || return
     tls-volumes
 
 }
@@ -373,6 +374,7 @@ native-data () {
     native-compose-data up -d --no-recreate postgres rabbitmq redis || return
     native-wait-data || return
 
+    postgresql-archiving "${CONFIG[BACKUP_WAL]}" native-compose-data exec -T postgres || return
     postgresql-extensions "${CONFIG[DB_NAME]}" "${CONFIG[DB_EXTENSIONS]}" native-compose-data exec -T postgres
 
 }

@@ -23,7 +23,23 @@ services:
       - postgres:/var/lib/postgresql
       - ./postgres.sql:/docker-entrypoint-initdb.d/10-application.sql:ro
       - ./pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
-    command: [postgres, -c, hba_file=/etc/postgresql/pg_hba.conf, -c, 'shared_buffers={{DB_MEMORY}}', -c, password_encryption=scram-sha-256]
+      - type: bind
+        source: {{BACKUP_WAL_ROOT|json}}
+        target: /wal
+    command:
+      - postgres
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
+      - -c
+      - 'shared_buffers={{DB_MEMORY}}'
+      - -c
+      - password_encryption=scram-sha-256
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_timeout=60
+      - -c
+      - 'archive_command=test ! -f /wal/enabled || test -f /wal/archive/%f || { cp %p /wal/archive/%f.part && mv /wal/archive/%f.part /wal/archive/%f; }'
     healthcheck:
       test: [CMD-SHELL, 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
       interval: 5s

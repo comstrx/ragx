@@ -192,14 +192,14 @@ test-cli-help () {
     output="$(bash "${TOOL_BIN}" --project "${TMPDIR}" help)"
     expect-contains "${output}" 'Ships, guards and operates one server'
     expect-contains "${output}" $'\nData\n'
-    expect-contains "${output}" 'restore [BACKUP] --force'
+    expect-contains "${output}" 'restore [BACKUP] [--at TIME] --force'
     expect-contains "${output}" 'Global flags'
     expect-contains "${output}" 'config [KEY] [--changed]'
     expect-absent "${output}" '__test'
 
     output="$(bash "${TOOL_BIN}" --project "${TMPDIR}" restore --help)"
     expect-equal "$(bash "${TOOL_BIN}" --project "${TMPDIR}" help restore)" "${output}"
-    expect-contains "${output}" 'infra restore [BACKUP] --force'
+    expect-contains "${output}" 'infra restore [BACKUP] [--at TIME] --force'
     expect-contains "${output}" 'Required: replaces the live database'
     expect-contains "${output}" 'infra restore 20261020T112013Z-jcQdcHui.dump --force'
     expect-contains "$(bash "${TOOL_BIN}" --project "${TMPDIR}" -h)" 'Global flags'
@@ -207,9 +207,9 @@ test-cli-help () {
     expect-error 'Unknown command: restroe; did you mean restore?' bash "${TOOL_BIN}" --project "${TMPDIR}" help restroe
 
     output="$(bash "${TOOL_BIN}" --project "${TMPDIR}" help backup)"
-    expect-contains "${output}" 'infra backup [create|list|verify] [BACKUP]'
+    expect-contains "${output}" 'infra backup [create|list|verify|archive] [BACKUP]'
     expect-contains "${output}" $'\nActions\n'
-    expect-contains "${output}" 'prune dumps older than BACKUP_DAYS (default)' 'the first action is marked as the default'
+    expect-contains "${output}" 'prune what is older than BACKUP_DAYS (default)' 'the first action is marked as the default'
     expect-contains "${output}" '  verify [BACKUP]  Restore a dump'
 
     output="$(bash "${TOOL_BIN}" --project "${TMPDIR}" help notify | sed -n '/^Flags$/,/^$/p' | grep -- '--')"

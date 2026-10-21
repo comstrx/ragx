@@ -266,6 +266,14 @@ test-config-validation () {
     cfg-set MIGRATION_POLICY none
     config-validate
 
+    cfg-set BACKUP_WAL yes
+    cfg-set BACKUP_ARCHIVE_INTERVAL 0
+    output="$(config-validate 2>&1)" && err "Invalid WAL settings were accepted"
+    expect-contains "${output}" 'Invalid BACKUP_WAL: expected boolean'
+    expect-contains "${output}" 'Invalid BACKUP_ARCHIVE_INTERVAL: expected positive'
+    cfg-set BACKUP_WAL true
+    cfg-set BACKUP_ARCHIVE_INTERVAL 300
+
     cfg-set GITOPS_BRANCH '--upload-pack=touch'
     cfg-set TLS_EMAIL 'ops at example'
     cfg-set HEALTH_CA '/ca.pem,target=/etc'
