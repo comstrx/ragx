@@ -257,6 +257,9 @@ describe("locales and paths", () => {
         expect(routeOf({ path: "/", language: "fr" }, plain)).toEqual({ kind: "rewrite", locale: "en", path: "/en" });
         expect(routeOf({ path: "/en/x" }, plain)).toEqual({ kind: "redirect", path: "/x", status: 308 });
         expect(routeOf({ path: "/ar" }, plain)).toEqual({ kind: "redirect", path: "/", status: 308 });
+        expect(routeOf({ path: "/en//evil.test/x" }, plain)).toEqual({ kind: "redirect", path: "/evil.test/x", status: 308 });
+        expect(routeOf({ path: "/en/\\evil.test" }, plain)).toEqual({ kind: "redirect", path: "/evil.test", status: 308 });
+        expect(routeOf({ path: "/en/\\/\\evil.test" }, plain)).toEqual({ kind: "redirect", path: "/evil.test", status: 308 });
 
     });
     test("regions come from the first tag that names one; time zones are checked by the host", () => {

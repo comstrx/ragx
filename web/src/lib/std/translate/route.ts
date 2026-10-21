@@ -15,7 +15,7 @@ export function splitLocale ( pathname: string, routing: Pick<Routing, "locales"
 
     if ( !routing.locales.includes(first) ) return { locale: routing.defaultLocale, path: pathname || "/", explicit: false };
 
-    return { locale: first, path: `/${rest.join("/")}`, explicit: true };
+    return { locale: first, path: `/${rest.join("/").replace(/^[/\\]+/, "")}`, explicit: true };
 
 }
 export function prefixed ( locale: string, path: string ): string {
