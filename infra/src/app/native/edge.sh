@@ -302,6 +302,7 @@ native-edge-apply-locked () {
     native-edge-refresh
     native-edge-candidate || return
     native-edge-same && { native-certificate-converge || return; ui-result edge-apply false safe; return; }
+    native-edge-readiness || return
 
     fs-dir "${backup}" 755 || return
     fs-copy "${live}/haproxy.cfg" "${backup}/haproxy.cfg" 644 || return
@@ -329,6 +330,27 @@ native-edge-apply-locked () {
 
     native-announce edge.rolled-back "an edge change failed its health check and the previous edge was restored"
     err "Edge update rolled back"
+
+}
+native-edge-readiness () {
+
+    local current="" directory="" key="" changed=""
+    local -A pinned=()
+
+    current="$(state-read "${CONFIG[STATE_ROOT]}" current 2>/dev/null)" || return 0
+    [[ -n "${current}" ]] || return 0
+    directory="$(native-directory "${current}")" || return
+    [[ -f "${directory}/release.env" ]] || return 0
+    parse-pairs pinned "${directory}/release.env" || return
+
+    for key in API_READY_PATH API_PORT WEB_READY_PATH WEB_PORT; do
+        [[ -z "${pinned[${key}]+x}" || "${pinned[${key}]}" == "${CONFIG[${key}]}" ]] || changed+="${changed:+, }${key} from ${pinned[${key}]} to ${CONFIG[${key}]}"
+    done
+
+    [[ -n "${changed}" ]] || return 0
+    ! cli-flag --force || { warn "${changed}: ${current} fails its health checks until a release serving the new values switches in"; return 0; }
+
+    err "${changed} while ${current} is live, which fails its health checks from this edge apply until a release serving the new values switches in; ship a release that serves both first, or accept the gap with infra edge apply --force"
 
 }
 native-edge-applied () {

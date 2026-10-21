@@ -258,3 +258,29 @@ test-edge-limits () {
     expect-error 'Invalid rate: 10/1d' haproxy-rate 10/1d
 
 }
+test-edge-readiness () {
+
+    local directory=""
+
+    fixture-release
+    state-write "${CONFIG[STATE_ROOT]}" current r1
+    directory="$(native-directory r1)"
+    mkdir -p "${directory}"
+    printf '%s\n' 'API_READY_PATH=/health' 'API_PORT=8000' 'WEB_READY_PATH=/' 'WEB_PORT=3000' > "${directory}/release.env"
+
+    cfg-set API_READY_PATH /health
+    native-edge-readiness
+
+    cfg-set API_READY_PATH /ready
+    cfg-set WEB_PORT 3001
+    expect-error 'API_READY_PATH from /health to /ready, WEB_PORT from 3000 to 3001 while r1 is live' native-edge-readiness
+    expect-error 'accept the gap with infra edge apply --force' native-edge-readiness
+
+    cli-parse edge apply --force
+    expect-contains "$(native-edge-readiness 2>&1)" 'r1 fails its health checks until a release serving the new values switches in'
+    cli-parse
+
+    state-write "${CONFIG[STATE_ROOT]}" current ''
+    native-edge-readiness
+
+}
