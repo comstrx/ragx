@@ -1,0 +1,12 @@
+telemetry = false
+
+[install]
+exact = true
+linker = "hoisted"
+minimumReleaseAge = 259200
+globalDir = "../../engine/bun/.bun"
+
+[test]
+randomize = true
+root = "tests"
+preload = ["./tests/native.ts"]

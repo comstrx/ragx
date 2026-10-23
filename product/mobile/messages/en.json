@@ -1,0 +1,56 @@
+{
+  "hello": {
+    "title": "First feature",
+    "description": "The first feature, end to end",
+    "fallback": "Hello World",
+    "live": "Answered by the api",
+    "saved": "Showing the saved answer",
+    "offline": "Built-in greeting: the api did not answer"
+  },
+  "state": {
+    "loading": "Loading",
+    "empty": "Nothing here yet",
+    "failed": "Something went wrong",
+    "missing": "Page not found",
+    "maintenance": "We are down for maintenance",
+    "retry": "Try again",
+    "offline": "You are offline",
+    "cached": "Showing saved results",
+    "saved": "Saved",
+    "queued": "Saved on this device; it will be sent when you are back online"
+  },
+  "errors": {
+    "reasons": {
+      "ok": "done",
+      "created": "created",
+      "accepted": "accepted",
+      "bad_request": "the request is malformed",
+      "unauthorized": "authentication required",
+      "forbidden": "access denied",
+      "not_found": "not found",
+      "method_not_allowed": "method not allowed",
+      "conflict": "conflicts with the current state",
+      "validation": "the given data is invalid",
+      "too_many_requests": "too many requests",
+      "internal": "something went wrong",
+      "unavailable": "the service is unavailable"
+    },
+    "rules": {
+      "required": "This field is required",
+      "min": "At least {minimum}",
+      "max": "At most {maximum}",
+      "type": "Expected a {expected}",
+      "format": "Not a valid {format}",
+      "choice": "Choose one of: {choices}",
+      "unknown": "This field is not accepted",
+      "invalid": "This value is not accepted"
+    },
+    "fields": {
+      "name": "The name is not accepted"
+    }
+  },
+  "access": {
+    "signIn": "Sign in to continue",
+    "denied": "You do not have access to this area"
+  }
+}
