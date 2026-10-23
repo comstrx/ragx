@@ -3,14 +3,17 @@ name: Infra
 on:
   push:
     branches: [main]
-    paths: ['infra/**', '.github/workflows/infra.yml', 'api/**', 'web/**']
+    paths: ['product/infra/**', '.github/workflows/infra.yml', 'product/api/**', 'product/web/**', 'engine/**']
+
   pull_request:
-    paths: ['infra/**', '.github/workflows/infra.yml', 'api/**', 'web/**']
+    paths: ['product/infra/**', '.github/workflows/infra.yml', 'product/api/**', 'product/web/**', 'engine/**']
+
   workflow_dispatch:
+
   workflow_call:
     inputs:
       images:
-        description: Build and scan the application images; releases build them once in the deploy job
+        description: Build and scan the application images
         type: boolean
         default: true
 
@@ -30,86 +33,106 @@ jobs:
     name: verify ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
+
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
+
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
       - name: Bash
         if: runner.os == 'macOS'
         run: |
           brew install bash
           printf '%s/bin\n' "$(brew --prefix)" >> "${GITHUB_PATH}"
+
       - name: Pinned tools
-        working-directory: infra
+        working-directory: product/infra
         run: bash src/main.sh prepare >> "${GITHUB_PATH}"
+
       - name: Test
-        working-directory: infra
+        working-directory: product/infra
         run: |
           set -euo pipefail
           bash src/main.sh test --check 2>&1 | tee "${RUNNER_TEMP}/test.log"
           printf '### infra on %s\n\n%s\n' "${RUNNER_OS}" "$(grep -o 'tests passed=[0-9]* failed=[0-9]*' "${RUNNER_TEMP}/test.log")" >> "${GITHUB_STEP_SUMMARY}"
+
       - name: Release bundle
-        working-directory: infra
+        working-directory: product/infra
         run: |
           set -euo pipefail
+
           bash src/main.sh build-release
           (cd target/release && shasum -a 256 -c SHA256SUMS)
+
           bundle=target/release/infra
           "${bundle}" --version
+
           manual="$("${bundle}" help)"
           grep -q '^Global flags' <<< "${manual}"
+
           manual="$("${bundle}" help restore)"
           grep -q 'Required: replaces the live database' <<< "${manual}"
+
           if "${bundle}" deploy --list 2>/dev/null; then echo "::error::The bundle accepted a flag deploy does not take"; exit 1; fi
+
           printf '\nbundle sha256 %s\n' "$(bash src/main.sh checksum)" >> "${GITHUB_STEP_SUMMARY}"
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: infra-${{ runner.os }}
-          path: infra/target/release/
+          path: product/infra/target/release/
           if-no-files-found: error
           retention-days: 7
 
   images:
-    name: image ${{ matrix.name }}
+    name: image ${{ matrix.part }}
     if: inputs.images != false
+
     runs-on: ubuntu-latest
     needs: verify
     timeout-minutes: 30
+
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: api
-            component: api
-            spec: ''
-          - name: admin
-            component: web
-            spec: admin
-          - name: client
-            component: web
-            spec: client
+        part: [api, super, tenant]
+
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Build
+
+      - name: Source
+        id: source
         env:
-          COMPONENT: ${{ matrix.component }}
-          SPEC: ${{ matrix.spec }}
-          NAME: ${{ matrix.name }}
-          API_HOST: ${{ vars.API_HOST || 'api.example.invalid' }}
-          TLS_ENABLED: 'true'
-          HTTPS_PORT: ${{ vars.HTTPS_PORT || '443' }}
-        run: bash infra/src/main.sh image build "${COMPONENT}" "ragx/${NAME}:ci" "${SPEC}"
+          PART: ${{ matrix.part }}
+
+        run: |
+          if bash product/infra/src/main.sh image available "${PART}"; then echo 'available=true' >> "${GITHUB_OUTPUT}"
+          else printf -- '- %s skipped: no source yet\n' "${PART}" >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Build
+        if: steps.source.outputs.available == 'true'
+        env:
+          PART: ${{ matrix.part }}
+
+        run: bash product/infra/src/main.sh image build "${PART}" "ragx/${PART}:ci"
+
       - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        if: steps.source.outputs.available == 'true'
         with:
           version: v0.75.0
           cache: false
+
       - name: Scan image
+        if: steps.source.outputs.available == 'true'
         env:
-          NAME: ${{ matrix.name }}
-        run: trivy image --config .trivy.yml --scanners vuln,secret,misconfig --exit-code 1 "ragx/${NAME}:ci"
+          PART: ${{ matrix.part }}
+
+        run: trivy image --config .trivy.yml --scanners vuln,secret,misconfig --exit-code 1 "ragx/${PART}:ci"

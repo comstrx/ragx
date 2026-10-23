@@ -1,14 +1,26 @@
+- name: python
+  color: '3572A5'
+  description: The Python engine (engine/python)
+
+- name: bun
+  color: 'F9F1E1'
+  description: The TypeScript engine (engine/bun)
+
 - name: api
   color: '0E8A16'
-  description: The backend services (api)
+  description: The backend application (product/api)
 
 - name: infra
   color: '1D76DB'
-  description: The infrastructure engine (infra)
+  description: The infrastructure carrier (product/infra)
 
 - name: web
   color: '0075CA'
-  description: The web engine, SEO sites and panels (web)
+  description: The SEO sites and panels (product/web)
+
+- name: mobile
+  color: 'C2E0C6'
+  description: The mobile apps (product/mobile)
 
 - name: global
   color: 'BFDADC'

@@ -1,18 +1,30 @@
+python:
+  - changed-files:
+      - any-glob-to-any-file: ['engine/python/**']
+
+bun:
+  - changed-files:
+      - any-glob-to-any-file: ['engine/bun/**']
+
 api:
   - changed-files:
-      - any-glob-to-any-file: ['api/**']
+      - any-glob-to-any-file: ['product/api/**']
 
 infra:
   - changed-files:
-      - any-glob-to-any-file: ['infra/**']
+      - any-glob-to-any-file: ['product/infra/**']
 
 web:
   - changed-files:
-      - any-glob-to-any-file: ['web/**']
+      - any-glob-to-any-file: ['product/web/**']
+
+mobile:
+  - changed-files:
+      - any-glob-to-any-file: ['product/mobile/**']
 
 global:
   - changed-files:
-      - any-glob-to-any-file: ['*', '.*', '.github/**']
+      - any-glob-to-any-file: ['*', '.*', '.github/**', 'skill/**']
 
 ci:
   - changed-files:

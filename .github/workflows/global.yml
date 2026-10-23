@@ -143,6 +143,7 @@ jobs:
     name: gate
     if: always()
     needs: [leaks, vulns, sbom, actions, spelling, formatting]
+
     runs-on: ubuntu-latest
     timeout-minutes: 5
 

@@ -1,53 +1,63 @@
 # Global
 
-The repository root owns the governance every part obeys: the scanner configurations, the ignore files, the editor contract, the documents, the changelog, the commit grammar, the labels and the owners. A part never duplicates a root rule; a root rule never carries a part's business.
+The root owns what every part obeys: scanners, ignore files, editor and format contracts, documents, changelog, commit grammar, labels, owners and the workflows. A part never duplicates a root rule; a root rule never carries a part's business.
 
-## The root tree
+## Root
 
 ```
 ragx/
-├── .github/            workflows, Dependabot, labeler, labels, CODEOWNERS, issue and pull request templates   (see github.md)
-├── .editorconfig       4 spaces everywhere, 2 for yaml/json/md, lf, final newline, trimmed whitespace (md keeps trailing)
-├── .gitignore          every ecosystem's artifacts (Python, Bun/Node/Next, Rust, PHP, mobile), env and secret files, keys, caches, build outputs
-├── .dockerignore       the same list, so an image context never carries an env file, a cache or a node_modules
-├── .gitattributes      line endings and binary marks
-├── .prettierrc.yml     Markdown, YAML, JSON formatting (120 columns, 2 spaces, single quotes in YAML, prose preserved)
-├── .taplo.toml         TOML formatting and lint (4 spaces, 100 columns)
-├── .typos.toml         spelling with the one exclusion list and a short allowlist of true words
-├── .gitleaks.toml      secret detection with the one exclusion list as regexes and reasoned allowlists
-├── .trivy.yml          vulnerabilities, misconfigurations, secrets and licenses over the tree
-├── .syft.yml           the SBOM configuration
-├── .zizmor.yml         workflow audit: hash-pinned uses only, an explicit allowlist of actions
-├── README.md           the product, the three parts and their gates, engineering, measured performance, security, development
-├── CHANGELOG.md        one section per release, one block per part
-├── CONTRIBUTING.md  SECURITY.md  SUPPORT.md  CODE_OF_CONDUCT.md  LICENSE (Apache 2.0)
-├── AGENTS.md           the pointer to skill/
-└── skill/              this folder
+├── .github/        workflows, dependabot, labeler, labels, CODEOWNERS, issue and PR templates
+├── .editorconfig   4 spaces, 2 for yaml/json/md, lf, final newline, trimmed whitespace (md keeps trailing)
+├── .gitignore      every ecosystem's artifacts, env and secret files, keys, caches, build outputs
+├── .dockerignore   the same list, so no context carries an env file, a cache or node_modules
+├── .gitattributes  line endings and binary marks
+├── .prettierrc.yml Markdown, YAML, JSON (120 columns, 2 spaces, single quotes in YAML, prose preserved)
+├── .taplo.toml  .typos.toml  .gitleaks.toml  .trivy.yml  .syft.yml  .zizmor.yml
+├── README.md  CHANGELOG.md  CONTRIBUTING.md  SECURITY.md  SUPPORT.md  CODE_OF_CONDUCT.md  LICENSE (Apache 2.0)
+├── AGENTS.md       the pointer to skill/
+├── skill/          the contract
+├── engine/         python/ bun/
+└── product/        api/ infra/ web/ mobile/
 ```
 
 ## Laws
 
-- **One exclusion list.** The same directories in the same order in `.trivy.yml`, `.syft.yml`, `.taplo.toml`, `.typos.toml`; `.gitleaks.toml` carries the same set as path regexes. A new artifact directory is added to all five in one change. Each file's own rules come after the list.
-- **No standing exceptions.** No ignore file exists for a scanner until a real finding must be accepted; then `.trivyignore.yaml` is created with the id, the exact paths and a statement a reviewer can test, named in `.trivy.yml` through `ignorefile:`, and deleted again when its last entry goes. No `# trivy:ignore` inline knobs. A file that only says "nothing is ignored" is noise and is removed.
-- **Formatting is scoped.** Prettier formats `md mdx yml yaml json jsonc` (never code), generated Compose YAML is validated separately; .yaml.tpl sources retain their template syntax; taplo formats TOML. `.gitignore` is the only ignore list they read. Their output is accepted as is; the hand style governs everything else (`style.md`).
-- **Spelling is a gate.** `typos` runs over the tree; a legitimate word the dictionary rejects is added to `[default.extend-words]` with its correct spelling, never silenced per file.
-- **Secrets never enter the tree.** Parts read ignored `.env*` and `.secret*` files; the committed examples carry names and neutral defaults only; the infra renders secrets into private files on the box. `gitleaks` runs over the working tree and the history; an allowlist entry names the exact path pattern and the reason.
-- **Supply chain.** Every GitHub action is hash-pinned with its version in a comment and listed in the zizmor allowlist; every container image in a workflow is pinned by digest with its tag in a comment; dependencies are locked (`uv.lock`, `bun.lock`) and updated by Dependabot weekly with a cooldown, grouped per ecosystem, labeled `deps`, prefixed `<area>(deps)`.
-- **Docs tell the truth.** `README.md` describes the current parts, gates, measured numbers (with the date and the machine) and the development commands; a change that alters any of them updates the README in the same lap.
+- **One exclusion list**: the same directories in the same order in `.trivy.yml`, `.syft.yml`, `.taplo.toml`, `.typos.toml`, and as path regexes in `.gitleaks.toml`; a new artifact directory joins all five in one change.
+- **No standing exceptions**: no scanner ignore file until a real finding must be accepted; then `.trivyignore.yaml` names the id, the paths and a testable statement, and dies with its last entry. No inline scanner knobs.
+- **Scoped formatting**: Prettier formats `md mdx yml yaml json jsonc`, taplo formats TOML, `.gitignore` is the only ignore list they read; their output is accepted as is. Everything else is the hand style.
+- **Spelling is a gate**: a true word typos rejects joins `[default.extend-words]`, never a per-file silence.
+- **Secrets never enter the tree**: parts read ignored `.env*`/`.secret*`; examples carry names and neutral defaults; gitleaks scans the tree and the history; an allowlist names the exact path and the reason.
+- **Supply chain**: every action hash-pinned with its version comment and allowlisted in `.zizmor.yml`; every workflow image pinned by digest; every dependency locked and updated by Dependabot weekly (7-day cooldown, one group per ecosystem, label `deps`, prefix `<area>(deps)`).
+- **Docs tell the truth**: the README names the current parts, gates, measured numbers (date and machine) and commands; a change that alters any of them updates it in the same lap.
 
-## Changelog
+## Changelog and commits
 
-`CHANGELOG.md` opens with `## Unreleased` holding one `### <part>` block per touched part (`api`, `web`, `infra`, `global`), each a list of past-tense facts about behavior, never about files. A release moves the block under `## vX.Y.Z — YYYY-MM-DD`; the release workflow refuses a tag whose section is missing and uses the section as the release notes. A lap that changes behavior adds its lines before it reports.
+- `CHANGELOG.md` opens with `## Unreleased`, one `### <area>` block per touched area (`global python bun api infra web mobile`), past-tense facts about behavior. A release moves it under `## vX.Y.Z — YYYY-MM-DD`; the release workflow refuses a tag without its section and publishes it as the notes.
+- Commits: `<area>(<feature>): <sentence>`, lowercase present-tense fact, no AI attribution, explicit paths, one area per commit (`global` only for an atomic cross-area change). Labels mirror the areas plus `ci deps docs security bug enhancement`; `CODEOWNERS` is `* @comstrx`.
 
-## Commits and areas
+## Workflows
 
-- `<area>(<feature>): <sentence>` with the area one of `api infra web global`; the sentence is a lowercase, present-tense fact; no AI attribution of any kind.
-- One area per commit; a genuinely atomic cross-part feature uses `global`. Paths are staged explicitly (`git commit -m "…" -- <paths>`); the working tree is inspected first so nothing foreign is swept in.
-- Labels mirror the areas (`api infra web global`) plus `ci deps docs security`, applied by the labeler from paths. `CODEOWNERS` names the owner of everything.
+| Workflow                     | Runs on                                                             | Does                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ---------------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `global.yml`                 | push to `main`, every PR, dispatch, call                            | gitleaks (history), trivy, syft (artifact), zizmor (pedantic), typos, taplo + Prettier, then a `gate` that fails on any failure or cancel                                                                                                                                                                                                                                                                                                      |
+| `python.yml`                 | `engine/python/**`                                                  | Postgres (pgvector), RabbitMQ, Redis by digest; `uv sync --locked`, ruff, mypy, pytest (the stage provisions `engine_test`)                                                                                                                                                                                                                                                                                                                    |
+| `bun.yml`                    | `engine/bun/**`                                                     | install, check, lint, test, audit                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `api.yml`                    | `product/api/**`, `engine/python/**`                                | the same services; sync, `bootstrap provision`, ruff, mypy, pytest, `bootstrap check`                                                                                                                                                                                                                                                                                                                                                          |
+| `web.yml`                    | `product/web/**`, `engine/bun/**`                                   | Node 26, engine installed and linked, install, check, typecheck, test, `deliver --all` (build and audit every spec)                                                                                                                                                                                                                                                                                                                            |
+| `mobile.yml`                 | `product/mobile/**`, `engine/bun/**`                                | Node 26, engine installed and linked, install, check, typecheck, test, `export --all` (Hermes per spec)                                                                                                                                                                                                                                                                                                                                        |
+| `infra.yml`                  | `product/infra/**`, `product/api/**`, `product/web/**`, `engine/**` | Linux and macOS offline gate and release bundle; one image per part (the matrix lists them) built and trivy-scanned; publication only by manual dispatch                                                                                                                                                                                                                                                                                       |
+| `release.yml`                | a `v*` tag                                                          | `plan` (semver, on `main`, changelog section) → every gate above through `$/.github/workflows/<file>.yml` → GitHub release → `deploy` when `DEPLOY_AUTO` (only after the release published)                                                                                                                                                                                                                                                    |
+| `deploy.yml`                 | dispatch from `main` or the release                                 | `plan` (actor in `DEPLOY_ACTORS`, tag on `main`) → `images` (a matrix job per part, no SSH key; built per baked address, scanned, pushed once) → `mode` (GitOps or SSH; digests pinned by `infra image resolve` with read-only packages) → `publish` (GitOps only: `infra publish`, the one job with `contents: write`, no SSH secret) or `deploy` (SSH, read-only: `infra deploy`, `rollback`, `backup`, `restore`) → `notify` on any failure |
+| `labeler.yml` · `labels.yml` | PRs · label changes                                                 | path labels, skipped for pull requests from forks, whose token cannot write · label sync                                                                                                                                                                                                                                                                                                                                                       |
+
+- Shared shape: per-workflow `concurrency` with `cancel-in-progress` (the release keeps it off); `permissions: contents: read` with a job-level widening only where a job writes; `defaults.run` in the part's folder; `timeout-minutes` on every job; `persist-credentials: false` on every checkout; no publication secret in a verification job.
+- A part workflow runs when its part, its engine or itself changes and exposes `workflow_call`, so the release composes gates and never duplicates them. CI checks, typechecks, tests and builds; it never starts an app, runs a browser flow or measures performance.
+- A step calls a command that exists in the part's manifest or entry, never a bespoke script. A new action joins the zizmor allowlist after its source, maintainer and permissions were read; a new service is pinned by digest with a `health-cmd`; a new workflow takes the shared shape, a `paths` filter, `workflow_call` and a row above.
+- Image publication: CI builds and scans without pushing; only a manual Infra dispatch with `publish=true` on `main` pushes (GHCR via `GITHUB_TOKEN`, Docker Hub via a dedicated push token). No workflow writes desired state or tags to Git.
 
 ## Root gate
 
-Run from the repository root before any push, in this order, every command exiting 0:
+Before any push that touches the root or `.github/`, in this order:
 
 ```bash
 typos --config .typos.toml
@@ -60,13 +70,8 @@ zizmor --offline --persona pedantic --config .zizmor.yml .github/workflows/
 actionlint .github/workflows/<file>.yml
 ```
 
-The pinned Prettier version is the one `.github/workflows/global.yml` names; the same holds for taplo. A new scanner joins the workflow, this list and `stack.md` in one change.
+The pinned Prettier and taplo versions are the ones `global.yml` names; a local actionlint may reject the `$/` reusable-workflow syntax the release uses (zizmor accepts it). A local `gitleaks dir` and `trivy fs` also read ignored local files such as a filled `.env.local`; CI scans a clean checkout.
 
-## What belongs where
+## When CI is red
 
-| Belongs to the root                                                          | Belongs to a part                                                                                                                            |
-| ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Scanner configs, ignore files, editor contract, formatting configs           | Lint and type configs of the part's language (`pyproject.toml`, `biome.json`, `tsconfig.json`, the infra ShellCheck settings in `Bash.toml`) |
-| Workflows, Dependabot, labels, owners, templates                             | The commands a workflow runs (they live in the part's manifest or entry)                                                                     |
-| README, CHANGELOG, CONTRIBUTING, SECURITY, SUPPORT, CODE_OF_CONDUCT, LICENSE | The part's `.env.example`, `.secret.example`, templates, tests, benches                                                                      |
-| `skill/` and `AGENTS.md`                                                     | Nothing: a part never carries an agent instruction file of its own                                                                           |
+Read the failing job to its first error; reproduce with the step's exact command; fix the cause in the part, never by loosening a gate; run the part's full gate; push only under the order's scope and watch every triggered run to green. An external failure (registry, index, runner) is re-run once after its cause is read; a second failure is reported.

@@ -1,56 +1,58 @@
 # Index
 
-RagX is one monorepo with exactly three parts (`api/`, `infra/`, `web/`) under one root governance (`.github/`, the scanner configs, the docs). This folder is the brain that every agent loads before working: what the product is, what it runs on, how code is written, how work is done, and the laws of each part.
+RagX is one monorepo, two layers, one governance. `engine/` holds the generic foundations, `product/` holds RagX. Every folder below them is an independent workspace with its own manifest, lockfile, tests and gate. This folder is the contract every agent and engineer loads before touching a file.
 
-## Files
+```
+ragx/
+├── skill/            this contract
+├── engine/python     the server engine: uv workspace, one package per domain under the `engine` namespace
+├── engine/bun        the TypeScript engine: one package `engine`, one subpath per member
+├── product/api       the RagX application over engine/python
+├── product/infra     the platform carrier: one Bash bundle
+├── product/web       the browser surfaces over engine/bun (Next.js)
+└── product/mobile    the phone surfaces over engine/bun (Expo)
+```
 
-| File        | Carries                                                                                                                                                                  | Read when                                     |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------- |
-| `index.md`  | This router, the creed, the non-negotiables, the definition of done                                                                                                      | Always, first                                 |
-| `vision.md` | The product, the architecture doctrine (gravity, thin layers, a core that keeps training, one owner per responsibility), tenancy, provisioning, auth, phasing            | Always                                        |
-| `stack.md`  | Toolchains and versions, local services, the gate of every part, CI and release mapping, root scanners, environment files, traps                                         | Always                                        |
-| `style.md`  | The hand style per language (Python, TypeScript, Bash, CSS, YAML/TOML/Markdown), naming, sizes, the zero-comment law, what linters enforce and what the hand enforces    | Before writing or reviewing any line          |
-| `work.md`   | The operating loop, decisions, memory, sub-agents, git, resource economy, reporting, when a task is done, when a lap is redone, truth, safety                            | Always                                        |
-| `api.md`    | The Python platform: layers, import and typing laws, the 42 core domains and their DSLs, the envelope, bootstrap, tests, benches, how to add anything                    | Working under `api/`                          |
-| `web.md`    | The Next.js engine on Bun: layering, the std library, specs, validator laws, rendering, styles, tooling, tests, images, how to add a feature, a screen, a spec           | Working under `web/`                          |
-| `infra.md`  | The bash bundle that carries the whole platform onto a Linux box as a Docker Compose monolith: modules, config, render laws, topology, release line, tests, verification | Working under `infra/`                        |
-| `global.md` | Root governance: the scanner configs and their one exclusion list, the docs, the changelog, commits, labels, owners, what belongs to the root and what to a part         | Touching anything at the repository root      |
-| `github.md` | The workflows: every job, pinning, permissions, concurrency, paths, release, Dependabot, how to add or change a workflow, what to do when CI is red                      | Touching `.github/` or chasing a workflow run |
+## Read
 
-## Reading order
+| File        | Holds                                                  | When                                    |
+| ----------- | ------------------------------------------------------ | --------------------------------------- |
+| `vision.md` | the product, the doctrine, tenancy, AI design, phasing | always                                  |
+| `stack.md`  | toolchains, services, gates, traps                     | always                                  |
+| `work.md`   | the loop, decisions, git, economy, truth, reporting    | always                                  |
+| `style.md`  | the hand style per language                            | before writing or reviewing a line      |
+| `global.md` | root governance, scanners, docs, workflows, release    | touching the root or `.github/`         |
+| `python.md` | engine/python                                          | engine/python, product/api              |
+| `api.md`    | product/api                                            | product/api                             |
+| `bun.md`    | engine/bun                                             | engine/bun, product/web, product/mobile |
+| `web.md`    | product/web                                            | product/web                             |
+| `mobile.md` | product/mobile                                         | product/mobile                          |
+| `infra.md`  | product/infra                                          | product/infra, delivery                 |
 
-1. `index.md` → `vision.md` → `stack.md` → `work.md` → `style.md`.
-2. The file of the part the task lives in. A cross-cutting task reads every part it touches plus `global.md`.
-3. The code of the area, before any plan: what exists, what is missing, what is duplicated, what sits in the wrong layer.
+Order: `vision → stack → work → style`, then the part, then its engine, then the code of the area: what exists, what is missing, what is duplicated, what sits in the wrong layer.
 
 ## Creed
 
-- The strongest, cleanest and fastest code the author has ever produced, in every part, every time. Enterprise grade is the floor, not the ceiling.
-- Correctness, simplicity, security, measured performance, maintainability and developer experience are optimized together; none is traded for another without evidence.
-- The newest stable release of every tool and library on the day of the task, used to its full current capability. The manifests and lockfiles are ground truth; nothing is downgraded silently.
-- Boundaries are enforced by tests, lints and CI, never by prose alone. A rule that cannot be checked is a wish.
-- Code reads by itself. A comment is a naming defect: rename or restructure until the comment is unnecessary. Zero comments in every part.
-- Every network, file, process and third-party access lives in a core layer; the layers above are thin pipelines over it. A trick needed in a leaf becomes a verb in the core, tested, and the leaf stays one line.
-- Nothing is claimed that was not observed: a gate that was not run is "not run", a behavior that was not exercised is "unverified".
+- The strongest, cleanest, fastest code the author has produced, every time. Enterprise grade is the floor.
+- Correctness, simplicity, security, measured performance, maintainability and developer experience are optimized together; none is traded without evidence.
+- The newest stable release of every tool on the day of the task; manifests and lockfiles are the truth, nothing is downgraded silently.
+- Every integration lives in an engine (or the infra core); the layers above are pipelines of one or two lines. A trick a leaf needs becomes an engine verb, tested there.
+- A rule that no test, lint or workflow enforces is a wish. Comments are naming defects: zero comments everywhere.
+- Nothing is claimed that was not observed.
+- Truth order: the code and its law tests, then this folder, then habit. A law test is never weakened; a law may only become harsher.
 
 ## Non-negotiables
 
-- Git is read-only. No commit, push, tag, merge, rebase, reset or stash without an explicit order for that exact action. A push order covers exactly one push.
-- No destructive or externally visible action (deploy, publish, migrate production, delete, rotate, send) without an explicit order.
-- No secret is printed, logged, copied, rendered world-readable or committed. Names are referenced, values are not.
-- No sub-agent is created unless the user orders it.
-- No code formatter touches Python or TypeScript. Prettier formats Markdown, YAML and JSON; taplo formats TOML; nothing else is reformatted by a machine.
-- No speculative abstraction, no fashionable rewrite, no second implementation of a capability the core already owns.
+- Git is read-only; every write needs an order naming that action. No destructive or externally visible act without an order.
+- No secret is printed, logged, copied, rendered world-readable or committed.
+- No sub-agent unless ordered. No formatter on Python or TypeScript.
+- No speculative abstraction, no fashionable rewrite, no second owner of a capability.
 
-## Definition of done
+## Done
 
-A change is done when all of the following hold, and only then is it reported as done:
-
-1. The requested behavior exists, in the lowest layer able to carry it, with no duplicate elsewhere.
-2. The gate of every touched part passes with zero errors, run locally, output observed: `api` ruff + mypy + pytest + `bootstrap check`; `web` check + typecheck + test + build; `infra` `bash src/main.sh test --check`; root scanners for any root file.
-3. Tests were added or changed so the behavior is pinned, including the failure path, and they are brutal, few and flat.
-4. Anything performance-sensitive was measured with a bench and the numbers are in the report.
-5. Docs that describe the changed behavior (`README.md`, `CHANGELOG.md`, this folder) say the new truth.
-6. The report names the commands, exit codes, error counts, deviations and everything left unverified.
-
-If one item fails, the lap is not finished: fix, re-run, re-report. `work.md` says when a lap is redone from the start.
+1. The behavior exists once, in the lowest layer able to carry it.
+2. The gate of every touched part passes, observed (`stack.md` lists them); a change in an engine also passes the gates of the parts that consume it.
+3. Tests pin the behavior and its failure path; a mutation of the fix fails them.
+4. Hot paths carry bench numbers.
+5. `README.md`, `CHANGELOG.md` and this folder say the new truth.
+6. The report names commands, exit codes, counts, deviations and everything unverified.

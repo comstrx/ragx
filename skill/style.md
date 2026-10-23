@@ -10,7 +10,7 @@ The hand style is the format. No code formatter runs on Python, TypeScript or Ba
 - Column law: Python 120, TypeScript 150, Bash as wide as a readable line (shellcheck decides correctness, not width).
 - File law: 100–300 lines is the home of a file; above 400 only with a reason the reviewer accepts. A folder of flat files beats a deep tree.
 - Aligned groups: consecutive assignments align on `=`, consecutive dict/object entries align their values, consecutive imports group by origin. Alignment is for groups of related lines, never for a single line.
-- Imports: third-party and core first, then the local part, then one combined standard library line at the end (`import asyncio, time`). No wildcard imports, no `import x as y` to dodge a lint.
+- Imports: third-party and engine first, then the local part, then one combined standard library line at the end (`import asyncio, time`). No wildcard imports, no `import x as y` to dodge a lint.
 - Strings: double quotes in Python and TypeScript, single quotes in YAML where quoting is needed. f-strings over concatenation. A long message lives in a variable, not inline in a raise.
 - Error handling: no bare `except`, no swallowed exception, no `print` outside command entry points. Failures become the one typed fault of the part with a code and a reason.
 - Typing: every public parameter, return and exported contract is annotated; no implicit `Optional`, no `Any` outside an explicit boundary, no non-null assertion in TypeScript.
@@ -22,8 +22,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol, cast
 
-from core.exceptions import Code, Fault
-from core.log import log
+from engine.error import Code, Fault
+from engine.log import log
 import asyncio, time
 
 type Loader[T] = Callable[[], Awaitable[T]]
@@ -88,8 +88,8 @@ class Cache:
 ```ts
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import type { Messages } from "@/lib/std/translate";
-import { compact } from "@/lib/std/base";
+import { compact } from "engine/base";
+import type { Messages } from "engine/translate";
 import { securityHeaders } from "./security.ts";
 
 export type Served = { path: string; status: number } | null;
@@ -129,11 +129,11 @@ export function headersFor ( path: string, status: number, security: Record<stri
 }
 ```
 
-- 4-space indent, double quotes, semicolons, trailing commas on multi-line literals, `.ts`/`.tsx` extensions on relative imports, `import type` for types, path aliases `@/…` for the part's source.
+- 4-space indent, double quotes, semicolons, trailing commas on multi-line literals, `.ts`/`.tsx` extensions on relative imports, `import type` for types, `@/…` for the part's own source and `engine/<member>` for the engine (never a relative path into it).
 - Function definitions get spaces inside the parentheses (`function f ( a: T ): R {`, `( x ) => x + 1`), conditions get spaces inside (`if ( ok ) {`, `for ( const x of xs ) {`); calls are tight (`f(a, b)`).
 - A block of more than one statement opens with a blank line after `{` and closes with a blank line before `}`; a one-statement branch is a one-liner (`if ( !note ) return null;`).
 - `const` by default, no `let` where a conditional expression suffices, no `any`, no `!`, no `as` except at validated boundaries (`satisfies` over `as` for literals), no parameter reassignment.
-- A component is a function with a typed `Props`; element state travels through `data-*` attributes and one class per element; hooks live in `hooks/`; `"use client"` only where a client boundary is required.
+- A component is a function with a typed `Props`; on the web element state travels through `data-*` attributes and one class per element, in React Native through `StyleSheet` objects built from the palette and the spacing, radius and type scales, in elements only; hooks live in `hooks/`; `"use client"` only where a client boundary is required.
 - Exported types first, constants next, helpers next, the exported functions last; one default export per element/component/feature entry, named exports elsewhere.
 
 ## Bash
@@ -177,6 +177,6 @@ docker-network () {
 
 ## What the machine checks and what the hand checks
 
-| Checked by tools                                                                                                                                                                                                                                                                                                             | Checked by the hand and the reviewer                                                                                                                                                                                     |
-| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| ruff (every rule), mypy strict, Biome, TypeScript strict, shellcheck, the api law tests (blank lines, comments, import direction, the core DAG, stdlib outside core, migrations without SQL, facades), the web analyzer (layers, imports, styles, 150 columns, 400 lines), the infra bootstrap (layout, bundles, ShellCheck) | Spaces in definition parentheses, alignment of groups, one-liners for short branches, naming quality, file size, the shape of a module (types → constants → helpers → public), the thinness of the layers above the core |
+| Checked by tools                                                                                                                                                                                                                                                                                                                                                                                           | Checked by the hand and the reviewer                                                                                                                                                                                       |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ruff (every rule), mypy strict, Biome, TypeScript strict, shellcheck, the engine and api law tests (blank lines, comments, import direction, the engine DAG, stdlib above the engine, migrations without SQL, facades), the surface analyzer for web and mobile (layers, imports, styles, 150 columns, 400 lines), the engine/bun runtime-agnostic lint, the infra bootstrap (layout, bundles, ShellCheck) | Spaces in definition parentheses, alignment of groups, one-liners for short branches, naming quality, file size, the shape of a module (types → constants → helpers → public), the thinness of the layers above the engine |

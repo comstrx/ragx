@@ -2,6 +2,60 @@
 
 Every release of RagX, one section per tag, one block per part.
 
+## v1.4.0 — 2026-10-23
+
+### global
+
+- The repository has two layers: `engine/` (`engine/python`, `engine/bun`), the generic foundations that know no product, and `product/` (`product/api`, `product/infra`, `product/web`, `product/mobile`), RagX itself. Each folder is an independent workspace with its own manifest, lockfile, tests and gate; `skill/` at the root governs both.
+- New workflows `python.yml`, `bun.yml` and `mobile.yml`; every product workflow also runs when its engine changes, the release composes all seven gates and publishes the GitHub release before the automatic deploy (the deploy waits for it instead of running beside it), and the labels, the labeler and Dependabot follow the new parts (areas `python bun api infra web mobile global`).
+- The deploy and infra workflows build one image per part through a matrix (`api super tenant`, the parts RagX builds today), the deploy job pins the digests with `infra image resolve`, and each built site part may take its own env file secret (`SUPER_ENV_FILE`, `TENANT_ENV_FILE`); the `WEB_SPECS` variable and the `WEB_ENV_FILE` secret are no longer read.
+- Deploy splits GitOps from SSH: a `mode` job pins the images, `publish` (the only job with `contents: write`, no SSH secret) pushes the desired state, `deploy` runs over SSH read-only, and one `notify` job reports any failure. The Release workflow's automatic deploy reads the tag from `plan` again, and the labeler skips pull requests from forks.
+- `skill/` is the single source of the laws, rewritten lean: `index vision stack work style`, `global` (governance and workflows, `github.md` folded in), and one file per part (`python bun api infra web mobile`) carrying every law of the former agent skills.
+
+### python
+
+- The Python engine is a uv workspace: 42 domain packages (`engine-<domain>`) under the `engine` namespace and an `engine` facade (0.1.0) over all of them, installed by path into the api; importing a domain loads only its own DAG. A manifest law test holds every member to exactly the engine domains and pinned libraries it imports.
+- `engine.test` carries the engine's own stage: `test.application(*routes)` builds a reference application over the real lifespan (heartbeat, outbox, memory queue, local bus) and `test.provision()` creates the test role and database through the admin, so the engine's tests and benches need no product.
+- `Cluster.provision(adapter, Provision(...))` owns role, database and extension provisioning; `engine.health` owns the `/health` heartbeat; `engine.test.Bench` owns bench measurement (`cycles`, `burst`, `settle` …) with `build` and `prepare` as a product's seams; `engine-test` depends on `httpx2`, so Starlette's test client no longer warns.
+
+### bun
+
+- The TypeScript engine is its own package, `engine` (0.1.0), with one subpath per member (`engine/api`, `engine/spec` …), linked into the surfaces with `link:engine`; its tests and benches moved with it.
+- New `history` member (the router-free navigator's brain); the DOM title holder `held` moved from `screen` to `interact`, so `screen` runs on Hermes; `lineIssues` (the column law) is an engine verb.
+- A member law test refuses a cycle, an unknown member, a cross-member relative import or an export that is not one member's index; packages refuse runtime globals and `node:`/`bun:` imports except `tooling`.
+
+### api
+
+- The api depends on the engine and imports it as `engine`, and lives flat at its root (`app bootstrap config database routes views public storage tests benches`, no `src/`); `bootstrap provision` and `/health` run on the engine's verbs; `benches/bench_boot.py` measures the product's own boot. Behavior is unchanged.
+
+### web
+
+- The web imports the engine as `engine/<member>`; the analyzer treats it as foundation and keeps the element, icon and component laws over it. A standalone build is served from its traced folder (`.next/out/standalone/product/web/`). `bun run deliver --all` compiles, builds and audits every spec, so CI now builds and audits `super` too.
+
+### mobile
+
+- New Expo surface on the TypeScript engine with the web's layers, specs and feature contracts word for word: `admin` and `client` specs with the RagX brand, the hello feature, a router-free navigator, Metro guards and Hermes export per spec, the web's Biome wall, and render tests of real elements and components through react-native-web (headings carry `aria-level`).
+
+### infra
+
+- Parts replace the single web project: the api server and the super, admin, supplier, vendor, delivery, client and tenant sites are independent parts declared once in `src/config/parts.sh` (kind, port, path, readiness path and status, balance, default replicas, rate limit, env mount, image recipe and build variables). Each part has its own `<PART>_DOMAIN` (a list separated by spaces or commas), `<PART>_IMAGE`, `<PART>_REPLICAS`, optional `<PART>_ENV_FILE`, Compose file (`part-<name>.yaml`), HAProxy backends and image; `WEB_IMAGES`, `WEB_HOSTS`, `WEB_REPLICAS`, `API_HOST`, `GRAFANA_HOST`, `RATE_LIMIT_HOST`, the `*_PORT`, `*_READY_PATH`, `*_BALANCE`, `*_ENV_MOUNT` keys and `WEB_SPEC_VARIABLE`/`WEB_API_VARIABLE` are gone (`GRAFANA_DOMAIN` replaces `GRAFANA_HOST`). Adding a part is a table row, its domain in `.env.example` and an entry in the image matrix.
+- The edge selects one part per request by its domains and path, the longest path first, answers 404 for an allowed host no part claims, and limits each part per client address (`sc1`); `haproxy -c` on HAProxy 3.4.7 accepts the configuration and a container run routed every case as expected.
+- A missing part never fails a run: a part with a domain is routed and ships only with an image; workflows skip a part whose `source` is absent (`image available`), a failed build leaves the other parts to ship, `image resolve` reports a missing image, and the deploy keeps the live image of a part without a new one or leaves it out; a routed part with no usable replica answers 503, an image without a domain is ignored; the worker, scheduler and migrations follow the server part.
+- Dynamic domains, on only when `DOMAINS_ENDPOINT`, `DOMAINS_TOKEN` and `DOMAINS_INTERVAL` above 0 (3600 by default) are all set: `edge sync` and the `domains` timer pull it, refuse a list that drops more than `DOMAINS_MAX_DROP` percent, write `edge/domains.map` (HAProxy `map_str`), certify the new registrable domains and reload seamlessly. The payload shape is one jq program in `src/config/domains.sh`. Policies stay per part for every domain, fixed or dynamic; a run issues at most `CERTIFICATE_BATCH` (100) certificates under its own lock, a failed one waits `CERTIFICATE_RETRY` seconds without blocking the others, an unused one is kept `CERTIFICATE_RETENTION` seconds (7 days), a dynamic domain is routed once its certificate exists, and the list is fetched compressed with `ETag` revalidation.
+- A change of data settings (credentials, names, memory, images) is applied by the next deploy instead of refused: a dump first, every connection cut, the change made inside PostgreSQL (`NOLOGIN`, sessions terminated, role and database renamed, passwords set) and RabbitMQ (user imported by hash over stdin, old one removed or its connections closed), the changed services recreated, `data.changed` announced; a PostgreSQL major upgrade stays refused. There is no rotate command.
+- Every duration in the env files is in seconds with a short comment beside it; the parser reads ` # …` after an unquoted value as a comment, as dotenv does. `BACKUP_DAYS` became `BACKUP_RETENTION` (seconds), `METRICS_RETENTION` is in seconds, backups run every hour (`BACKUP_INTERVAL=3600`) and `BACKUP_MAX_AGE` is 2 hours.
+- DNS management and Cloudflare are gone: the `dns` command, the `cloudflare` module, `DNS_*`, `TLS_CHALLENGE` (HTTP-01 through the edge is the only challenge) and the `certbot/dns-cloudflare` image (now `certbot/certbot`); where domains point is outside the infrastructure.
+- One certificate per registrable domain: routed domains are grouped through the embedded ICANN Public Suffix List (`example.com.eg`, `example.co.uk`), each group is one ACME lineage named after it, HAProxy loads `/etc/haproxy-tls/certs/`, and edge apply issues new or changed groups, keeps imported ones and prunes the rest; `tls import` files a certificate under the registrable domain it names.
+- `image build PART REFERENCE` builds from the part's row and fills every recipe `ARG` or refuses it; `image reference`, `image inputs` and `image resolve` give the deploy workflow one image per part and the digests to pin. Release snapshots, GitOps desired state, staging, scaling, rollback and doctor follow the parts. A law refuses a part's key prefix outside `config/` and `.env.example`; the tests run on a fixture table. 77 tests.
+- Images build from the repository root: the api image installs the engine's wheels and copies the flat api with its storage skeleton, the web image links `engine/bun` beside the surface, and the image ignore files name files only (the api context dropped from hundreds of megabytes to kilobytes). The web env mount and Next cache tmpfs follow the web's new working directory (`/app/product/web`).
+- Self-hosted models. `src/config/models.sh` pins runners (Text Embeddings Inference `cpu-1.9.4` and the llama.cpp server, by digest), models (`embedder` bge-m3 and `ranker` bge-reranker-v2-m3 at fixed revisions) and every file with its size and SHA-256; pickle formats are refused. `MODELS` names the ones to serve, `MODELS_DIR` holds the cache and `MODELS_TOKEN` reaches gated repositories; each model registers `<MODEL>_MEMORY`, `_CPUS` and `_BATCH`. `infra models [status|pull|verify|apply]` fetches through the new resumable `net-fetch`, keeps a verified stamp per revision, prunes older revisions, and runs each model read-only as nobody, offline, on the internal `<project>-models` network that the server parts join (`<MODEL>_URL`); deploy, `start`, `uninstall`, `monitor` and `doctor` take them along, and a failure notifies `models.failed` without touching the release.
+- `infra logs SERVICE [--since TIME] [--tail LINES]` prints the logs of any service of the release, data, edge, models or monitoring with every secret of the settings redacted.
+- `doctor` checks the models and warns about containers of unknown `<project>-*` Compose projects.
+- `TLS_STAGING` issues from the Let's Encrypt staging CA and reissues every lineage when it flips; the first TLS edge reloads after its plain bootstrap, so a socket relay serves the TLS configuration at once.
+- A value pasted with spaces or a line break around it is refused with its own message.
+- The data services are one table (`src/config/data.sh`) read by rendering, health, volumes, start, doctor, the release snapshot and the change detection; the parts, data and models tables share one parser and one registry of the keys they add to the schema. The PostgreSQL admin password travels as `NEW_DB_ADMIN_PASSWORD`.
+- Infra 0.4.0.
+
 ## v1.3.0 — 2026-10-21
 
 ### infra

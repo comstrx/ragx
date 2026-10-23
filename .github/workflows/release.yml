@@ -32,6 +32,7 @@ jobs:
         id: tag
         env:
           TAG: ${{ github.ref_name }}
+
         run: |
           [[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "::error::${TAG} is not a semver tag"; exit 1; }
           printf 'tag=%s\nrelease=%s\n' "${TAG}" "$(tr 'A-Z.' 'a-z-' <<< "${TAG}")" >> "${GITHUB_OUTPUT}"
@@ -46,6 +47,7 @@ jobs:
         id: plan
         env:
           TAG: ${{ steps.tag.outputs.tag }}
+
         run: |
           git merge-base --is-ancestor HEAD origin/main || { echo "::error::${TAG} is not on main"; exit 1; }
 
@@ -54,6 +56,7 @@ jobs:
 
           delimiter="notes_$(openssl rand -hex 16)"
           { echo "notes<<${delimiter}"; printf '%s\n' "${notes}"; echo "${delimiter}"; } >> "${GITHUB_OUTPUT}"
+
           [[ "${TAG}" == *-* ]] && prerelease=true || prerelease=false
           echo "prerelease=${prerelease}" >> "${GITHUB_OUTPUT}"
 
@@ -61,6 +64,16 @@ jobs:
     name: global
     needs: plan
     uses: $/.github/workflows/global.yml
+
+  python:
+    name: python
+    needs: plan
+    uses: $/.github/workflows/python.yml
+
+  bun:
+    name: bun
+    needs: plan
+    uses: $/.github/workflows/bun.yml
 
   api:
     name: api
@@ -79,36 +92,20 @@ jobs:
     needs: plan
     uses: $/.github/workflows/web.yml
 
-  deploy:
-    name: deploy
-    needs: [plan, global, api, infra, web]
-    if: vars.DEPLOY_AUTO == 'true'
-    uses: $/.github/workflows/deploy.yml
-    with:
-      tag: ${{ needs.plan.outputs.tag }}
-    secrets:
-      ENV_FILE: ${{ secrets.ENV_FILE }}
-      API_ENV_FILE: ${{ secrets.API_ENV_FILE }}
-      WEB_ENV_FILE: ${{ secrets.WEB_ENV_FILE }}
-      SSH_HOST: ${{ secrets.SSH_HOST }}
-      SSH_USER: ${{ secrets.SSH_USER }}
-      SSH_KEY: ${{ secrets.SSH_KEY }}
-      SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
-      DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USER }}
-      DOCKERHUB_PUSH_TOKEN: ${{ secrets.DOCKERHUB_PUSH_TOKEN }}
-
-    permissions:
-      contents: read
-      packages: write # lets Deploy build, scan and push the images of the tag before shipping it
+  mobile:
+    name: mobile
+    needs: plan
+    uses: $/.github/workflows/mobile.yml
 
   release:
     name: release
-    needs: [plan, global, api, infra, web]
+    needs: [plan, global, python, bun, api, infra, web, mobile]
+
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     permissions:
-      contents: write # creates the GitHub release once the tag ships
+      contents: write # publishes the GitHub release
 
     steps:
       - name: Publish
@@ -118,8 +115,37 @@ jobs:
           TAG: ${{ needs.plan.outputs.tag }}
           NOTES: ${{ needs.plan.outputs.notes }}
           PRERELEASE: ${{ needs.plan.outputs.prerelease }}
+
         run: |
           ! gh release view "${TAG}" >/dev/null 2>&1 || { echo "Release ${TAG} already exists"; exit 0; }
+
           flags=(--verify-tag --title "RagX ${TAG}" --notes-file -)
           [[ "${PRERELEASE}" == true ]] && flags+=(--prerelease)
+
           printf '%s\n' "${NOTES}" | gh release create "${TAG}" "${flags[@]}"
+
+  deploy:
+    name: deploy
+    needs: [plan, release]
+
+    if: vars.DEPLOY_AUTO == 'true'
+
+    uses: $/.github/workflows/deploy.yml
+    with:
+      tag: ${{ needs.plan.outputs.tag }}
+
+    secrets:
+      ENV_FILE: ${{ secrets.ENV_FILE }}
+      API_ENV_FILE: ${{ secrets.API_ENV_FILE }}
+      SUPER_ENV_FILE: ${{ secrets.SUPER_ENV_FILE }}
+      TENANT_ENV_FILE: ${{ secrets.TENANT_ENV_FILE }}
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      SSH_KEY: ${{ secrets.SSH_KEY }}
+      SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+      DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USER }}
+      DOCKERHUB_PUSH_TOKEN: ${{ secrets.DOCKERHUB_PUSH_TOKEN }}
+
+    permissions:
+      contents: read
+      packages: write # lets Deploy build

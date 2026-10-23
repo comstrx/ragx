@@ -16,7 +16,35 @@ updates:
       prefix: 'global(deps)'
 
   - package-ecosystem: uv
-    directory: /api
+    directory: /engine/python
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    groups:
+      python:
+        patterns: ['*']
+    labels: [deps]
+    commit-message:
+      prefix: 'python(deps)'
+
+  - package-ecosystem: bun
+    directory: /engine/bun
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    groups:
+      bun:
+        patterns: ['*']
+    labels: [deps]
+    commit-message:
+      prefix: 'bun(deps)'
+
+  - package-ecosystem: uv
+    directory: /product/api
     schedule:
       interval: weekly
       day: monday
@@ -30,7 +58,7 @@ updates:
       prefix: 'api(deps)'
 
   - package-ecosystem: docker
-    directories: ['/infra/src/template/image']
+    directories: ['/product/infra/src/template/image']
     schedule:
       interval: weekly
       day: monday
@@ -44,7 +72,7 @@ updates:
       prefix: 'infra(deps)'
 
   - package-ecosystem: bun
-    directory: /web
+    directory: /product/web
     schedule:
       interval: weekly
       day: monday
@@ -56,3 +84,17 @@ updates:
     labels: [deps]
     commit-message:
       prefix: 'web(deps)'
+
+  - package-ecosystem: bun
+    directory: /product/mobile
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    groups:
+      bun:
+        patterns: ['*']
+    labels: [deps]
+    commit-message:
+      prefix: 'mobile(deps)'
