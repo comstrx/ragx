@@ -1,0 +1,84 @@
+[project]
+name = "api"
+version = "1.0.0"
+requires-python = ">=3.15"
+dependencies = ["engine"]
+
+[dependency-groups]
+dev = ["httpx2==2.14.0", "mypy==2.4.0", "pytest==9.1.1", "ruff==0.17.1", "watchfiles==1.3.0"]
+
+[tool.uv]
+package = true
+
+[tool.uv.sources]
+engine = { path = "../../engine/python", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app", "bootstrap", "config", "database", "routes"]
+
+[tool.ruff]
+target-version = "py315"
+line-length = 120
+src = ["."]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = ["COM", "CPY", "D", "FBT001", "FBT002", "I", "TC", "ANN401", "E401", "E701", "N818"]
+
+[tool.ruff.lint.per-file-ignores]
+"database/seeders/**" = ["S608"]
+"app/enums/**" = ["C901", "PLR0911", "PLR0912"]
+"tests/**" = [
+    "INP001",
+    "S105",
+    "S106",
+    "S301",
+    "PLR0915",
+    "PLR2004",
+    "FBT003",
+    "ARG001",
+    "ARG002",
+    "ARG005",
+    "EM101",
+    "TRY003",
+]
+"conftest.py" = ["ARG001"]
+"benches/**" = ["INP001", "T201", "PLR2004"]
+
+[tool.ruff.lint.pylint]
+max-args = 8
+max-positional-args = 8
+
+[tool.mypy]
+python_version = "3.15"
+strict = true
+strict_bytes = true
+local_partial_types = true
+warn_unreachable = true
+enable_error_code = [
+    "deprecated",
+    "exhaustive-match",
+    "explicit-override",
+    "mutable-override",
+    "possibly-undefined",
+    "redundant-expr",
+    "redundant-self",
+    "truthy-bool",
+    "truthy-iterable",
+    "unimported-reveal",
+    "unused-awaitable",
+]
+plugins = ["pydantic.mypy"]
+explicit_package_bases = true
+files = ["app", "bootstrap", "config", "database", "routes", "tests", "benches", "conftest.py"]
+
+[tool.pytest]
+testpaths = ["tests"]
+addopts = ["--import-mode=importlib"]
+pythonpath = ["."]
+strict = true
+filterwarnings = ["error"]
