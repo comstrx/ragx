@@ -1,0 +1,42 @@
+{
+  "name": "web",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.4.3",
+  "engines": {
+    "bun": ">=1.4.3"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "dev": "bun tools/compile.ts development && next dev --hostname 0.0.0.0 --port 3000",
+    "build": "bun tools/compile.ts production && next build",
+    "start": "bun tools/serve.ts",
+    "check": "biome ci . && bun tools/core.ts",
+    "fmt": "biome check --write .",
+    "typecheck": "bun tools/compile.ts production && next typegen && tsc --noEmit",
+    "test": "bun test",
+    "gate": "bun run check && bun run typecheck && bun test && bun run deliver --all",
+    "compile": "bun tools/compile.ts production",
+    "bench": "set -e; for file in benches/*.bench.ts; do bun \"$file\"; done",
+    "audit": "bun tools/audit.ts",
+    "deliver": "bun tools/deliver.ts"
+  },
+  "dependencies": {
+    "engine": "link:engine",
+    "next": "16.4.2",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "server-only": "0.0.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/bun": "1.4.3",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "babel-plugin-react-compiler": "1.0.0",
+    "postcss": "8.5.30",
+    "tailwindcss": "4.3.3",
+    "typescript": "7.0.2"
+  }
+}
