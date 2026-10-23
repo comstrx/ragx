@@ -400,5 +400,19 @@
     "isolation": "a curl container on the models network could not reach https://huggingface.co (no route), so a model has no egress",
     "operations": "models status printed verified, healthy and the URL; logs embedder printed the router log with timestamps; logs ghost was refused naming the running services; MODELS emptied removed the container and its Compose file and kept the cache",
     "unverified": "the ranker model and the llama.cpp runner were not started; throughput under concurrent load was not measured"
+  },
+  "v140_lab": {
+    "date": "2026-10-23",
+    "host": "the shared 4 vCPU / 16 GB rootless Docker 29.9.1 host, standalone edge on 18080/18443, a 3-day self-signed certificate imported for comstrx.com, MODELS=embedder",
+    "release": "tag v1.4.0: the first push hit startup_failure because Release called Deploy with contents: read while its new publish job asks for write; with the caller granting it, every gate passed (python, bun, api, web, mobile, infra on Linux and macOS, global), the release published and Deploy built and pushed the api and super images; tenant was skipped because product/web has no tenant spec, and the deploy kept it out of the release",
+    "first_candidate": "rejected after HEALTH_TIMEOUT: the candidate probe verifies TLS and the lab certificate had no HEALTH_CA; with HEALTH_CA set, a dispatched deploy --force shipped the same release, verified it for 60 s and installed the timers",
+    "models": "after the deploy, models apply fetched the bge-m3 files (2.27 GB) in 77 s, verified them and served in 30 s more; the API container reached http://embedder:8080 over the internal ragx-models network (health 200, two 1024-dimension embeddings in 0.33 s) with the worker and scheduler joined; the model ran as 65534, read-only, every capability dropped, 4 GiB limit, 2.39 GiB used, and a curl container on that network had no egress",
+    "doctor": "every check passed, models and orphans included; the warnings were the rootless port forwarding, the 3-day certificate, no backup yet and no channel",
+    "edge": "api /health and super 200 over HTTP/2, tenant 503 (routed, not shipped), grafana 200, an unknown SNI refused, 308 to the https port, HSTS two years, X-Release and Alt-Svc h3",
+    "operations": "logs found services in the release, data, edge, models and monitoring, the database password appeared in none of 500 PostgreSQL lines and an unknown service named the running ones; backup wrote a dump and the first base, backup verify restored 2 tables; scale 1 to 2 API replicas in 10 s and back in 6.5 s; monitor degraded only on the certificate; models verify re-hashed in 4 s; deploy --dry-run reported no change",
+    "credential_rotation": "the PostgreSQL, RabbitMQ and Redis passwords rotated in ENV_FILE and API_ENV_FILE: Deploy made a new release, saved a dump, cut every connection and applied the credentials in 18 s, the candidate passed with the new secrets and switched; the retained release answered 503 on its own /health, and a dispatched rollback was refused (Retained release ... is not ready) while the live release kept answering 200 and the notify job ran",
+    "model_failure": "a 512m limit OOM-looped the router (9 restarts); models apply failed after HEALTH_TIMEOUT naming the logs, monitor turned degraded with A model is unhealthy and doctor failed the models check; a plain models apply was healthy again in 29 s",
+    "stop_start": "stop is refused without --force; stop --force left no answer; start brought the data, the model, the release and the edge back in 18 s with 200",
+    "teardown": "uninstall, timers, the backups removed from inside a container, volumes, networks, our images, directories, the CI key, the production secrets and DEPLOY_AUTO; the neighbor's container, its TEI image (the same digest, reused rather than pulled), the llama.cpp image, its network and folders untouched"
   }
 }
