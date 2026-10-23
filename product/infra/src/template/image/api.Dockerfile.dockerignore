@@ -1,0 +1,17 @@
+**
+!engine/python/pyproject.toml
+!engine/python/src/**
+!product/api/pyproject.toml
+!product/api/uv.lock
+!product/api/app/**
+!product/api/bootstrap/**
+!product/api/config/**
+!product/api/database/**
+!product/api/public/**
+!product/api/routes/**
+!product/api/storage/**/.gitignore
+!product/api/views/**
+**/.env*
+**/.secret*
+**/__pycache__
+**/*.pyc

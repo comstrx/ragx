@@ -1,0 +1,404 @@
+{
+  "date": "2026-10-19",
+  "host": {
+    "machine": "GCP VM, Ubuntu 24.04, 4 vCPU, 16 GB",
+    "runtime": "rootless Docker 29.9.1, Compose 5.6.0, Bash 5.2.21",
+    "exposure": "edge bound to 127.0.0.1:28080/28443 (TCP) and 127.0.0.1:28443 (UDP); no public port opened"
+  },
+  "versions": {
+    "haproxy": "3.4.7 LTS, AWS-LC 4.0.0, +QUIC +PROMEX",
+    "portainer": "CE 2.45.2 LTS",
+    "client": "curl 8.23.0 with ngtcp2 1.22.1, nghttp3 1.15.0, GnuTLS 3.8.13 (benches/curl.Dockerfile)",
+    "application": "the RagX API image and the client and admin web images, pinned by digest in a loopback registry"
+  },
+  "protocols": {
+    "method": "benches/protocols.sh: 2000 requests per round, 16 parallel, one curl binary for both protocols, inside the apps network to edge:8443, API /health behind HAProxy, edge CPU from the container cgroup; wall time includes the client container start",
+    "rounds": [
+      {
+        "protocol": "h2",
+        "ok": 2000,
+        "rps": 1011.6,
+        "p50_ms": 10.37,
+        "p95_ms": 30.88,
+        "p99_ms": 41.7,
+        "edge_cpu_ms": 412
+      },
+      {
+        "protocol": "h3",
+        "ok": 2000,
+        "rps": 951.5,
+        "p50_ms": 10.78,
+        "p95_ms": 35.81,
+        "p99_ms": 53.17,
+        "edge_cpu_ms": 400
+      },
+      {
+        "protocol": "h2",
+        "ok": 2000,
+        "rps": 1050.4,
+        "p50_ms": 9.43,
+        "p95_ms": 34.86,
+        "p99_ms": 43.29,
+        "edge_cpu_ms": 395
+      },
+      {
+        "protocol": "h3",
+        "ok": 2000,
+        "rps": 964.3,
+        "p50_ms": 11.33,
+        "p95_ms": 26.69,
+        "p99_ms": 50.2,
+        "edge_cpu_ms": 394
+      }
+    ],
+    "reading": "On a loss-free sub-millisecond path HTTP/3 brings no edge advantage: about 7% lower throughput, equal CPU. Its value is on lossy, high-RTT client paths, which this lab does not model.",
+    "proof": [
+      "curl --http3-only through the published UDP port 127.0.0.1:28443 answered HTTP/3 200",
+      "HTTP/1.1 and HTTP/2 over TCP answered 200 with X-Release, Alt-Svc h3=\":28443\", HSTS, X-Request-ID, nosniff and no Server header",
+      "plain HTTP answered 308 to HTTPS; an unknown Host answered 404"
+    ]
+  },
+  "lifecycle": [
+    {
+      "scenario": "scale API 2 to 4 to 2 under load",
+      "requests": 40000,
+      "ok": 40000,
+      "max_s": 3.006,
+      "note": "before init-state fully-down the same run gave 5 x 503: new replicas received traffic before listening"
+    },
+    {
+      "scenario": "crash one of two replicas (SIGKILL) under load",
+      "requests": 30000,
+      "ok": 30000,
+      "max_s": 1.012,
+      "note": "with timeout connect 3s the failover tail was 3.007 s"
+    },
+    {
+      "scenario": "hang one of two replicas (paused 15 s) under load",
+      "requests": 30000,
+      "ok": 29999,
+      "max_s": 15.082,
+      "note": "one request stuck on the frozen replica; leastconn kept the rest away"
+    },
+    {
+      "scenario": "blue/green deploy r1 to r2 under load",
+      "requests": 150000,
+      "ok": 150000,
+      "max_s": 0.19,
+      "duration_s": 35
+    },
+    {
+      "scenario": "rollback r2 to r1 under load",
+      "requests": 60000,
+      "ok": 60000,
+      "max_s": 0.138,
+      "duration_s": 7
+    },
+    {
+      "scenario": "candidate whose containers never become healthy",
+      "requests": 200000,
+      "ok": 200000,
+      "max_s": 0.102,
+      "result": "phase rejected after the 120 s health window, r1 kept serving"
+    },
+    {
+      "scenario": "web specs client and admin plus API, deploy under load",
+      "requests": 120000,
+      "ok": 120000,
+      "max_s": 0.13,
+      "result": "host routing for lab.test, admin.lab.test and api.lab.test, HTTP/3 for the web host"
+    }
+  ],
+  "guards": [
+    "redeploying inside the retention window refused: slot keeps the previous release for rollback",
+    "a live WebSocket on the retiring slot made the deploy wait 30 s and refuse; after the session closed the deploy succeeded",
+    "a concurrent deploy refused on the lock (exit 1) while the first completed",
+    "a stale lock with a dead owner blocked deploys until recover --force, which resumed idempotently",
+    "edge drift refused before any slot retirement until edge apply",
+    "edge apply hot-reloaded HAProxy (container kept, new worker) and kept the previous configuration for rollback",
+    "an unpinned API_IMAGE failed validation with exit 1"
+  ],
+  "data": {
+    "backup_restore": "50000 rows with $, quotes and newlines restored into a new database with an identical count and md5",
+    "refusals": ["restore into the live database", "a dump whose checksum does not match"],
+    "timer": "a user systemd timer installed from the release bundle ran the backup with Result=success, then stopped"
+  },
+  "control_plane": {
+    "portainer": "installed on loopback with a private CA whose key is deleted after issuance, verified TLS, an API key minted into a mode-600 secret, the pull registry registered through the API",
+    "export": "the desired Compose artifact keeps ${API_REPLICAS}, ${DEPLOY_SLOT} and ${RELEASE_ROOT}, carries no host path or secret, and validates with docker compose under Portainer-style variables"
+  },
+  "unverified": [
+    "Telegram delivery with a real bot token: the request shape, token secrecy and failure handling are pinned by offline tests",
+    "Docker Hub private push and pull: no Docker Hub credentials were supplied; the driver differs from GHCR only in host and Portainer type, both covered by offline tests",
+    "public UDP 443 through a cloud firewall and Let's Encrypt issuance: they need a public domain and an open cloud firewall; the HTTP-01 route and the certbot arguments are verified",
+    "the live Cloudflare DNS API: no account token; the create, update, IPv6 and proxied request flows are pinned by offline tests",
+    "a successful Google Cloud Storage upload with real HMAC keys: the route, endpoint and signing reached storage.googleapis.com with fake keys",
+    "live notify flags against real Telegram, Slack or webhook endpoints: pinned by offline tests through the same dispatcher"
+  ],
+  "private_git_and_registry": {
+    "where": "GitHub Actions run 39214929789 in the private repository comstrx/infra-lab-gitops, Ubuntu 24.04 runner with Docker 28.0.4 and Compose 2.38.2; the job-scoped GITHUB_TOKEN reached the tool only through REGISTRY_TOKEN and GITOPS_TOKEN in the environment",
+    "registry": "registry login and registry push sent the RagX API image to private ghcr.io/comstrx/lab-api, every local copy was removed, and the deploy pulled it back by digest with the stored credentials; portainer registry registered ghcr.io with authentication",
+    "gitops": "reconcile cloned the private branch and the protected release tag, verified the desired files and Compose checksum, and Portainer created authenticated Git stacks from the private repository whose GitConfig.ConfigHash equaled the verified commit",
+    "lifecycle": [
+      {
+        "scenario": "second release reconciled under load",
+        "requests": 120000,
+        "ok": 120000
+      },
+      {
+        "scenario": "repeat reconcile",
+        "result": "changed=false"
+      },
+      {
+        "scenario": "branch desired state tampered after tagging",
+        "result": "refused: Tagged desired state differs from the branch"
+      },
+      {
+        "scenario": "rollback",
+        "result": "switched back, X-Release of the first release"
+      }
+    ],
+    "audit": "no token in release files, edge, data, desired state or Git history; registry config, API key and api.env at mode 600"
+  },
+  "macos": "GitHub Actions macos-latest: the release bundle ran plan, installed the launchd timer (state active, run interval 3600 s), and removed it",
+  "wan": {
+    "where": "GitHub Actions run 39219122915, Ubuntu 24.04 runner, client container on the apps network with tc netem on its egress, 1000 requests per round, 16 parallel, curl 8.23.0 (ngtcp2 1.22.1, nghttp3 1.15.0, GnuTLS 3.8.13)",
+    "rounds": [
+      {
+        "network": "delay 1ms",
+        "h2_rps": [901.7, 936.3],
+        "h3_rps": [948.8, 988.1],
+        "h2_p50_ms": [12.2, 13.7],
+        "h3_p50_ms": [11.6, 13.0],
+        "h2_p99_ms": [78.6, 46.1],
+        "h3_p99_ms": [80.7, 52.0],
+        "h2_edge_cpu_ms": [163, 181],
+        "h3_edge_cpu_ms": [177, 176]
+      },
+      {
+        "network": "delay 40ms",
+        "h2_rps": [350.9, 340.7],
+        "h3_rps": [335.3, 348.9],
+        "h2_p50_ms": [42.2, 42.9],
+        "h3_p50_ms": [43.0, 42.4],
+        "h2_p99_ms": [164.4, 164.0],
+        "h3_p99_ms": [111.6, 140.9],
+        "h2_edge_cpu_ms": [185, 227],
+        "h3_edge_cpu_ms": [252, 216]
+      },
+      {
+        "network": "delay 40ms loss 1%",
+        "h2_rps": [252.3, 229.6],
+        "h3_rps": [330.3, 338.9],
+        "h2_p50_ms": [48.9, 53.1],
+        "h3_p50_ms": [43.3, 43.2],
+        "h2_p99_ms": [163.2, 375.6],
+        "h3_p99_ms": [126.1, 109.4],
+        "h2_edge_cpu_ms": [182, 185],
+        "h3_edge_cpu_ms": [234, 213]
+      },
+      {
+        "network": "delay 40ms loss 3%",
+        "h2_rps": [200.5, 198.6],
+        "h3_rps": [331.6, 335.5],
+        "h2_p50_ms": [81.2, 82.0],
+        "h3_p50_ms": [43.3, 43.1],
+        "h2_p99_ms": [173.4, 172.9],
+        "h3_p99_ms": [102.6, 102.3],
+        "h2_edge_cpu_ms": [184, 171],
+        "h3_edge_cpu_ms": [231, 206]
+      }
+    ],
+    "reading": "Without loss the protocols tie. Under loss HTTP/3 keeps its throughput and median while HTTP/2 suffers TCP head-of-line blocking: about 1.3x throughput at 1% loss and 1.7x at 3%, at roughly 15-25% more edge CPU."
+  },
+  "backup_s3": "GitHub Actions run 39218228393: SeaweedFS S3 gateway with enforced credentials (a wrong secret is refused); backup with BACKUP_DRIVER=s3 uploaded the dump and its checksum through the aws CLI, and the downloaded copy matched the local backup",
+  "acme_route": "GitHub Actions run 39218228393: a server with network alias acme on the apps network served /.well-known/acme-challenge/ over plain HTTP through the edge while every other path answered 308 to HTTPS",
+  "production_rehearsal": {
+    "date": "2026-10-19",
+    "where": "the 4 vCPU rootless-Docker server, DEPLOY_ENV=production, release bundle staged over SSH, ports 28080/28443 because the cloud firewall and missing sudo block 80/443, public names under 8-228-211-196.sslip.io with a rehearsal CA",
+    "images": "the RagX API and the client and admin web specs built on the server from the current source with image build, pinned by digest in a loopback registry",
+    "checks": [
+      "first deploy ran the expand migration, passed readiness and switched; Docker 29.9.1 and Compose 5.6.0 matched Bash.toml",
+      "through the edge: register 201 over HTTP/2, login issued a token, /v1/auth/me 200 with it and 401 without it",
+      "the client site answered 307 (locale redirect) and the admin site 200; HTTP/3 through the published UDP port answered the API 200, the client 307 and the admin 200",
+      "the worker consumed the welcome mail queued by registration through RabbitMQ; worker and scheduler logs carried no error",
+      "backup, then monitor reported healthy",
+      "release r2 to r3 under load: 60000 of 60000 requests answered 200",
+      "rollback r3 to r2 under load: 40000 of 40000 requests answered 200"
+    ],
+    "fixed": [
+      "slot retirement checked HAProxy sessions even when no edge existed, which blocked every redeploy after a first deploy that failed before the edge started",
+      "the public probe needed hairpin NAT in production; without EXTERNAL_HEALTH_URL it now resolves the API host to the local bind address",
+      "export needed every application secret; it now renders only the Compose files",
+      "CI baked api.example.invalid into the web images; the API host and HTTPS port now come from repository variables"
+    ],
+    "left_for_the_real_host": "ports 80 and 443 with Let's Encrypt, public UDP 443 and browser access from the internet"
+  },
+  "integrations_lab": {
+    "date": "2026-10-19",
+    "where": "the same 4 vCPU rootless-Docker server, DEPLOY_ENV=production, release bundle staged over SSH, edge on 127.0.0.1:28080/28443 with a lab CA for api.lab.test and grafana.lab.test, the API built from the current source",
+    "checks": [
+      "edge apply on a host with no project created the networks and TLS volumes and started the edge before the first deploy",
+      "the first deploy found the API now needs pgvector; the data image moved to pgvector/pgvector:0.8.7-pg18 and the declared extensions are created as the local superuser before migrations, after which all ten migrations passed",
+      "r1 passed the 120 s verify window; monitoring converged and the monitor, backup and renew user timers were installed from the bundle; a repeat deploy was a no-op that left the healthy monitoring stack untouched",
+      "Prometheus targets edge, rabbitmq, postgres, node and prometheus were up; 12 of 12 rules healthy; promtool and amtool accepted the rendered configuration",
+      "Grafana answered 200 over HTTP/2 through the edge, accepted the admin password from GRAFANA_PASSWORD, refused a wrong one with 401, and listed the provisioned Platform dashboard",
+      "POST /v1/auth/login answered 422 five times, then 429 with retry-after: 60, while /health kept answering 200",
+      "monitor wrote platform.prom, Prometheus read platform_healthy through node exporter, and the 3-day lab certificate was reported as expiring",
+      "r2 passed readiness and switched; both r2 API replicas were frozen at 15:29:55; verification failed three consecutive checks and r1 served again at 15:30:11 with X-Release r1, previous r2, phase complete"
+    ],
+    "fixed": [
+      "Docker copied the image ownership of /prometheus into the new volume and Prometheus could not write; monitoring volumes now disable copy-up so the runtime-user ownership holds",
+      "the PostgreSQL image lacked pgvector, which the API migrations now require"
+    ],
+    "resources": "prometheus 45 MiB, grafana 199 MiB, node exporter 9 MiB, postgres exporter 8 MiB at idle",
+    "cleanup": "timers, containers, volumes, networks, the loopback registry and the lab directory were removed"
+  },
+  "delivery_lab": {
+    "date": "2026-10-20",
+    "where": "the same rootless-Docker server with the final API image, DEPLOY_ENV=production, edge on 127.0.0.1:28080/28443 with a lab CA; publish against the private repository comstrx/infra-lab-gitops",
+    "checks": [
+      "r1 and r2 deployed through the full gates (about 2.5 minutes each, including the 120 s verify window)",
+      "deploy RELEASE=r1 while r1 was the retained previous release switched back in 6.8 s and marked r2 rejected: superseded by r1",
+      "deploy RELEASE=r2 was refused: Release r2 was rejected (superseded by r1); deploy --force cleared the mark and switched to r2 in 6.8 s, X-Release r2",
+      "server stage with REGISTRY_USER and REGISTRY_TOKEN from the process environment left both keys out of .env.production; server run config REGISTRY_USER printed the forwarded value, and printed nothing without forwarding",
+      "with GITOPS_URL and DEPLOY_AUTO=true the reconcile timer was enabled after deploy; with DEPLOY_AUTO=false the next deploy disabled it, leaving monitor, backup and renew",
+      "publish committed deploy/application.yaml and deploy/desired.env and tagged release-labp1; a repeat made no commit; a different desired state under release-labp1 was refused; labp2 added a commit and a tag; publishing labp1 again moved only the branch, whose desired.env matched the tag's",
+      "image remote returned the registry digest of a public image and failed for a missing tag"
+    ],
+    "cleanup": "lab containers, volumes, networks, timers, registry and directories removed; the lab branch and tags deleted"
+  },
+  "env_lab": {
+    "date": "2026-10-20",
+    "host": "4 vCPU rootless Docker, the same lab host",
+    "setup": "infra settings and the API env file kept apart; API_ENV_FILE and WEB_ENV_FILE exported only in the operator's process and staged as .env.api and .env.web (600); API and web client images built on the host, the web spec chosen through WEB_SPEC_VARIABLE (the build log reports 'Compiled client')",
+    "results": {
+      "deploy": "r1 with MIGRATION_POLICY=expand: migration, readiness, switch and HTTP/2 200 with X-Release r1; the database and cache answered with credentials present only in the API env file",
+      "mount": "releases/r1 is 700 and api.env/web.env are 644; uid 10001 reads /app/.env in the api and web containers and cannot touch it",
+      "inspect": "0 of AUTH_SECRET, DB_PASSWORD, QUEUE_URL and CACHE_URL in docker inspect for api, worker and web; the API process environment holds only the forced and role variables plus APP_RELEASE=r1",
+      "app_mode": "the API settings resolve to env production and debug false from the mounted file",
+      "same_release": "a changed API env staged under RELEASE=r1 is refused: 'Release r1 settings changed; publish under a new RELEASE'",
+      "new_release": "r2 with a different API env deployed in 2 min 38 s including the 120 s verify window",
+      "rollback": "rollback to r1 in 4.05 s; r1 api and worker mount LAB_MARKER=r1 while the server's .env.api holds r2; r2 recorded as rolled back by an operator"
+    },
+    "observed": "one deploy over SSH lost its session during the silent verify window (exit 255) after the switch had completed and the remote command died with it; fixed by running server run commands as detached jobs"
+  },
+  "remote_job_lab": {
+    "date": "2026-10-20",
+    "host": "4 vCPU rootless Docker, the same lab host",
+    "results": {
+      "normal": "r1 deployed through a detached job in 2 min 47 s; output streamed live, exit status 0, job files 600 in a 700 directory",
+      "dropped": "the local ssh client was killed with SIGKILL during r2's verify window; the deploy kept running on the server, the client warned 'Connection lost; following remote job … again (1/10)', replayed the log and returned exit status 0; the server reported r2 current, r1 previous, phase complete, X-Release r2"
+    }
+  },
+  "restore_lab": {
+    "date": "2026-10-20",
+    "host": "4 vCPU rootless Docker, the same lab host",
+    "setup": "PROJECT=labx without an environment suffix (containers labx-*), BACKUP_DIR=/home/comstrx/ragx-lab/backups outside the state root, the real API migrations with pgvector, a marker table with a vector(3) column owned by the application role",
+    "results": {
+      "first_attempt": "the restore failed safely on 'must be owner of extension vector' (COMMENT ON EXTENSION in the dump); the copy was dropped and the live database kept serving; fixed by skipping extension entries from the dump catalog",
+      "by_name": "restore of the dump taken before a later write: 6.1 s end to end; rows back to the dumped state with their vector values; table owner ragx_app; ragx owned by ragx_app without PUBLIC CONNECT; ragx_before_<stamp> kept with connections disallowed; health 200; API containers untouched, worker and scheduler restarted",
+      "undo": "restore without a name restored the pre-restore backup and brought the later write back",
+      "refusal": "restore without --force is refused",
+      "availability": "4 of 362 health probes (every 50 ms over 25 s) answered 503 during the swap; the rest answered 200",
+      "listing": "backup list shows every dump newest first with its size and the latest marker"
+    }
+  },
+  "revision_lab": {
+    "date": "2026-10-20",
+    "host": "4 vCPU rootless Docker, the same lab host",
+    "results": {
+      "first": "VERSION=v1-0-0 with env A deployed as v1-0-0-8778e1bc in 2 min 44 s",
+      "rotated": "the same tag with a rotated AUTH_SECRET (env B) deployed as v1-0-0-e1c3799c through blue/green in 2 min 31 s; one API image on the host, nothing rebuilt",
+      "back": "env A again computed v1-0-0-8778e1bc, the retained previous release, and switched back in 7 s; X-Release v1-0-0-8778e1bc"
+    }
+  },
+  "final_lab": {
+    "date": "2026-10-20",
+    "host": "4 vCPU rootless Docker, the same lab host; API (2 replicas), worker, scheduler and a web spec (2 replicas) behind the HAProxy edge with HTTP/3",
+    "load": "curl --parallel over HTTP/2, 8 streams, against /health (a deep check that queries PostgreSQL, Redis and RabbitMQ): about 600 requests per second sustained, every status counted",
+    "results": {
+      "baseline": "114,000 requests in 190 s, all 200",
+      "full_deploy": "a rotated secret under the same tag deployed through blue/green in 176.6 s: 99,000 requests, all 200",
+      "instant_switch": "back to the retained release in 10.6 s: 12,800 requests, all 200",
+      "replica_crash": "docker kill of one API replica: 7,400 requests, all 200",
+      "scale": "API 2 to 4 in 25.6 s (21,400 requests) and 4 to 2 in 11.5 s (40,000 requests), all 200",
+      "backup": "backup, archive check and backup verify (scratch restore of 2 tables) passed",
+      "restore": "restore of the latest dump in 9.3 s under load: the copy cost nothing; the rename ended the database sessions and /health answered 503 for about 3 s (13:30:21 to 13:30:24) while the pools reconnected",
+      "automatic_rollback": "every API replica of the new release frozen 10 s into the verify window: three failed checks rolled back to the previous release, restoring service 18 s after the freeze; the release was recorded as rejected and verify.rolled-back was delivered",
+      "parent_killed": "kill -9 of the deploy command left its locked subshell running; recover --force refused while the lock owner lived and the deploy completed by itself",
+      "crash_recovery": "kill -9 of the whole deploy tree after the migration left a dead lock; deploy refused, recover --force cleared it and completed the pending release",
+      "stop_start": "stop is refused without --force; stop --force took the edge down (no answer) and start restored 200",
+      "notifications": "15 webhook deliveries, every HMAC signature verified with Python; the first delivery failed and was retried after 2 s",
+      "doctor": "every check passed; the only warning was the 3-day lab certificate",
+      "security": "TLS 1.0 and 1.1 refused, TLS 1.2 and 1.3 accepted, HTTP/2 negotiated, HSTS two years, nosniff, request ids, Alt-Svc h3, no Server header, an unknown SNI refused and a foreign Host answered 404, plain HTTP 308 to HTTPS, the sixth /v1/auth request in a minute answered 429 with Retry-After 60; every container non-root, read-only, all capabilities dropped and no-new-privileges, only the edge publishes ports and only on 127.0.0.1; env files 600, release, state and backup directories 700; no application secret in docker inspect (the data services still carry their own credentials in env)"
+    }
+  },
+  "relay_lab": {
+    "date": "2026-10-20",
+    "path": "controller -> infra with ENV_FILE and API_ENV_FILE as base64 lines, SSH_KEY base64 of a restrict authorized key, SSH_KNOWN_HOSTS inline; routed stage, tls import, deploy",
+    "standalone": "HTTP/2 200 with X-Release, Alt-Svc h3 on the published port, UDP published, 308 to the HTTPS port, doctor green",
+    "preflight": "edge apply refused the socket directory: 'run: sudo mkdir -p DIR && sudo setfacl -m u:166535:rwx DIR' (subuid 165536 + 999); the live edge stayed untouched",
+    "relay": "http.sock and https.sock owned by 166535 mode 666, no published port, no UDP; nginx 1.24 stream proxy_protocol on; HAProxy logged clients 127.0.0.2-4; 308 kept :38443; foreign SNI refused; certificate expiry read through the socket",
+    "rate_limit": "RATE_LIMIT_IP=200/1s answered 429 to 119,800 of 120,000 requests from one address through the relay",
+    "switch_under_load": {
+      "requests": 119773,
+      "failed": 0,
+      "old_release": 64244,
+      "new_release": 55529,
+      "max_seconds": 0.235
+    },
+    "routed": "rollback, backup and status ran on the server through SSH jobs",
+    "back_to_standalone": "emptying EDGE_SOCKETS republished the ports with Alt-Svc h3",
+    "cloudflare": "with Cloudflare's list trusted (then CLOUDFLARE_PROXIED, now TRUSTED_PROXIES and TRUSTED_HEADER) edge apply recorded 22 ranges; PROXY from 173.245.48.5 logged CF-Connecting-IP 203.0.113.9; PROXY from 198.51.100.7 kept 198.51.100.7",
+    "trusted_header": "2026-10-20 local check on haproxytech/haproxy-alpine:3.4.7: req.hdr_ip(X-Forwarded-For,-1) from a trusted peer turned '6.6.6.6, 203.0.113.9' into 203.0.113.9, two headers into the last, '2001:db8::5' into itself; 'nope' and an untrusted peer kept the peer address; haproxy -c passed",
+    "gcs": "gs:// upload with fake HMAC keys reached storage.googleapis.com: SignatureDoesNotMatch on PutObject"
+  },
+  "release_lab": {
+    "date": "2026-10-21",
+    "path": "tag v1.1.0 → Release (gates, GitHub release) → Deploy called with DEPLOY_AUTO=true; then Deploy dispatched by hand from main; rootless Docker 29.9.1 on a 4 vCPU / 16 GB host shared with another product's production container, which stayed untouched",
+    "auto_deploy": "Release run 39512104914: every gate green on Linux and macOS, release published, images job built and scanned the API and the super, admin and client images for the deployment's address, deploy job shipped them over SSH with a restrict key; GHCR refused the first push of each brand-new package until it granted the repository, hence a bounded push retry",
+    "manual_deploy": "workflow_dispatch from main: backup (2 dumps listed), deploy into relay mode, deploy back to standalone, deploy of an env change, rollback; images reused by tag and address when the address did not change",
+    "standalone": "api, super, admin, client and grafana over HTTP/2 with X-Release, HSTS and Alt-Svc h3; HTTP/3 200 through the published UDP port; 308 from 18080 to the https port; the admin CSP connect-src names the deployment's API origin",
+    "relay": "EDGE_SOCKETS pointed at a socket directory granted to uid 166535 behind a user-level nginx stream relay with proxy_protocol: no published edge port, no UDP, sockets mode 666, 308 to the relay's https port, HAProxy logged clients 127.0.0.2, .3 and .4 from distinct sources, and the web images were rebuilt for the relay's address",
+    "guards": "a candidate needing more unreserved Docker memory than the host had (the neighbor holds a 6 GiB limit) was rejected and the live release restored; the retention guard refused a deploy while the previous slot was kept for rollback",
+    "switch_under_load": "18,122 health requests across a release switch and a dispatched rollback: all 200, max 0.096 s; the rollback switched back in about 12 s",
+    "doctor": "every check green on the server; Prometheus reported 5 targets up",
+    "offsite_routes": "from the server, the pinned aws-cli image with fake keys reached storage.googleapis.com (SignatureDoesNotMatch) for gs:// and s3.us-east-1.amazonaws.com (InvalidAccessKeyId) for s3://",
+    "teardown": "the first uninstall left the slot kept for rollback and the monitoring running; uninstall was fixed to remove both slots and the monitoring, rerun from a restaged bundle, and every project container, volume, network, image, timer, directory and the CI key were removed"
+  },
+  "hardening_lab": {
+    "date": "2026-10-21",
+    "path": "infra 0.2.x driven from a checkout over SSH (API-only release on the pinned python:3.15-slim image), then tag v1.2.4 → Release → Deploy called with DEPLOY_AUTO=true and Deploy dispatched by hand, on the same rootless-Docker host shared with another product's production container, which stayed untouched",
+    "checkout": "staged bundle byte-identical to the local build; HTTP/2 and HTTP/3 200 with X-Release, HSTS, Alt-Svc, the 308 that keeps the port, strict SNI, Grafana; backups created, listed and verified; a post-switch probe refused by the per-IP limit rejected the release and restored the live one; forced redeploy under load 14,803 requests all 200 (max 0.024 s); rollback in 7 s under load 1,187 all 200; relay mode behind a user-level nginx stream relay with a switch under load from two sources 12,832 all 200 (max 0.066 s); trusted-proxy rule in both modes (trusted CF-Connecting-IP restored, untrusted or malformed ignored, Cloudflare list fetched by URL); return to standalone as an instant switch to the retained release; offsite gs:// and s3:// uploads with fake keys answered SignatureDoesNotMatch and InvalidAccessKeyId through forwarded -e overrides, the secret in no output; -e API_REPLICAS=3 scale and back",
+    "auto_deploy": "Release run 39545588668 (v1.2.4): every gate green on Linux and macOS, release published, the images job built and scanned the API and the super, admin and client images for the lab address and pushed them through infra registry push, the deploy job shipped v1-2-4-0a39ae9e over SSH with a restrict key: /health 200 with the database ready, super and admin 200, client 307 to its locale, HTTP/3 200, the admin CSP naming the deployment's API origin, doctor green",
+    "manual_deploy": "workflow_dispatch from main: backup succeeded; deploy of the same tag reused every image by digest and changed nothing",
+    "found": "the release gates stopped v1.1.1 (certifi GHSA-6q48-6c7w-9gw2), v1.2.0 (ca-certificates DSA-6572-1 in the API image, fixed by upgrading Debian packages at build time), v1.2.1 (a recovery test expecting exactly-once delivery), v1.2.2 (a cancelled RabbitMQ get closing the shared channel) and v1.2.3 (Runtime API replies containing a health-check reason read as refusals); each was fixed at its cause with a test",
+    "limitation": "the edge renders readiness paths and ports from the staged settings, so a deploy that changes API_READY_PATH (here / to /health) fails the live slot's health checks at edge apply until the new release switches in: 10,353 requests answered 503 during that window. Per-slot readiness is the next fix",
+    "rootless": "rootless Docker's port forwarding presents every standalone client as the bridge gateway (172.19.0.1): per-IP limits and logs see one address; the relay keeps real clients; doctor now warns",
+    "teardown": "uninstall, timers, volumes, networks, images, directories, the nginx relay, the CI key (refused afterwards), the GitHub environment secrets and DEPLOY_AUTO removed; the neighbor's container, network, images and folders untouched"
+  },
+  "wal_lab": {
+    "date": "2026-10-21",
+    "path": "infra from a checkout over SSH on the shared rootless-Docker host, an API-only release on the pinned python:3.15-slim image, a fresh data stack with the WAL archive",
+    "archiving": "archive_mode=on, archive_timeout=60; /wal owned by uid 999 (host subuid 166534) mode 700; pg_switch_wal archived a segment within seconds with failed_count 0",
+    "base": "backup wrote sql/<stamp>.dump and wal/base/<stamp> (base.tar.gz 4.2 MB, backup_manifest, label); the start segment computed from the manifest LSN, 000000010000000000000004, matched the .backup file PostgreSQL archived, and pg_archivecleanup removed the older segments",
+    "point_in_time": "three committed rows, then DELETE plus a marker row; restore --at the second between them brought the three rows back without the marker in 16 s, on timeline 2, recovery settings reset, a new base taken; a second cycle on timeline 2 restored a later row after a TRUNCATE in 19 s with pending_restart 0 and 322 probes all 200",
+    "failure": "a moment beyond the archive (a row committed but not yet archived): PostgreSQL stopped during recovery, the restore noticed the restart within 17 s, moved the previous data directory back and every row, the unarchived one included, was there on timeline 3",
+    "guard": "edge apply with API_READY_PATH changed from / to /health was refused naming the live release; --force applied it with a warning and the API answered 503 as documented; edge apply with the old path restored 200",
+    "offsite": "backup archive with fake keys ran aws s3 sync as uid 999 and reached Google (SignatureDoesNotMatch) and AWS (InvalidAccessKeyId); the secret appeared in no output; a real upload stays unverified",
+    "teardown": "uninstall, timers, the WAL archive removed from inside a container, volumes, networks, images and directories; the neighbor's container, network, images and folders untouched",
+    "release": "tag v1.3.0: every gate green, release published, Deploy called with DEPLOY_AUTO=true built and shipped the real API and the super, admin and client images (api /health 200, super and admin 200, client 307), archiving on with the flag at mode 600; a dispatched backup wrote the dump and the first base, a dispatched deploy changed nothing; restore --at brought a dropped 1,000-row table back on the real stack in 19.5 s and the API reported its database ready again without a restart"
+  },
+  "models_lab": {
+    "date": "2026-10-23",
+    "host": "WSL2 Ubuntu 24.04, 8 CPUs, 14 GB, rootful Docker 28.3.3; infra from the checkout against a scratch project",
+    "fetch": "models apply fetched the eight pinned bge-m3 files (2.27 GB) from huggingface.co through net-fetch at about 4 MB/s, each size and SHA-256 checked, files 644 and directories 755, a <revision>.verified stamp written; a second apply fetched nothing; models verify re-hashed 2.2 GB in 9.7 s",
+    "runtime": "TEI cpu-1.9.4 by digest as uid 65534, read-only root, every capability dropped, HF_HUB_OFFLINE=1, the revision bound read-only at /model, on the internal ragxlab-models network; the ORT backend is skipped for want of onnx/ and Candle serves the safetensors",
+    "memory": "with --max-batch-tokens 8192 the warmup pinned the container at its 4 GiB limit and the router was OOM-killed and restarted; with 2048 (now the default) it turned healthy after an 80 s warmup at 2.39 GiB and peaked at about 2.8 GiB on an input truncated to 2048 tokens, with no restart",
+    "answers": "health 200 through a curl container on the models network; three texts embedded in 1.45 s as 1024-dimension unit vectors, an English paraphrase at cosine 0.96 and an unrelated Arabic sentence at 0.53; the 2048-token input answered 200 in 51.5 s on 2 CPUs",
+    "isolation": "a curl container on the models network could not reach https://huggingface.co (no route), so a model has no egress",
+    "operations": "models status printed verified, healthy and the URL; logs embedder printed the router log with timestamps; logs ghost was refused naming the running services; MODELS emptied removed the container and its Compose file and kept the cache",
+    "unverified": "the ranker model and the llama.cpp runner were not started; throughput under concurrent load was not measured"
+  }
+}

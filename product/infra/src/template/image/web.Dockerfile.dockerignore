@@ -1,0 +1,15 @@
+**
+!engine/bun/**
+engine/bun/node_modules
+engine/bun/.bun
+engine/bun/tests
+engine/bun/benches
+!product/web/**
+product/web/node_modules
+product/web/.next
+product/web/coverage
+product/web/tests
+product/web/benches
+**/.env*
+**/.secret*
+**/.git
