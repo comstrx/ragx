@@ -1,0 +1,11 @@
+telemetry = false
+
+[install]
+exact = true
+linker = "isolated"
+minimumReleaseAge = 259200
+globalDir = ".bun"
+
+[test]
+randomize = true
+root = "tests"
