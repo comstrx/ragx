@@ -147,5 +147,5 @@ jobs:
       DOCKERHUB_PUSH_TOKEN: ${{ secrets.DOCKERHUB_PUSH_TOKEN }}
 
     permissions:
-      contents: read
+      contents: write # caps Deploy: only its publish job takes it, to push the GitOps desired state
       packages: write # lets Deploy build
