@@ -1,0 +1,23 @@
+[project]
+name = "engine-event"
+version = "0.1.0"
+requires-python = ">=3.15"
+license = "Apache-2.0"
+dependencies = [
+    "engine-broker",
+    "engine-context",
+    "engine-database",
+    "engine-date",
+    "engine-error",
+    "engine-json",
+    "engine-log",
+    "engine-queue",
+    "engine-rand",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["engine"]

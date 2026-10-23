@@ -1,0 +1,36 @@
+[project]
+name = "engine-test"
+version = "0.1.0"
+requires-python = ">=3.15"
+license = "Apache-2.0"
+dependencies = [
+    "engine-broadcast",
+    "engine-cache",
+    "engine-config",
+    "engine-crypto",
+    "engine-database",
+    "engine-error",
+    "engine-event",
+    "engine-exception",
+    "engine-health",
+    "engine-http",
+    "engine-json",
+    "engine-llm",
+    "engine-log",
+    "engine-mail",
+    "engine-queue",
+    "engine-rand",
+    "engine-schedule",
+    "engine-socket",
+    "engine-token",
+    "httpx2==2.14.0",
+    "httpx==0.28.1",
+    "starlette==1.8.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["engine"]

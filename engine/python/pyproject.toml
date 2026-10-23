@@ -1,0 +1,207 @@
+[project]
+name = "engine"
+version = "0.1.0"
+description = "A Python 3.15 server engine: one workspace, one package per domain under the engine namespace, this facade over all of them."
+requires-python = ">=3.15"
+license = "Apache-2.0"
+dependencies = [
+    "engine-adapter",
+    "engine-array",
+    "engine-assets",
+    "engine-broadcast",
+    "engine-broker",
+    "engine-cache",
+    "engine-cli",
+    "engine-config",
+    "engine-context",
+    "engine-crypto",
+    "engine-database",
+    "engine-date",
+    "engine-domain",
+    "engine-error",
+    "engine-event",
+    "engine-exception",
+    "engine-fast",
+    "engine-fs",
+    "engine-func",
+    "engine-gateway",
+    "engine-health",
+    "engine-http",
+    "engine-json",
+    "engine-llm",
+    "engine-log",
+    "engine-mail",
+    "engine-net",
+    "engine-number",
+    "engine-parse",
+    "engine-queue",
+    "engine-rag",
+    "engine-rand",
+    "engine-schedule",
+    "engine-sms",
+    "engine-socket",
+    "engine-storage",
+    "engine-string",
+    "engine-test",
+    "engine-thread",
+    "engine-token",
+    "engine-validate",
+    "engine-view",
+]
+
+[dependency-groups]
+dev = [
+    "asyncpg-stubs==0.32.0",
+    "mypy==2.4.0",
+    "pytest==9.1.1",
+    "pyyaml==6.0.3",
+    "ruff==0.17.1",
+    "types-jsonschema==4.26.0.20261006",
+    "types-pyyaml==6.0.12.20260906",
+]
+
+[tool.uv.workspace]
+members = ["src/*"]
+
+[tool.uv.sources]
+engine-adapter = { workspace = true }
+engine-array = { workspace = true }
+engine-assets = { workspace = true }
+engine-broadcast = { workspace = true }
+engine-broker = { workspace = true }
+engine-cache = { workspace = true }
+engine-cli = { workspace = true }
+engine-config = { workspace = true }
+engine-context = { workspace = true }
+engine-crypto = { workspace = true }
+engine-database = { workspace = true }
+engine-date = { workspace = true }
+engine-domain = { workspace = true }
+engine-error = { workspace = true }
+engine-event = { workspace = true }
+engine-exception = { workspace = true }
+engine-fast = { workspace = true }
+engine-fs = { workspace = true }
+engine-func = { workspace = true }
+engine-gateway = { workspace = true }
+engine-health = { workspace = true }
+engine-http = { workspace = true }
+engine-json = { workspace = true }
+engine-llm = { workspace = true }
+engine-log = { workspace = true }
+engine-mail = { workspace = true }
+engine-net = { workspace = true }
+engine-number = { workspace = true }
+engine-parse = { workspace = true }
+engine-queue = { workspace = true }
+engine-rag = { workspace = true }
+engine-rand = { workspace = true }
+engine-schedule = { workspace = true }
+engine-sms = { workspace = true }
+engine-socket = { workspace = true }
+engine-storage = { workspace = true }
+engine-string = { workspace = true }
+engine-test = { workspace = true }
+engine-thread = { workspace = true }
+engine-token = { workspace = true }
+engine-validate = { workspace = true }
+engine-view = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+bypass-selection = true
+
+[tool.ruff]
+target-version = "py315"
+line-length = 120
+src = ["src/*", "tests", "benches"]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = ["COM", "CPY", "D", "FBT001", "FBT002", "I", "TC", "ANN401", "E401", "E701", "N818"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/error/engine/error/fault.py" = ["C901", "PLR0911", "PLR0912"]
+"src/parse/engine/parse/probe.py" = ["C901", "PLR0911", "PLR0912"]
+"src/parse/engine/parse/parse.py" = ["PLR0911"]
+"src/rand/engine/rand/pick.py" = ["S311"]
+"src/string/engine/string/script.py" = ["RUF001"]
+"src/gateway/engine/gateway/gateway.py" = ["ARG002"]
+"src/domain/engine/domain/contract.py" = ["ARG002"]
+"src/fs/engine/fs/driver.py" = ["ARG002"]
+"src/llm/engine/llm/provider.py" = ["ARG002"]
+"src/rand/engine/rand/fake.py" = ["S311"]
+"src/exception/engine/exception/exceptions.py" = ["BLE001"]
+"src/thread/engine/thread/tasks.py" = ["BLE001"]
+"src/context/engine/context/context.py" = ["BLE001"]
+"src/broker/engine/broker/broker.py" = ["BLE001"]
+"src/thread/engine/thread/thread.py" = ["BLE001"]
+"src/fs/engine/fs/watch.py" = ["BLE001"]
+"src/fs/engine/fs/archive.py" = ["S202"]
+"src/fs/engine/fs/scan.py" = ["PLR0911"]
+"src/date/engine/date/parser.py" = ["DTZ007"]
+"src/date/engine/date/format.py" = ["C901", "PLR0911", "PLR0912", "DTZ007"]
+"src/health/engine/health/health.py" = ["BLE001"]
+"src/database/engine/database/session.py" = ["PLR0911"]
+"src/queue/engine/queue/queue.py" = ["BLE001"]
+"src/database/engine/database/outbox.py" = ["BLE001"]
+"src/schedule/engine/schedule/task.py" = ["BLE001"]
+"src/test/engine/test/stage.py" = ["ARG002"]
+"src/test/engine/test/bench.py" = ["T201"]
+"tests/**" = [
+    "INP001",
+    "S105",
+    "S106",
+    "S301",
+    "PLR0915",
+    "PLR2004",
+    "FBT003",
+    "ARG001",
+    "ARG002",
+    "ARG005",
+    "EM101",
+    "TRY003",
+]
+"conftest.py" = ["ARG001"]
+"benches/**" = ["INP001", "T201", "PLR2004", "S311"]
+
+[tool.ruff.lint.pylint]
+max-args = 8
+max-positional-args = 8
+
+[tool.mypy]
+python_version = "3.15"
+strict = true
+strict_bytes = true
+local_partial_types = true
+warn_unreachable = true
+explicit_package_bases = true
+enable_error_code = [
+    "deprecated",
+    "exhaustive-match",
+    "explicit-override",
+    "mutable-override",
+    "possibly-undefined",
+    "redundant-expr",
+    "redundant-self",
+    "truthy-bool",
+    "truthy-iterable",
+    "unimported-reveal",
+    "unused-awaitable",
+]
+plugins = ["pydantic.mypy"]
+mypy_path = "src/adapter,src/array,src/assets,src/broadcast,src/broker,src/cache,src/cli,src/config,src/context,src/crypto,src/database,src/date,src/domain,src/error,src/event,src/exception,src/fast,src/fs,src/func,src/gateway,src/health,src/http,src/json,src/llm,src/log,src/mail,src/net,src/number,src/parse,src/queue,src/rag,src/rand,src/schedule,src/sms,src/socket,src/storage,src/string,src/test,src/thread,src/token,src/validate,src/view"
+files = ["src/*/engine", "tests", "benches", "conftest.py"]
+
+[[tool.mypy.overrides]]
+module = ["pypdfium2", "pypdfium2.*"]
+ignore_missing_imports = true
+
+[tool.pytest]
+testpaths = ["tests"]
+addopts = ["--import-mode=importlib"]
+strict = true
+filterwarnings = ["error"]

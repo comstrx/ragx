@@ -1,0 +1,24 @@
+[project]
+name = "engine-broadcast"
+version = "0.1.0"
+requires-python = ">=3.15"
+license = "Apache-2.0"
+dependencies = [
+    "engine-context",
+    "engine-database",
+    "engine-error",
+    "engine-event",
+    "engine-json",
+    "engine-log",
+    "engine-rand",
+    "engine-socket",
+    "engine-thread",
+    "redis==8.1.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["engine"]
