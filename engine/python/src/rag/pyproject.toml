@@ -14,7 +14,7 @@ dependencies = [
     "engine-number",
     "engine-string",
     "engine-thread",
-    "sqlalchemy[asyncio]==2.1.5",
+    "sqlalchemy[asyncio]==2.1.6",
 ]
 
 [build-system]

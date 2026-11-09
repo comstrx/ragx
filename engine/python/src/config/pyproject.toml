@@ -8,7 +8,7 @@ dependencies = [
     "engine-log",
     "engine-parse",
     "engine-validate",
-    "pydantic-settings==2.16.0",
+    "pydantic-settings==2.16.2",
     "pydantic==2.14.1",
     "python-dotenv==1.2.4",
 ]
