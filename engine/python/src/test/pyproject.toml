@@ -23,7 +23,7 @@ dependencies = [
     "engine-schedule",
     "engine-socket",
     "engine-token",
-    "httpx2==2.14.0",
+    "httpx2==2.16.0",
     "httpx==0.28.1",
     "starlette==1.8.0",
 ]

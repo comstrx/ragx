@@ -52,12 +52,12 @@ dependencies = [
 [dependency-groups]
 dev = [
     "asyncpg-stubs==0.32.0",
-    "mypy==2.4.0",
-    "pytest==9.1.1",
+    "mypy==2.4.1",
+    "pytest==9.2.0",
     "pyyaml==6.0.3",
-    "ruff==0.17.1",
+    "ruff==0.17.3",
     "types-jsonschema==4.26.0.20261006",
-    "types-pyyaml==6.0.12.20260906",
+    "types-pyyaml==6.0.12.20261030",
 ]
 
 [tool.uv.workspace]

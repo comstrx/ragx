@@ -9,7 +9,7 @@ dependencies = [
     "engine-json",
     "engine-log",
     "engine-thread",
-    "anyio==4.15.1",
+    "anyio==4.16.0",
     "av==19.0.1",
     "charset-normalizer==3.5.2",
     "kreuzberg==4.10.4",

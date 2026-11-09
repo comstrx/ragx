@@ -15,7 +15,7 @@ dependencies = [
     "engine-net",
     "engine-parse",
     "engine-validate",
-    "fastapi==0.146.0",
+    "fastapi==0.162.0",
     "granian==2.8.4",
     "python-multipart==0.0.32",
     "scalar-fastapi==1.9.1",
